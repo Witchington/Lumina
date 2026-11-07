@@ -16,3 +16,8 @@ selftest.png
 
 # converter test output, written on each run
 .claude/speed/convout/
+
+# other test files written on each run (pictures pasted by the clipboard test, the timeline test's video and its edit copy)
+.claude/speed/pasted/
+.claude/timeline/*.webm
+.claude/timeline/*.mp4

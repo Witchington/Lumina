@@ -24,6 +24,10 @@ Git and GitHub CLI installed with winget). Version is now **0.9.1**; the setup i
 and the Linux AppImage (`Lumina-<version>-Linux-x86_64.AppImage`) on GitHub's machines and attaches both. The friend's Linux block
 (no-sandbox in AppImages, WebGPU switch, LUMINA_SOFTWARE / LUMINA_X11) is merged into main.js. The Linux build is untested on
 a real Linux PC. Speed test step 24 holds the version in `VER`: change it with each version bump.
+**The workflow is turned off (2026-11-07, the user: "we will update it when i say").** Don't push to GitHub or make a release until the
+user says so; then `gh workflow enable "Build and release" -R Witchington/Lumina` before tagging.
+**Not on GitHub yet:** the licence files and the friend's timeline fixes (see "Where things stand"). The friend needs a new
+version to get the fixes: bump the version (package.json + speed test `VER`), then release when the user says.
 The beginner layout, for reference:
 - **B1 Tool rail (done):** icon tabs down the left (Media, Text, Stickers, Effects, Transitions, Captions, Audio, Adjust), each
   opening a browsable panel with previews to click or drag in, like CapCut. Leave room for an Image tab (PhotoCraft).
@@ -50,7 +54,7 @@ Every EffectCraft round follows the same steps:
 3. Run a speed check.
 4. Update `effects.png`.
 5. Rebuild.
-6. Run all eight suites.
+6. Run all nine suites.
 
 ---
 
@@ -111,7 +115,38 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-07)
+- **Impact parts (2026-11-07, the user's request):** an impact's Strength drove flash, shake and zoom together. Now each has
+  its own slider (Flash, Screen shake, Zoom punch, 0–1.5, number shown beside it) plus Length. Impacts store `flash`,
+  `shake`, `zoom`; older ones with one `strength` keep it (`impAmt`) until a slider is moved, then split into the three.
+  `impactAt(t)` returns `{ flash, shake, zoom }`. Tested in `.claude\timeline` (impactParts, impactPanel).
+- **Friend's timeline report (2026-11-07):** four fixes, tested by the new suite `.claude\timeline` (expected false: none).
+  1. **Stiff dragging:** the ruler drew a label for every second of the whole edit on every drag move (6,000+ on a 1 h 42 min
+     edit); now only the part in view (`rulerMarks` / `rulerFollow`). New Properties › **Timeline** group (always shown, kept
+     per PC in localStorage `lumina.tlset`, not in the project): **Drag step** (free, 1 frame, 0.1–5 s) and two snap switches
+     (other clips' edges; playhead, beats and bookmarks). `snapHit` finds a snap, `stepT` rounds to the step; Shift = neither.
+  2. **Slow loading / black preview:** a clip keeps a copy of its newest frame (`keepFrame`, ≤960 px) and shows it while
+     its video loads; "Loading video…" shows on the preview (`drawLoadingNote`). The root cause is usually the file: few
+     keyframes (movies and downloads: one every 5–10 s), HEVC/AV1/VP9, >1080p or 60 fps. Properties › **Smooth editing**
+     reads the file with FFmpeg (`media:probe`, keyframe gap from the first minute) and says why it's slow; **Make an edit
+     copy** (`media:optimize`) writes `<name> (edit copy).mp4` next to the original (H.264 CRF 18, a keyframe every 0.5 s by
+     the clock, `-fps_mode vfr`, ≤1080p) and every import of that file switches to it (`MEDIA.origPath` remembers the original,
+     saved in the project; "Use the original file again" switches back). Importing a slow file shows a notice.
+  3. **Lag and jumping back 2 s:** the clock ran on while a video stalled, then `masterClock` pulled it back. Now
+     `waitForMedia` holds the clock (everything paused on the right frame) while a clip on screen, or about to start, is
+     seeking or stalled (`waiting` event), up to 4 s per clip; exports never wait. Resuming doesn't re-seek.
+     `loop()` is now `tick()` + requestAnimationFrame, so tests can drive `tick` on a timer.
+  4. **Clips on one track:** `L.track`; clips with the same track share a row (`timelineRows`, `tidyTracks` keeps them together
+     in the layer order). Drag a clip up/down onto another row to join it (the row lights up); "Own track" (Arrange) and
+     "Put on one track" (multi-select) do it by button. Where clips on a track overlap, the later one crossfades in across the
+     overlap (auto entries in `transList`). Sound and picture clips don't mix; track mattes keep their own row.
+  The self-test can slow a file down with `?slow=ms` on its media URL (SELFTEST only, main.js).
+  Ideas not done: unloading far-away clips' video elements to save memory on long edits; an audio crossfade for overlapping sound clips.
 - **GitHub + Linux (2026-11-07):** private repo, release workflow for Windows + Linux, 0.9.1; see "Start here next".
+- **Licence (2026-11-07):** `LICENSE` = Lumina's own code is all rights reserved (the user's choice; free to use and share the
+  unmodified downloads). `THIRD-PARTY-NOTICES.md` lists every outside part and its licence (FFmpeg GPL-3.0 with source links,
+  EffectCraft MIT, three.js MIT, MediaPipe and Transformers.js Apache-2.0, fonts OFL). Both ship inside the app (`build.files`);
+  MediaPipe's npm package has no licence file, so its Apache text is in `vendor/mediapipe/LICENSE-APACHE`. Add a row there when
+  a new outside library, model or font comes in. Local only, not pushed yet.
 - **Converter fix: titles with "/" (2026-11-07, the user's report "yt-dlp stopped with code 0"):** a YouTube title with
   "///" is saved by yt-dlp with look-alike slashes (⧸), but its Windows console output drops them, so the printed
   LUMINAFILE path didn't exist and a finished download counted as a failure. yt-dlp now saves to `download.<ext>` in the
@@ -458,8 +493,9 @@ Linux build: merged and built by GitHub since 0.9.1 (the user asked for it 2026-
 
 ## Reminders for Claude
 - Do one feature at a time, test it, and ask before changing anything on the system.
-- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all eight suites.
-- The eight suites and their expected `false` results (`beat` and `speed` were added 2026-11-06 and expect none):
+- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all nine suites.
+- The nine suites and their expected `false` results (`beat` and `speed` were added 2026-11-06, `timeline` 2026-11-07; all three expect none):
+  - `timeline`: none
   - `beat`: none
   - `speed`: none
   - `.claude`: `dirtyAfter`

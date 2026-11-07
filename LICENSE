@@ -1,0 +1,18 @@
+Lumina
+Copyright (c) 2026 Witchington. All rights reserved.
+
+You may download, install and use Lumina for free. You may share the unmodified
+installer (Lumina-Setup-<version>.exe) and Linux app (Lumina-<version>-Linux-x86_64.AppImage).
+
+The source code in this repository is shown so people can see how Lumina works. It is not
+open source: you may not copy, change, republish or sell Lumina's own code, in whole or in
+part, without written permission from the copyright holder.
+
+Lumina includes parts made by other people (for example the EffectCraft shaders, ffmpeg,
+three.js, MediaPipe, Transformers.js and the fonts). Those parts are NOT covered by this
+licence. Each keeps its own open-source licence, and you may use them under those terms.
+They are listed, with their licences, in THIRD-PARTY-NOTICES.md.
+
+LUMINA IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT
+SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM
+THE USE OF LUMINA.

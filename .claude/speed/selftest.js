@@ -845,7 +845,7 @@
 
     // ---- 24. C15 friends' test release: version, About box, Help › Send feedback
     {
-      const VER = '0.9.1', VERX = VER.replace(/\./g, '\\.'); // the version in package.json
+      const VER = '0.9.2', VERX = VER.replace(/\./g, '\\.'); // the version in package.json
       const fbInfo = lumina.info?.version === VER && /^Windows \d/.test(lumina.info?.os || '');
       const help = MENUS.Help(), names = help.filter(Array.isArray).map(m => m[0]);
       const fbMenu = names.includes('Send feedback…') && names.includes('About Lumina') && help.find(m => m[0] === 'About Lumina')[3] !== false;
@@ -990,7 +990,7 @@
       seek(duration() - .2); const inView = () => { const v = tlView(); return S.time >= v.t0 && S.time <= v.t1; };
       for (let i = 0; i < 10 && !inView(); i++) await wait(100);
       if (!inView()) tlFollow();
-      const jumpFollow = inView() && /tlFollow\(\)/.test(loop.toString());
+      const jumpFollow = inView() && /tlFollow\(\)/.test((typeof tick === 'function' ? tick : loop).toString());
       tl.scrollLeft = 0; await wait(120); const staysPut = tl.scrollLeft === 0;
       seek(0); S.layers.splice(S.layers.indexOf(longT), 1); S.sel = null; commit(); refresh(); await wait(80);
       step('timelineEdges', { wide, atEdge, phVisible, scrolledLeft, followed, stops, scrolledRight, wheelSide, wheelBack, wheelNames, wheelPad, zoomed, jumpFollow, staysPut,

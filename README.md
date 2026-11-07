@@ -12,6 +12,12 @@ Go to **Releases** (right side of this page) and pick the newest version:
 
 The converter only downloads media you have the rights to use.
 
+## Licence
+
+Lumina is free to download and use, but its own code is all rights reserved (see `LICENSE`).
+The parts made by other people (EffectCraft, FFmpeg, three.js, MediaPipe, Transformers.js, the fonts)
+keep their own open-source licences, listed in `THIRD-PARTY-NOTICES.md`.
+
 ## Build it yourself
 
 Needs Node.js 22.

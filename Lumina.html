@@ -183,6 +183,8 @@ aside h3 { font: 600 11.5px var(--display); text-transform: uppercase; letter-sp
 .kf.has::before { border-color: var(--accent); }
 .kf.on::before { background: var(--gloss-accent); border-color: var(--accent); }
 .frow { display: grid; grid-template-columns: 82px 1fr; gap: 8px; align-items: center; margin-bottom: 7px; }
+.frow:has(> .iv) { grid-template-columns: 82px 1fr 34px; }
+.frow .iv { font: 11px var(--mono); color: var(--muted); text-align: right; }
 .frow input[type=text], .frow select, .frow textarea { width: 100%; }
 .frow input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--line-strong); border-radius: 5px; background: none; }
 textarea { resize: vertical; min-height: 48px; }
@@ -214,6 +216,14 @@ footer { background: var(--glass); backdrop-filter: blur(16px) saturate(140%); b
 /* multi-select (C6): every selected clip gets a bright outline; the other selected rows get a softer head highlight */
 .trow.msel .thead { background: var(--sel-row); color: var(--fg); box-shadow: inset 3px 0 var(--accent-hi); opacity: .85; }
 .trow.msel .bar, .trow.mmain .bar { outline: 2px solid var(--accent-hi); outline-offset: 0; }
+/* shared tracks: each clip's bar and marks sit in a wrapper that takes no space of its own */
+.clipg { display: contents; }
+.trk .clipg.csel .bar { outline: 2px solid var(--accent); outline-offset: 0; }
+.trk .clipg.cmsel .bar { outline: 2px solid var(--accent-hi); outline-offset: 0; }
+.trk .clipg.coff .bar { opacity: .35; }
+.trk .thead .nm { color: var(--label); }
+/* the row a dragged clip will join when it's let go */
+.trow.droptgt .lane { background: color-mix(in srgb, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px var(--accent-hi); }
 #selbox { position: absolute; z-index: 6; border: 1px solid var(--accent-hi); background: color-mix(in srgb, var(--accent) 18%, transparent); pointer-events: none; border-radius: 2px; }
 .lane { position: relative; flex: none; }
 .ruler-row { position: sticky; top: 0; z-index: 4; background: var(--solid-2); height: 24px; }
@@ -959,6 +969,12 @@ function ensureRT(L) {
   // an audio layer can use a video file too (Separate audio): it plays just the sound
   else { el = document.createElement(m.type === 'audio' || L.kind === 'audio' ? 'audio' : 'video'); el.src = m.url; el.preload = 'auto'; el.playsInline = true; }
   RT[L.id] = { el };
+  // playback ran out of data (until enough has loaded again): see mediaBusy
+  if (el instanceof HTMLMediaElement) {
+    const r = RT[L.id];
+    el.addEventListener('waiting', () => r.stalled = true);
+    for (const ev of ['canplay', 'canplaythrough', 'playing']) el.addEventListener(ev, () => r.stalled = false);
+  }
   if (el.requestVideoFrameCallback) {
     // remember the media time of the frame actually on screen; currentTime can run ahead of it
     const r = RT[L.id], cb = (now, md) => { r.frameT = md.mediaTime; r.frameAt = performance.now(); el.requestVideoFrameCallback(cb); };
@@ -1029,6 +1045,7 @@ function addFiles(files, opts = {}) {
       } else insertLayer(L);
       if (!S.sel) S.sel = L.id;
       commit(); refresh();
+      if (type === 'video' && path) probeMedia(mid, true);
     };
     const fail = () => toast(`Couldn't read ${f.name}. Try MP4 (H.264), WebM, PNG, JPG, SVG or MP3.`);
     if (isSVGFile(f)) f.text().then(loadSVG).then(m => m ? done(m) : fail(), fail);
@@ -1040,6 +1057,68 @@ function addFiles(files, opts = {}) {
     }
   });
 }
+
+// ---------- smooth editing: why a video is slow to jump around in, and an easy-to-edit copy (main.js says more) ----------
+const OPT = {};   // media id → { f: 0..1 } while its edit copy is being made
+const CODEC_NAME = { hevc: 'HEVC (H.265)', h265: 'HEVC (H.265)', av1: 'AV1', vp9: 'VP9', vp8: 'VP8', h264: 'H.264', mpeg4: 'MPEG-4', prores: 'ProRes' };
+const codecName = c => CODEC_NAME[c] || (c || '?').toUpperCase();
+function heavyReasons(p) {
+  const r = [];
+  if (!p?.video) return r;
+  if (p.keyGap > 2) r.push(`it has a full picture only every ${p.keyGap.toFixed(1)} s, so each jump first decodes up to that much video`);
+  if (/^(hevc|h265|av1|vp9)$/.test(p.codec)) r.push(`${codecName(p.codec)} is slow to decode on many PCs`);
+  if (Math.min(p.w, p.h) > 1080) r.push(`${p.w}×${p.h} is much bigger than the preview needs`);
+  if (p.fps > 40 && Math.min(p.w, p.h) >= 1080) r.push(`${Math.round(p.fps)} fps at full HD is twice the frames to decode`);
+  return r;
+}
+// read a video's format once (in the background), and say so if it'll be slow to edit
+async function probeMedia(mid, tell) {
+  const m = MEDIA[mid];
+  if (!window.lumina?.probeMedia || !m?.path || m.type !== 'video' || m.probe !== undefined) return;
+  m.probe = 'busy';
+  try { m.probe = await lumina.probeMedia(m.path); } catch (e) { m.probe = null; }
+  if (selLayer()?.media === mid) inspector();
+  const why = heavyReasons(m.probe);
+  if (tell && why.length && !m.origPath) notice(`“${m.name}” will be slow to jump around in: ${why[0]}. Select the clip and press “Make an edit copy” in Properties › Smooth editing.`);
+}
+function smoothPanel(L) {
+  const mid = L.media, m = MEDIA[mid]; if (!m?.path || !window.lumina?.probeMedia) return '';
+  if (m.probe === undefined) setTimeout(() => probeMedia(mid));
+  const p = m.probe, job = OPT[mid];
+  let h = '<div class="group"><h3>Smooth editing</h3>';
+  if (job) h += `<p class="empty">Making an edit copy… <span id="opt-pct">${Math.round(job.f * 100)}%</span></p><div class="row"><button data-act="optcancel">Cancel</button></div>`;
+  else if (m.origPath) h += `<p class="empty">Playing from an edit copy (a full picture every half second), so jumping around is quick. The original file is untouched.</p><div class="row"><button data-act="optorig" title="${esc(m.origPath)}">Use the original file again</button></div>`;
+  else if (!p || p === 'busy') h += `<p class="empty">${p === 'busy' ? 'Checking this video…' : 'Couldn\'t read this video\'s format.'}</p>`;
+  else if (p.video) {
+    const why = heavyReasons(p);
+    h += `<p class="empty">${codecName(p.codec)} · ${p.w}×${p.h} · ${p.fps ? Math.round(p.fps) + ' fps' : 'no steady frame rate'} · a full picture every ${p.keyGap} s.</p>`
+      + (why.length ? `<p class="empty"><b>Slow to jump around in:</b> ${why.join('; ')}. An edit copy fixes that.</p>` : '<p class="empty">This file is quick to edit as it is.</p>')
+      + `<div class="row"><button data-act="optmake" title="H.264 with a full picture every half second, at most 1080p, saved next to the original as “… (edit copy).mp4”. Every clip from this file switches to it.">Make an edit copy</button></div>`;
+  }
+  return h + '</div>';
+}
+async function makeEditCopy(L) {
+  const mid = L.media, m = MEDIA[mid], p = m.probe;
+  if (!p?.video || OPT[mid] || m.origPath) return;
+  OPT[mid] = { f: 0 }; inspector();
+  try {
+    const out = await lumina.optimizeMedia({ id: mid, file: m.path, fps: p.fps, w: p.w, h: p.h, duration: p.duration, audio: p.audio });
+    // every import of the same file switches, not only this one
+    delete OPT[mid]; const orig = m.path;
+    for (const id in MEDIA) if (MEDIA[id].path === orig) useMediaFile(+id, out, orig);
+    notice(`Edit copy ready: every clip from “${m.name}” now plays from it, so jumping around is quick. Saved as ${out.split(/[\\/]/).pop()}.`);
+  } catch (e) { delete OPT[mid]; if (!/Cancelled/.test(e.message)) toast('Couldn\'t make the edit copy: ' + e.message.split('\n').pop()); }
+  inspector();
+}
+// every clip from this media plays from another file (the edit copy, or the original again)
+function useMediaFile(mid, file, origPath) {
+  const m = MEDIA[mid];
+  if (origPath) m.origPath = origPath; else delete m.origPath;
+  m.path = file; m.url = lumina.mediaURL(file); m.probe = undefined;
+  for (const L of S.layers) { const el = RT[L.id]?.el; if (L.media === mid && el instanceof HTMLMediaElement) el.src = m.url; }
+  markDirty();
+}
+if (window.lumina?.onOptimizeProgress) lumina.onOptimizeProgress(({ id, f }) => { if (OPT[id]) { OPT[id].f = f; const el = $('#opt-pct'); if (el && selLayer()?.media === id) el.textContent = Math.round(f * 100) + '%'; } });
 
 // ---------- clipboard (CapCut phase C12, after opencut-classic) ----------
 // Ctrl+C copies the selected clips, or the picked keyframe; Ctrl+X cuts clips; Ctrl+V pastes the newest thing on the
@@ -1300,12 +1379,14 @@ function syncMedia(t) {
     // outside the file there's nothing to play: hold the first or last frame (playing an ended video would restart it)
     const md = MEDIA[L.media]?.duration || Infinity, hold = local < 0 ? 0 : local > md - .03 ? Math.max(0, md - .03) : null;
     if (hold != null && active) { if (!el.paused) el.pause(); if (!el.seeking && Math.abs(el.currentTime - hold) > .05) el.currentTime = hold; continue; }
-    if (S.playing && active) {
+    // (while playback waits for a slow clip, everything holds still on the right frame)
+    if (S.playing && !S.waiting && active) {
       const rate = clamp(Math.round(rateAt(L, t - L.start, local - L.in) * 100) / 100, .0625, 16);
       if (el.playbackRate !== rate) el.playbackRate = rate;
       // Keep pitch (on unless switched off): sped-up or slowed voices keep their pitch instead of going chipmunk/deep
       const keep = L.keepPitch !== false; if (el.preservesPitch !== keep) el.preservesPitch = keep;
-      if (el.paused) { el.currentTime = local; el.play().catch(() => {}); r.cmdAt = performance.now(); }
+      // (already on the right frame, e.g. after waiting: no seek, which would only make it load again)
+      if (el.paused) { if (el.seeking || Math.abs(el.currentTime - local) > .05) el.currentTime = local; el.play().catch(() => {}); r.cmdAt = performance.now(); }
       else if (Math.abs(el.currentTime - local) > .3 && !(performance.now() - (r.cmdAt || 0) > 250 && L === clockLayer())) { el.currentTime = local; r.cmdAt = performance.now(); }
     } else {
       if (!el.paused) el.pause();
@@ -1313,6 +1394,39 @@ function syncMedia(t) {
       if (target != null && !el.seeking && Math.abs(el.currentTime - target) > .02) el.currentTime = target;
     }
   }
+}
+// a copy of the clip's newest frame (at most 960 px wide), shown while the video loads after a jump
+function keepFrame(r, el, w, h) {
+  const now = performance.now();
+  if (r.heldAt && (S.playing ? now - r.heldAt < 250 : r.heldFT === r.frameAt && now - r.heldAt < 1000)) return;
+  const k = Math.min(1, 960 / w), cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+  if (!r.held || r.held.width !== cw || r.held.height !== ch) { r.held = document.createElement('canvas'); r.held.width = cw; r.held.height = ch; }
+  r.held.getContext('2d').drawImage(el, 0, 0, cw, ch); r.heldAt = now; r.heldFT = r.frameAt;
+}
+// A clip on screen at time t whose video or sound isn't ready yet (a jump into a long or heavy file, a slow drive).
+// Playback waits for it instead of running on and jumping back once it catches up.
+function mediaBusy(L, t) {
+  if (!isMedia(L) || L.freeze || !L.visible || (L.kind === 'audio' && L.muted)) return false;
+  const el = RT[L.id]?.el; if (!(el instanceof HTMLMediaElement) || el.error || !el.src) return false;
+  const [a, b] = L.kind === 'video' ? liveRange(L) : [L.start, endOf(L)];
+  if (t < a || t >= b) return false;
+  const local = srcTime(L, t), md = MEDIA[L.media]?.duration || Infinity;
+  if (local < 0 || local > md - .03) return false;   // holding its first or last frame: nothing to load
+  // seeking, no frame at all yet, or playback ran out of data (the 'waiting' event) and hasn't caught up
+  return el.seeking || el.readyState < 2 || (RT[L.id].stalled && el.readyState < 3);
+}
+// while playing: hold the clock while something on screen now, or a moment from now (a clip about to start), loads,
+// so the picture stays on the last good frame. Never more than 4 s for one clip, so a file that never gets ready
+// can't stop playback for good.
+function waitForMedia(dt) {
+  const now = performance.now(); let wait = false;
+  for (const L of S.layers) {
+    const r = RT[L.id]; if (!r) continue;
+    if (!mediaBusy(L, S.time) && !mediaBusy(L, S.time + dt)) { r.busySince = 0; continue; }
+    r.busySince ||= now;
+    if (now - r.busySince < 4000) wait = true;
+  }
+  return S.waiting = wait;
 }
 // the top playing video that the clock follows
 function clockLayer() {
@@ -1346,7 +1460,7 @@ async function play() {
   if (S.time >= duration() - .02) S.time = 0;
   S.playing = true; lastNow = performance.now(); $('#btnPlay').textContent = 'Pause';
 }
-function pause() { S.playing = false; $('#btnPlay').textContent = 'Play'; syncMedia(S.time); }
+function pause() { S.playing = false; S.waiting = false; $('#btnPlay').textContent = 'Play'; syncMedia(S.time); }
 function seek(t) { S.time = clamp(t, 0, duration()); }
 
 // ---------- rendering ----------
@@ -1354,18 +1468,28 @@ const GRADES = {
   none: '', punchy: 'contrast(1.15) saturate(1.3)', cold: 'saturate(.85) hue-rotate(-12deg) brightness(1.03)',
   warm: 'sepia(.25) saturate(1.2)', mono: 'grayscale(1) contrast(1.2)', neon: 'saturate(1.8) contrast(1.1) hue-rotate(8deg)'
 };
+// An impact's three parts each have their own amount: flash, shake and zoom punch. (Impacts made before that have
+// one `strength` for all three, which they keep until a slider is moved.)
+const IMP_PARTS = [['flash', 'Flash', 'How bright the white flash is'], ['shake', 'Screen shake', 'How far the frame jolts'], ['zoom', 'Zoom punch', 'How far the frame punches in']];
+const impAmt = (m, p) => m[p] ?? m.strength ?? 1;
 function impactAt(t) {
-  let k = 0;
-  for (const m of S.impacts) { const d = t - m.t; if (d >= 0 && d < m.dur) k = Math.max(k, (1 - d / m.dur) ** 2 * m.strength); }
+  const k = { flash: 0, shake: 0, zoom: 0 };
+  for (const m of S.impacts) {
+    const d = t - m.t; if (d < 0 || d >= m.dur) continue;
+    const e = (1 - d / m.dur) ** 2;
+    for (const p in k) k[p] = Math.max(k[p], e * impAmt(m, p));
+  }
   return k;
 }
 function fitScale(w, h) { return (W() < H() ? Math.max : Math.min)(W() / w, H() / h); }
 const fitFor = (L, w, h) => L.cover ? Math.max(W() / w, H() / h) : fitScale(w, h);
 const DRAW = {
   video(L) {
-    const el = RT[L.id].el, m = MEDIA[L.media];
+    const r = RT[L.id], el = r.el, m = MEDIA[L.media];
     const vw = el.videoWidth || m.w || 16, vh = el.videoHeight || m.h || 9, f = fitFor(L, vw, vh);
-    if (el.readyState >= 2) ctx.drawImage(sourceFor(L, L.smoothSlow ? frameBlend(L, el, vw, vh, renderT) : el, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f);
+    if (el.readyState >= 2) { ctx.drawImage(sourceFor(L, L.smoothSlow ? frameBlend(L, el, vw, vh, renderT) : el, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f); if (!S.exporting) keepFrame(r, el, vw, vh); }
+    // still loading (a jump into a long or heavy file): show the clip's last frame instead of a black hole
+    else if (r.held) ctx.drawImage(sourceFor(L, r.held, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f);
     return { w: vw * f, h: vh * f };
   },
   image(L, t) {
@@ -3566,6 +3690,18 @@ function transList() {
     const d = Math.max(.05, Math.min(B.trans.dur, len(B), A ? len(A) : Infinity));
     out.push(A ? { A, B, type: B.trans.type, cut: B.start, t0: B.start - d / 2, t1: B.start + d / 2 } : { A: null, B, type: B.trans.type, cut: B.start, t0: B.start, t1: B.start + d });
   }
+  // clips on one track that overlap blend into each other across the overlap (a crossfade), unless the later one has
+  // a transition of its own
+  const tracks = {};
+  for (const x of S.layers) if (x.track != null && x.visible && isVisual(x)) (tracks[x.track] ||= []).push(x);
+  for (const list of Object.values(tracks)) {
+    list.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < list.length; i++) {
+      const B = list[i]; if (B.trans && TRANS[B.trans.type]) continue;
+      let A = null; for (const x of list.slice(0, i)) if (!A || endOf(x) > endOf(A)) A = x;
+      if (A && endOf(A) > B.start + 1e-3) out.push({ A, B, type: 'fade', cut: B.start, t0: B.start, t1: Math.min(endOf(A), endOf(B)), auto: true });
+    }
+  }
   transMemo = out; transMemoTok = transTok; return out;
 }
 // how long a clip keeps playing past its edges because of a transition
@@ -3683,9 +3819,9 @@ function render(t = S.time) {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
   drawCanvasBg(t, w, h);
   ctx.save();
-  if (k > 0) {
-    ctx.translate(w / 2 + (Math.random() - .5) * 40 * k * h / 1080, h / 2 + (Math.random() - .5) * 40 * k * h / 1080);
-    ctx.scale(1 + .08 * k, 1 + .08 * k); ctx.translate(-w / 2, -h / 2);
+  if (k.shake > 0 || k.zoom > 0) {
+    ctx.translate(w / 2 + (Math.random() - .5) * 40 * k.shake * h / 1080, h / 2 + (Math.random() - .5) * 40 * k.shake * h / 1080);
+    ctx.scale(1 + .08 * k.zoom, 1 + .08 * k.zoom); ctx.translate(-w / 2, -h / 2);
   }
   for (let i = S.layers.length - 1; i >= 0; i--) if (!isMatteFor(i)) drawLayer(S.layers[i], t, i);
   ctx.restore();
@@ -3697,7 +3833,7 @@ function render(t = S.time) {
     g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${S.global.vignette})`);
     ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
   }
-  if (k > 0) { ctx.fillStyle = `rgba(255,255,255,${k * .55})`; ctx.fillRect(0, 0, w, h); }
+  if (k.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${Math.min(1, k.flash * .55)})`; ctx.fillRect(0, 0, w, h); }
   if (S.global.letterbox > 0) { const b = h * S.global.letterbox / 2; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, b); ctx.fillRect(0, h - b, w, b); }
 }
 // Canvas background (CapCut-style): what shows behind the clips where they don't fill the frame.
@@ -4179,9 +4315,22 @@ const endPan = () => { if (!ppan) return; ppan = null; $('#viewport').classList.
 $('#viewport').addEventListener('pointerup', endPan);
 $('#viewport').addEventListener('pointercancel', endPan);
 $('#viewport').addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
+// "Loading video…" at the bottom left of the preview while a clip on screen loads (after a short moment, so quick
+// jumps don't flash it); never in the export
+let loadingSince = 0;
+function drawLoadingNote() {
+  const busy = !S.exporting && S.layers.some(L => mediaBusy(L, S.time)), now = performance.now();
+  if (!busy) { loadingSince = 0; return; }
+  loadingSince ||= now; if (now - loadingSince < 300) return;
+  const k = ov.width / 960, txt = 'Loading video…';
+  octx.font = `600 ${Math.round(13 * k)}px system-ui, sans-serif`;
+  const w = octx.measureText(txt).width + 22 * k, h = 26 * k, x = 10 * k, y = ov.height - h - 10 * k;
+  octx.fillStyle = 'rgba(0,0,0,.65)'; octx.beginPath(); octx.roundRect(x, y, w, h, h / 2); octx.fill();
+  octx.fillStyle = '#fff'; octx.textBaseline = 'middle'; octx.fillText(txt, x + 11 * k, y + h / 2);
+}
 function drawOverlay() {
   octx.setTransform(1, 0, 0, 1, 0, 0); octx.clearRect(0, 0, ov.width, ov.height);
-  drawBookmarkNotes();
+  drawBookmarkNotes(); drawLoadingNote();
   const L = selLayer(), r = L && RT[L.id];
   if (!r || !r.m || S.exporting) return;
   const k = ov.width / W();
@@ -4566,7 +4715,7 @@ function beatCut(L, target) {
 }
 function beatImpacts(L) {
   const ts = beatPicks(L).filter(t => !S.impacts.some(m => Math.abs(m.t - t) < .02));
-  for (const t of ts) S.impacts.push({ id: uid++, t, strength: .6, dur: .25 });
+  for (const t of ts) S.impacts.push({ id: uid++, t, flash: .6, shake: .6, zoom: .6, dur: .25 });
   commit(); refresh(); toast(ts.length ? `Added ${ts.length} impact${ts.length > 1 ? 's' : ''} on the beat.` : 'Those beats already have impacts.');
 }
 function beatPanel(L) {
@@ -4722,7 +4871,7 @@ function selectAll() { if (S.layers.length) setMulti(S.layers.map(x => x.id), se
 function boxHits(x0, y0, x1, y1) {
   const [l, r, t, b] = [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)];
   return [...document.querySelectorAll('.trow[data-id] .bar')].filter(el => { const q = el.getBoundingClientRect(); return q.right >= l && q.left <= r && q.bottom >= t && q.top <= b; })
-    .map(el => +el.closest('.trow').dataset.id);
+    .map(el => +(el.closest('[data-lid]') || el.closest('.trow')).dataset[el.closest('[data-lid]') ? 'lid' : 'id']);
 }
 function drawSelBox() {
   const B = drag?.box; let el = $('#selbox'); if (!B?.on) { el?.remove(); return; }
@@ -4769,37 +4918,131 @@ function toggleSound(L, solo) {
   } else L.muted = !L.muted;
   commit(); refresh();
 }
+// ---------- shared tracks: several clips on one timeline row ----------
+// Clips with the same L.track share a row. They stay next to each other in the layer order (so the stack is the same
+// as the rows), and where two of them overlap, the later one blends in across the overlap (see transList).
+// Drag a clip up or down onto another row to put it on that track; "Own track" in Properties › Arrange takes it off.
+const isSound = L => L.kind === 'audio';
+function tidyTracks() {
+  const n = {};
+  for (const x of S.layers) if (x.track != null) n[x.track] = (n[x.track] || 0) + 1;
+  for (const x of S.layers) if (x.track != null && n[x.track] < 2) delete x.track;   // one clip left: a plain layer again
+  // each track's clips together, where its first clip is
+  const seen = new Set(), out = [];
+  for (const x of S.layers) {
+    if (x.track == null) { out.push(x); continue; }
+    if (seen.has(x.track)) continue; seen.add(x.track);
+    out.push(...S.layers.filter(y => y.track === x.track));
+  }
+  if (out.some((x, i) => x !== S.layers[i])) S.layers.splice(0, S.layers.length, ...out);
+}
+function timelineRows() {
+  const rows = [];
+  for (const x of S.layers) { const last = rows[rows.length - 1]; if (x.track != null && last && last[0].track === x.track) last.push(x); else rows.push([x]); }
+  return rows;
+}
+const trackOf = L => L.track != null ? S.layers.filter(x => x.track === L.track) : [L];
+// why a clip can't go onto T's track ('' when it can)
+function trackBlock(L, T) {
+  if (isSound(L) !== isSound(T)) return 'Sound clips and picture clips go on separate tracks.';
+  const ms = [...trackOf(T), L];
+  if (ms.some(x => hasMatte(x) || isMatteFor(S.layers.indexOf(x)))) return 'A clip used as or with a track matte keeps its own track.';
+  return '';
+}
+// put clip L on the same track as T (T's row), keeping its time
+function joinTrack(L, T) {
+  if (!L || !T || L === T || (L.track != null && L.track === T.track)) return false;
+  const why = trackBlock(L, T); if (why) { toast(why); return false; }
+  const id = T.track ?? (T.track = uid++);
+  S.layers.splice(S.layers.indexOf(L), 1);
+  const ms = S.layers.filter(x => x.track === id);
+  L.track = id; S.layers.splice(S.layers.indexOf(ms[ms.length - 1]) + 1, 0, L);
+  tidyTracks(); transTok++;
+  return true;
+}
+// several selected clips onto one track (the picture clips on one, the sound clips on another), in time order
+function putOnOneTrack(list) {
+  let moved = 0; const skipped = [];
+  for (const group of [list.filter(x => !isSound(x)), list.filter(isSound)]) {
+    const g = [...group].sort((a, b) => S.layers.indexOf(a) - S.layers.indexOf(b)); if (g.length < 2) continue;
+    for (const x of g.slice(1)) { if (x.track != null && x.track === g[0].track) continue; const why = trackBlock(x, g[0]); if (why) { skipped.push(x.name); continue; } if (joinTrack(x, g[0])) moved++; }
+  }
+  commit(); refresh();
+  notice(moved ? `Put ${moved + 1} clips on one track.${skipped.length ? ` Left out (track mattes): ${skipped.join(', ')}.` : ''}` : 'Those clips are on one track already, or can\'t share one.');
+}
+// take clip L off its track: its own row, just under the track
+function leaveTrack(L) {
+  if (L.track == null) return;
+  const ms = trackOf(L).filter(x => x !== L);
+  S.layers.splice(S.layers.indexOf(L), 1); delete L.track;
+  S.layers.splice(S.layers.indexOf(ms[ms.length - 1]) + 1, 0, L);
+  tidyTracks(); transTok++;
+}
+// The ruler's time labels, only for the part of the timeline in view (plus a screen either side). A long edit has
+// thousands of seconds; drawing a label for each on every drag made dragging clips stiff.
+let rulerSpan = null;
+function rulerMarks() {
+  const pps = S.pps, step = pps > 120 ? 1 : pps > 40 ? 2 : pps > 20 ? 5 : 10, tl = $('#tl');
+  const vw = Math.max(400, tl.clientWidth) / pps, a = Math.max(0, tl.scrollLeft / pps - vw), b = Math.min(duration() + 10, tl.scrollLeft / pps + 2 * vw);
+  rulerSpan = { a, b, pps };
+  let h = '';
+  for (let i = Math.floor(a / step); i * step <= b; i++) h += `<span style="left:${i * step * pps}px">${fmt(i * step).slice(0, 5)}</span>`;
+  return h;
+}
+// scrolling the timeline: redraw the ruler's labels once the view nears the edge of the part already drawn
+function rulerFollow() {
+  const el = $('#tlin .lane.ruler'); if (!el || !rulerSpan) return;
+  const tl = $('#tl'), t0 = tl.scrollLeft / S.pps, t1 = t0 + tl.clientWidth / S.pps, R = rulerSpan;
+  if (R.pps !== S.pps || (t0 < R.a + 1 && R.a > 0) || t1 > R.b - 1) el.innerHTML = rulerMarks();
+}
 function buildTimeline() {
   transTok++;
   const pps = S.pps, laneW = (duration() + 10) * pps, trs = transList();
-  const step = pps > 120 ? 1 : pps > 40 ? 2 : pps > 20 ? 5 : 10;
-  let h = `<div class="trow ruler-row"><div class="thead">Layers</div><div class="lane ruler" data-scrub style="width:${laneW}px">`;
-  for (let i = 0; i * step * pps < laneW; i++) h += `<span style="left:${i * step * pps}px">${fmt(i * step).slice(0, 5)}</span>`;
+  let h = `<div class="trow ruler-row"><div class="thead">Layers</div><div class="lane ruler" data-scrub style="width:${laneW}px">${rulerMarks()}`;
   h += `</div></div><div class="trow mk"><div class="thead">Impacts</div><div class="lane" data-scrub style="width:${laneW}px">`;
   h += S.impacts.map(m => `<div class="mark${S.sel === m.id ? ' sel' : ''}" data-imp="${m.id}" style="left:${m.t * pps}px" title="Impact at ${fmt(m.t)}"></div>`).join('');
   h += `</div></div><div class="trow mk"><div class="thead" title="B adds or removes a bookmark at the playhead; [ and ] jump between them">Bookmarks</div><div class="lane" data-scrub style="width:${laneW}px">`;
   h += S.bookmarks.map(b => `${b.dur > 0 ? `<i class="bmr" style="left:${b.t * pps}px;width:${b.dur * pps}px;--c:${b.color || BM_DEF}"></i>` : ''}<div class="bm${S.sel === b.id ? ' sel' : ''}" data-bm="${b.id}" style="left:${b.t * pps}px;--c:${b.color || BM_DEF}" title="${esc(b.note ? b.note + ' · ' : '')}Bookmark at ${fmt(b.t)}${b.dur > 0 ? ` for ${b.dur.toFixed(1)} s` : ''}"></div>`).join('');
   h += `</div></div>`;
+  tidyTracks();
   const multi = new Set(selIds().slice(1));
-  for (const L of S.layers) {
+  // one clip on the lane: its bar and everything drawn on it (wrapped, so a shared track row knows whose bar it is)
+  const clipHTML = (L, own) => {
     const kt = keyTimes(L);
-    h += `<div class="trow${S.sel === L.id ? ' sel' : ''}${multi.has(L.id) ? ' msel' : ''}${multi.size && S.sel === L.id ? ' mmain' : ''}${L.visible ? '' : ' off'}" data-id="${L.id}">
-      <div class="thead" data-head><button class="eye" data-eye title="Show or hide">${L.visible ? '●' : '○'}</button>${hasSound(L) ? `<button class="eye snd${L.muted ? ' off' : ''}" data-snd title="${L.muted ? 'Sound off. Click to turn this layer\'s sound back on' : 'Sound on. Click to mute just this layer'} (Alt+click: hear only this layer)">${L.muted ? SND_OFF : SND_ON}</button>` : ''}${kt.length ? `<button class="ktog" data-ktog title="${KOPEN.has(L.id) ? 'Hide' : 'Show'} a keyframe lane for each animated property">${KOPEN.has(L.id) ? '▾' : '▸'}</button>` : ''}<span class="num">${S.layers.indexOf(L) + 1}</span><span class="sw" style="background:${KIND_COLOR[L.kind]}"></span><span class="nm" title="${isMatteFor(S.layers.indexOf(L)) ? 'Used as a track matte for the layer below' : ''}">${isMatteFor(S.layers.indexOf(L)) ? '◐ ' : ''}${esc(L.name)}</span></div>
-      <div class="lane" data-scrub style="width:${laneW}px">
+    return `<div class="clipg${own ? '' : `${S.sel === L.id ? ' csel' : ''}${multi.has(L.id) || (multi.size && S.sel === L.id) ? ' cmsel' : ''}${L.visible ? '' : ' coff'}`}" data-lid="${L.id}">
         <div class="bar" data-bar style="left:${L.start * pps}px;width:${Math.max(len(L) * pps, 6)}px;background-color:${KIND_COLOR[L.kind]}"><div class="h l"></div>${L.link != null ? `<b class="lk" title="Linked to its ${L.kind === 'audio' ? 'video' : 'audio'}: they move, trim and split together (hold Alt to drag just this one)">⛓</b>` : ''}${L.muted ? '<b class="lk" title="Sound off">🔇</b>' : ''}${esc(L.name)}<div class="h r"></div></div>
         ${(L.slowmos || []).map(m => { const w = m.hold + 2 * m.ease, a = (m.ease / w * 100).toFixed(1), b = ((m.ease + m.hold) / w * 100).toFixed(1);
           return `<i class="slo" title="Slow-mo ${Math.round(m.speed * 100)}%" style="left:${(L.start + m.t - m.ease) * pps}px;width:${w * pps}px;--a:${a}%;--b:${b}%">${Math.round(m.speed * 100)}%</i>`; }).join('')}
         ${(L.cues || []).filter(c => c.t1 > 0 && c.t0 < L.dur).map(c => `<i class="cue" style="left:${(L.start + Math.max(0, c.t0)) * pps + 1}px;width:${Math.max((Math.min(c.t1, L.dur) - Math.max(0, c.t0)) * pps - 2, 2)}px"></i>`).join('')}
-        ${trs.filter(T => T.B === L).map(T => `<i class="trn" title="${TRANS[T.type].label}" style="left:${T.t0 * pps}px;width:${Math.max((T.t1 - T.t0) * pps, 10)}px"></i>`).join('')}
+        ${trs.filter(T => T.B === L).map(T => `<i class="trn" title="${TRANS[T.type].label}${T.auto ? ' (the two clips overlap on this track)' : ''}" style="left:${T.t0 * pps}px;width:${Math.max((T.t1 - T.t0) * pps, 10)}px"></i>`).join('')}
         ${beatTimesTL(L).map(b => `<i class="bt${selBeat?.id === L.id && selBeat.i === b.i ? ' sel' : ''}" data-bt="${b.i}" style="left:${b.t * pps}px" title="Beat at ${fmt(b.t)}"></i>`).join('')}
         ${kt.map(t => `<i class="kd${S.sel === L.id && S.selKey != null && !S.selKP && Math.abs(S.selKey - t) < 1e-3 ? ' sel' : ''}" data-key="${t}" style="left:${(L.start + t) * pps}px"></i>`).join('')}
-      </div></div>`;
+      </div>`;
+  };
+  for (const row of timelineRows()) {
+    const L = row[0], drop = drag?.dropOn && row.includes(drag.dropOn) ? ' droptgt' : '';
+    if (row.length === 1) {
+      const kt = keyTimes(L);
+      h += `<div class="trow${S.sel === L.id ? ' sel' : ''}${multi.has(L.id) ? ' msel' : ''}${multi.size && S.sel === L.id ? ' mmain' : ''}${L.visible ? '' : ' off'}${drop}" data-id="${L.id}">
+      <div class="thead" data-head><button class="eye" data-eye title="Show or hide">${L.visible ? '●' : '○'}</button>${hasSound(L) ? `<button class="eye snd${L.muted ? ' off' : ''}" data-snd title="${L.muted ? 'Sound off. Click to turn this layer\'s sound back on' : 'Sound on. Click to mute just this layer'} (Alt+click: hear only this layer)">${L.muted ? SND_OFF : SND_ON}</button>` : ''}${kt.length ? `<button class="ktog" data-ktog title="${KOPEN.has(L.id) ? 'Hide' : 'Show'} a keyframe lane for each animated property">${KOPEN.has(L.id) ? '▾' : '▸'}</button>` : ''}<span class="num">${S.layers.indexOf(L) + 1}</span><span class="sw" style="background:${KIND_COLOR[L.kind]}"></span><span class="nm" title="${isMatteFor(S.layers.indexOf(L)) ? 'Used as a track matte for the layer below' : ''}">${isMatteFor(S.layers.indexOf(L)) ? '◐ ' : ''}${esc(L.name)}</span></div>
+      <div class="lane" data-scrub style="width:${laneW}px">${clipHTML(L, true)}</div></div>`;
+    } else {
+      // a shared track: several clips on one row. The head acts on all of them; each bar is its own clip.
+      const sel = row.find(x => x.id === S.sel), anyMulti = row.some(x => multi.has(x.id)), snd = row.filter(hasSound), keyed = row.filter(x => keyTimes(x).length);
+      const allOn = row.every(x => x.visible), sndOn = snd.some(x => !x.muted), kOpen = keyed.some(x => KOPEN.has(x.id));
+      h += `<div class="trow trk${sel || anyMulti ? ' sel' : ''}${row.every(x => !x.visible) ? ' off' : ''}${drop}" data-id="${(sel || L).id}" data-track="${L.track}">
+      <div class="thead" data-head title="${esc(row.map(x => x.name).join('\n'))}"><button class="eye" data-eye title="Show or hide every clip on this track">${allOn ? '●' : '○'}</button>${snd.length ? `<button class="eye snd${sndOn ? '' : ' off'}" data-snd title="${sndOn ? 'Sound on. Click to mute every clip on this track' : 'Sound off. Click to turn this track\'s sound back on'}">${sndOn ? SND_ON : SND_OFF}</button>` : ''}${keyed.length ? `<button class="ktog" data-ktog title="${kOpen ? 'Hide' : 'Show'} keyframe lanes for the clips on this track">${kOpen ? '▾' : '▸'}</button>` : ''}<span class="num">${S.layers.indexOf(L) + 1}</span><span class="sw" style="background:${KIND_COLOR[L.kind]}"></span><span class="nm">Track · ${row.length} clips</span></div>
+      <div class="lane" data-scrub style="width:${laneW}px">${row.map(x => clipHTML(x, false)).join('')}</div></div>`;
+    }
+    for (const L of row) {
+    const kt = keyTimes(L);
     // keyframe lanes: one row per animated property, its diamonds pick, drag and copy just that property
     if (KOPEN.has(L.id) && kt.length) for (const p of Object.keys(L.keys).sort((a, b) => PROP_ORDER(a) - PROP_ORDER(b))) {
       h += `<div class="trow klane${S.sel === L.id && S.selKP === p ? ' sel' : ''}" data-id="${L.id}" data-kp="${p}"><div class="thead"><span class="kn" title="${esc(propLabel(p))} keyframes">${esc(propLabel(p))}</span></div>
         <div class="lane" data-scrub style="width:${laneW}px"><i class="kspan" style="left:${L.start * pps}px;width:${Math.max(len(L) * pps, 6)}px"></i>
         ${L.keys[p].map(k => `<i class="kd${S.sel === L.id && S.selKey != null && S.selKP === p && Math.abs(S.selKey - k.t) < 1e-3 ? ' sel' : ''}" data-key="${+k.t.toFixed(4)}" data-kprop="${p}" style="left:${(L.start + k.t) * pps}px" title="${esc(propLabel(p))} ${fmtKV(p, k.v)} at ${fmt(L.start + k.t)}"></i>`).join('')}
         </div></div>`;
+    }
     }
   }
   h += `<div class="playhead" id="playhead"></div>`;
@@ -4827,8 +5070,17 @@ $('#tl').addEventListener('pointerdown', e => {
       $('#tl').setPointerCapture(e.pointerId); return;
     }
   }
-  const row = tg.closest('.trow'), L = row && byId(+row.dataset.id), t0 = laneX(e);
+  // the clip pressed: on a shared track, the bar (or mark) under the pointer says which clip it is
+  const row = tg.closest('.trow'), own = tg.closest('[data-lid]'), L = own ? byId(+own.dataset.lid) : row && byId(+row.dataset.id), t0 = laneX(e);
+  const trackRow = row?.dataset.track != null ? S.layers.filter(x => x.track === +row.dataset.track) : null;
   selBeat = null;
+  if (trackRow && tg.closest('[data-head]')) {
+    // a shared track's head: the switches act on every clip on it; a click picks them all
+    if (tg.closest('[data-snd]')) { const snd = trackRow.filter(hasSound), on = snd.some(x => !x.muted); snd.forEach(x => x.muted = on); commit(); refresh(); return; }
+    if (tg.closest('[data-eye]')) { const on = trackRow.every(x => x.visible); trackRow.forEach(x => x.visible = !on); commit(); refresh(); return; }
+    if (tg.closest('[data-ktog]')) { const k = trackRow.filter(x => keyTimes(x).length), open = k.some(x => KOPEN.has(x.id)); k.forEach(x => open ? KOPEN.delete(x.id) : KOPEN.add(x.id)); refresh(); return; }
+    setMulti(trackRow.map(x => x.id), L.id); refresh(); return;
+  }
   if (tg.closest('[data-snd]') && L) { toggleSound(L, e.altKey); return; }
   if (tg.closest('[data-eye]') && L) { L.visible = !L.visible; commit(); refresh(); return; }
   if (tg.closest('[data-ktog]') && L) { KOPEN.has(L.id) ? KOPEN.delete(L.id) : KOPEN.add(L.id); refresh(); return; }
@@ -4876,15 +5128,26 @@ $('#tl').addEventListener('pointerdown', e => {
   $('#tl').setPointerCapture(e.pointerId);
   refresh();
 });
-// magnetic snapping: to 0, the playhead, other clips' edges and every beat mark (nearest within 7 px); Shift turns it off
-function snapT(t, L, noPlayhead, skipBm) {
-  if (snapOff) return t;
-  const cands = [0, ...(noPlayhead ? [] : [S.time]), ...S.layers.filter(x => x !== L && !drag?.gset?.has(x)).flatMap(x => [x.start, endOf(x)]), ...allBeatsTL(L),
-    ...S.bookmarks.filter(b => b !== skipBm).flatMap(b => b.dur > 0 ? [b.t, b.t + b.dur] : [b.t])];
-  let best = t, bd = 7;
+// Timeline settings (Properties › Timeline; remembered on this PC): the drag step, and what clips snap to.
+// step: 0 = free, -1 = one frame, otherwise seconds. Shift while dragging turns snapping and the step off.
+const TLSET = { step: 0, snapEdges: true, snapMarks: true };
+try { Object.assign(TLSET, JSON.parse(localStorage.getItem('lumina.tlset') || '{}')); } catch (e) { }
+const saveTLSet = () => { try { localStorage.setItem('lumina.tlset', JSON.stringify(TLSET)); } catch (e) { } };
+const DRAG_STEPS = [[0, 'Free (no step)'], [-1, '1 frame'], [.1, '0.1 s'], [.25, '0.25 s'], [.5, '0.5 s'], [1, '1 s'], [2, '2 s'], [5, '5 s']];
+const stepT = t => { const s = TLSET.step === -1 ? 1 / S.fps : TLSET.step; return s > 0 && !snapOff ? Math.round(t / s) * s : t; };
+// magnetic snapping (nearest within 7 px): to 0 and other clips' edges ("Snap to clip edges"), and to the playhead,
+// beat marks and bookmarks ("Snap to playhead, beats and bookmarks"). Returns null when nothing is close.
+function snapHit(t, L, noPlayhead, skipBm) {
+  if (snapOff) return null;
+  const cands = [];
+  if (TLSET.snapEdges) cands.push(0, ...S.layers.filter(x => x !== L && !drag?.gset?.has(x)).flatMap(x => [x.start, endOf(x)]));
+  if (TLSET.snapMarks) cands.push(...(noPlayhead ? [] : [S.time]), ...allBeatsTL(L), ...S.bookmarks.filter(b => b !== skipBm).flatMap(b => b.dur > 0 ? [b.t, b.t + b.dur] : [b.t]));
+  let best = null, bd = 7;
   for (const c of cands) { const dd = Math.abs(c - t) * S.pps; if (dd < bd) { bd = dd; best = c; } }
   return best;
 }
+// snapped if something is close, otherwise moved onto the drag step
+function snapT(t, L, noPlayhead, skipBm) { return snapHit(t, L, noPlayhead, skipBm) ?? stepT(t); }
 // the times showing in the timeline's lanes right now (the layer names cover the left HEADW pixels)
 function tlView() {
   const tl = $('#tl');
@@ -4929,11 +5192,19 @@ function tlMove(e) {
     const nd = Math.max(-drag.kt, snapT(L.start + drag.kt + d, L, true) - L.start - drag.kt); drag.keys.forEach(([k, kt]) => k.t = kt + nd); S.selKey = drag.kt + nd; Object.values(L.keys).forEach(ks => ks.sort((a, b) => a.t - b.t)); seek(L.start + S.selKey); }
   else if (drag.mode === 'move') {
     // the pressed clip snaps; the rest of the group moves by the same amount (and nothing goes before 0)
-    let s = Math.max(0, drag.start + d); const sEnd = snapT(s + len(L), L) - len(L), sStart = snapT(s, L);
-    let dd = (sStart !== s ? sStart : sEnd) - drag.start;
+    // the start snaps first, then the end; if neither is near anything, the start goes onto the drag step
+    const s = Math.max(0, drag.start + d), hs = snapHit(s, L), he = hs == null ? snapHit(s + len(L), L) : null;
+    let dd = (hs ?? (he != null ? he - len(L) : stepT(s))) - drag.start;
     dd = Math.max(dd, -Math.min(drag.start, ...drag.group.map(g => g.start)));
     L.start = drag.start + dd; drag.group.forEach(g => g.L.start = g.start + dd);
     drag.moved ||= Math.abs(d * S.pps) > 2;
+    // up or down onto another clip's row: let go there and this clip joins that track (one clip at a time)
+    if (selIds().length <= 1 && e.clientY != null) {
+      const over = document.elementsFromPoint(e.clientX, e.clientY).find(x => x.classList?.contains('trow'));
+      const T = over && !over.classList.contains('klane') && over.dataset.id ? byId(+over.dataset.id) : null;
+      drag.dropOn = T && T !== L && !(L.track != null && T.track === L.track) && !trackBlock(L, T) ? T : null;
+      if (drag.dropOn) drag.moved = true;
+    }
   } else if (drag.mode === 'l') {
     // trim the head: content stays put, keyframes stay put on the comp clock
     // (Ripple: the clip keeps its place instead, its content and keyframes slide in, and later clips follow)
@@ -4985,6 +5256,8 @@ $('#tl').addEventListener('pointerup', () => {
   if (drag?.mode === 'beat') { const v = drag.L.beats.times[drag.i]; drag.L.beats.times.sort((a, b) => a - b); selBeat = { id: drag.L.id, i: drag.L.beats.times.indexOf(v) }; }
   // a plain click (no drag) on a clip in the group picks just that clip, as in CapCut
   if (drag?.mode === 'move' && drag.inGroup && !drag.moved) { clearMulti(); S.sel = drag.L.id; }
+  // dropped on another row: the clip joins that track
+  if (drag?.mode === 'move' && drag.dropOn) { const T = drag.dropOn; drag.dropOn = null; if (joinTrack(drag.L, T)) notice(`“${drag.L.name}” is on the same track as “${T.name}” now. Where clips on one track overlap, they blend into each other.`); }
   const box = drag?.box?.on;
   if (drag && drag.mode !== 'scrub') { commit(); refresh(); } drag = null; snapOff = false; tlLastT = S.time;
   if (box) refresh();
@@ -5289,14 +5562,15 @@ function inspector() {
   const bm = selBookmark();
   if (bm) h = bookmarkPanel(bm);
   else if (imp) h = `<h3>Impact</h3><p class="empty">Flash, shake and punch-in zoom on the whole frame.</p>
-    <div class="frow"><label for="i-str">Strength</label><input id="i-str" type="range" min=".2" max="1.5" step=".05" value="${imp.strength}" data-imp="strength"></div>
+    <p class="empty">Each part has its own amount: 0 turns it off.</p>
+    ${IMP_PARTS.map(([p, l, tip]) => `<div class="frow"><label for="i-${p}" title="${tip}">${l}</label><input id="i-${p}" type="range" min="0" max="1.5" step=".05" value="${impAmt(imp, p)}" data-imp="${p}" title="${tip}"><span class="iv" id="iv-${p}">${impAmt(imp, p).toFixed(2)}</span></div>`).join('')}
     <div class="frow"><label for="i-dur">Length</label><input id="i-dur" type="range" min=".1" max="1.2" step=".05" value="${imp.dur}" data-imp="dur"></div>
     <div class="row"><button data-act="copyimp" title="Ctrl+C. Then move the playhead and press Ctrl+V">Copy impact</button><button data-act="del">Delete</button></div>`;
   else if (!L) h = `<h3>Nothing selected</h3><p class="empty">Click a layer in the timeline or on the preview. Each layer's properties can be keyframed: press the diamond next to a property, move the playhead, change the value, and Lumina animates between them.</p>`;
   else {
     const nSel = selIds().length;
     h = (nSel > 1 ? `<div class="group msinfo"><h3>${nSel} clips selected</h3><p class="empty">Dragging, trimming and Delete act on all of them. Ctrl+click adds or removes a clip, Esc keeps just this one. Below: ${esc(L.name)}.</p>
-      <div class="row"><button data-act="del">Delete ${nSel} clips</button><button data-act="msone">Keep just this one</button></div></div>` : '') +
+      <div class="row"><button data-act="del">Delete ${nSel} clips</button><button data-act="msone">Keep just this one</button><button data-act="onetrack" title="All the selected clips share one timeline row (sound clips get a track of their own)">Put on one track</button></div></div>` : '') +
       `<h3><span class="badge" style="background:${KIND_COLOR[L.kind]}">${L.kind}</span>Layer</h3>
       <div class="frow"><label for="f-name">Name</label><input id="f-name" type="text" data-f="name" value="${esc(L.name)}"></div>
       ${L.kind !== 'audio' ? `<div class="frow"><label for="f-blend">Blend</label><select id="f-blend" data-f="blend">${selectOpts(BLENDS, L.blend)}</select></div>` : ''}
@@ -5314,7 +5588,8 @@ function inspector() {
       ${fxAllowed(L) ? fxSummary(L) + compPanel(L) : ''}
       ${exprPanel(L)}
       ${L.kind === 'video' || L.kind === 'image' ? keyPanel(L) : ''}
-      ${L.kind === 'video' ? trackPanel(L) : ''}`;
+      ${L.kind === 'video' ? trackPanel(L) : ''}
+      ${L.kind === 'video' && !L.freeze ? smoothPanel(L) : ''}`;
     if (L.follow) h = h.replace('<div class="group"><h3>Properties</h3>', followPanel(L) + '<div class="group"><h3>Properties</h3>');
     if (S.selKey != null) {
       const ks = keysAtSel(L);
@@ -5326,12 +5601,17 @@ function inspector() {
     if (Object.keys(L.keys).length) h += `<div class="group"><h3>Keyframes</h3><div class="row">
       <button data-act="klanes" title="Show each animated property on its own row under the clip">${KOPEN.has(L.id) ? 'Hide' : 'Show'} keyframe lanes</button>
       <button data-act="copykeys" title="Copies every keyframe on this clip; Ctrl+V pastes them at the playhead on the selected clip">Copy all keyframes</button></div></div>`;
-    h += `<div class="group"><h3>Arrange</h3><div class="row"><button data-act="up">Bring forward</button><button data-act="down">Send back</button><button data-act="dup">Duplicate</button><button data-act="del">Delete</button></div></div>`;
+    h += `<div class="group"><h3>Arrange</h3>${L.track != null ? `<p class="empty">On a shared track with ${trackOf(L).length - 1} other clip${trackOf(L).length === 2 ? '' : 's'}. Drag it onto another row to move it there.</p>` : '<p class="empty">Drag a clip up or down onto another clip\'s row to put them on one track.</p>'}
+      <div class="row"><button data-act="up">Bring forward</button><button data-act="down">Send back</button><button data-act="dup">Duplicate</button><button data-act="del">Delete</button>${L.track != null ? '<button data-act="ownrow" title="Take this clip off the shared track, onto a row of its own">Own track</button>' : ''}</div></div>`;
   }
   h += `<div class="group"><h3>Whole video</h3>
     <div class="frow"><label for="g-grade">Color look</label><select id="g-grade" data-g="grade">${selectOpts(Object.keys(GRADES).map(k => [k, k[0].toUpperCase() + k.slice(1)]), g.grade)}</select></div>
     <div class="frow"><label for="g-vig">Vignette</label><input id="g-vig" type="range" min="0" max=".9" step=".01" value="${g.vignette}" data-g="vignette"></div>
-    <div class="frow"><label for="g-lb">Cinema bars</label><input id="g-lb" type="range" min="0" max=".3" step=".01" value="${g.letterbox}" data-g="letterbox"></div></div>` + canvasBgPanel(g);
+    <div class="frow"><label for="g-lb">Cinema bars</label><input id="g-lb" type="range" min="0" max=".3" step=".01" value="${g.letterbox}" data-g="letterbox"></div></div>` + canvasBgPanel(g) +
+    `<div class="group"><h3>Timeline</h3><p class="empty">How clips move when you drag them on the timeline. Hold Shift while dragging to move freely for that drag.</p>
+    <div class="frow"><label for="tl-step">Drag step</label><select id="tl-step" data-tl="step">${DRAG_STEPS.map(([v, l]) => `<option value="${v}"${TLSET.step === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="frow"><label for="tl-edge">Snap</label><label><input id="tl-edge" type="checkbox" data-tl="snapEdges"${TLSET.snapEdges ? ' checked' : ''}> To the edges of other clips</label></div>
+    <div class="frow"><label for="tl-mark"></label><label><input id="tl-mark" type="checkbox" data-tl="snapMarks"${TLSET.snapMarks ? ' checked' : ''}> To the playhead, beats and bookmarks</label></div></div>`;
   $('#inspector').innerHTML = h;
   drawCurveEditor(); drawKGraph();
 }
@@ -5543,7 +5823,12 @@ $('#inspector').addEventListener('input', e => {
     const k = el.dataset.cap; L[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? +el.value : el.value;
     if (k === 'capBox') inspector();
   } else if (el.dataset.g) { S.global[el.dataset.g] = el.type === 'range' ? +el.value : el.value; if (el.dataset.g === 'bg') inspector(); }
-  else if (el.dataset.imp) { const m = S.impacts.find(x => x.id === S.sel); m[el.dataset.imp] = +el.value; }
+  else if (el.dataset.imp) {
+    const m = S.impacts.find(x => x.id === S.sel), p = el.dataset.imp;
+    // an older impact's single strength becomes three separate amounts the first time one is moved
+    if (p !== 'dur' && m.strength != null) { for (const [q] of IMP_PARTS) m[q] = impAmt(m, q); delete m.strength; }
+    m[p] = +el.value; const iv = $('#iv-' + p); if (iv) iv.textContent = (+el.value).toFixed(2);
+  }
   else if (el.dataset.tsize !== undefined) trackSize = el.value;
   else if (el.dataset.lut !== undefined && L) {
     if (el.value === '__load') { el.value = L.lut || ''; lutTarget = L.id; $('#lutfile').click(); return; }
@@ -5583,6 +5868,11 @@ $('#inspector').addEventListener('input', e => {
   } else if (el.dataset.ease !== undefined && L) { if (el.value !== 'custom') setKeyEase(L, el.value); drawKGraph(); }
 });
 function fieldChanged() {}
+// Timeline settings: kept for this PC, not in the project (and not undoable), so commit() isn't needed
+$('#inspector').addEventListener('change', e => {
+  const k = e.target.dataset?.tl; if (!k) return;
+  TLSET[k] = k === 'step' ? +e.target.value : e.target.checked; saveTLSet(); e.stopImmediatePropagation();
+}, true);
 $('#inspector').addEventListener('change', () => commit());
 $('#inspector').addEventListener('click', e => {
   const L = selLayer(), b = e.target.closest('button'); if (!b) return;
@@ -5687,6 +5977,11 @@ function action(a, b) {
   if (a === 'capfile') { $('#file').click(); return; }
   if (a === 'stswap' && L) { openStickers(L.id); return; }
   if (a === 'sepaudio' && L) { separateAudio(L); return; }
+  if (a === 'ownrow' && L) { leaveTrack(L); commit(); refresh(); return; }
+  if (a === 'onetrack') { putOnOneTrack(selLayers()); return; }
+  if (a === 'optmake' && L) { makeEditCopy(L); return; }
+  if (a === 'optcancel' && L) { lumina.cancelOptimize(L.media); return; }
+  if (a === 'optorig' && L) { const m = MEDIA[L.media], cp = m.path, orig = m.origPath; if (orig) for (const id in MEDIA) if (MEDIA[id].path === cp && MEDIA[id].origPath === orig) useMediaFile(+id, orig, null); inspector(); return; }
   if (a === 'unlink' && L) unlinkClip(L);
   if (a === 'linksel' && linkMate(L)) { clearMulti(); S.sel = linkMate(L).id; S.selKey = null; refresh(); return; }
   if (a === 'autocap' && L) { pause(); autoCaptions(L); return; }
@@ -5839,7 +6134,7 @@ function captionPanel(L) {
       <button data-act="capdel" data-ci="${i}" title="Delete this line">✕</button></div>`).join('')}</div>
     <div class="row"><button data-act="capadd" title="A new 2-second line at the playhead">Add line here</button><button data-act="capsrt">Export SRT…</button><button data-act="capfile">Import SRT/VTT…</button></div></div>`;
 }
-function addImpact() { const m = { id: uid++, t: S.time, strength: 1, dur: .4 }; S.impacts.push(m); S.sel = m.id; commit(); refresh(); }
+function addImpact() { const m = { id: uid++, t: S.time, flash: 1, shake: 1, zoom: 1, dur: .4 }; S.impacts.push(m); S.sel = m.id; commit(); refresh(); }
 function split() {
   let L = selLayer();
   const inside = x => x && S.time > x.start + .05 && S.time < endOf(x) - .05;
@@ -6043,7 +6338,7 @@ function markDirty(v = true) {
 function projectJSON() {
   const media = {};
   for (const id of new Set(S.layers.flatMap(L => [L.media, L.texMedia]).filter(Boolean))) {
-    const m = MEDIA[id]; media[id] = { path: m.path || null, type: m.type, name: m.name, duration: m.duration, w: m.w, h: m.h, ...(m.svg ? { svg: true } : {}) };
+    const m = MEDIA[id]; media[id] = { path: m.path || null, type: m.type, name: m.name, duration: m.duration, w: m.w, h: m.h, ...(m.svg ? { svg: true } : {}), ...(m.origPath ? { origPath: m.origPath } : {}) };
   }
   const luts = {};
   for (const L of S.layers) if (L.lut?.startsWith('u:') && LUTS[L.lut]) { const l = LUTS[L.lut]; luts[L.lut] = { name: l.name, N: l.N, data: Array.from(l.data, v => +v.toFixed(4)) }; }
@@ -6163,6 +6458,7 @@ $('#btnPlay').onclick = () => S.playing ? pause() : play();
 $('#btnStart').onclick = () => { pause(); seek(0); };
 $('#btnExport').onclick = chooseExport;
 $('#zoom').oninput = e => { S.pps = +e.target.value; buildTimeline(); };
+$('#tl').addEventListener('scroll', rulerFollow, { passive: true });
 // the scroll wheel over the timeline's lanes moves it left and right (a trackpad's sideways swipe too); Shift+wheel
 // scrolls the layers up and down, as does the wheel over the layer names; Ctrl+wheel zooms around the pointer
 $('#tl').addEventListener('wheel', e => {
@@ -6228,11 +6524,14 @@ const spaceUp = () => { spaceKey = null; $('#viewport').classList.remove('space'
 document.addEventListener('keyup', e => { if (e.code === 'Space') spaceUp(); });
 window.addEventListener('blur', spaceUp);
 
-function loop() {
+function loop() { tick(); requestAnimationFrame(loop); }
+// one frame of the editor (the self-tests can call this on a timer, since a covered window gets few screen refreshes)
+function tick() {
   // while exporting, follow the wall clock exactly (the recorder does); a slow frame then drops frames instead of stretching the video
   const now = performance.now(), dt = Math.min((now - lastNow) / 1000, S.exporting ? 1 : .1); lastNow = now;
   if (S.playing) {
-    S.time += dt; masterClock();
+    // (an export follows the wall clock, as the recorder does, so it never waits)
+    if (S.exporting || !waitForMedia(dt)) { S.time += dt; masterClock(); }
     if (S.time >= duration()) { S.time = duration(); pause(); if (S.exporting) finishExport(); }
     const tl = $('#tl'), x = HEADW + S.time * S.pps;
     if (x > tl.scrollLeft + tl.clientWidth - 40) tl.scrollLeft = x - HEADW - 80;
@@ -6245,7 +6544,6 @@ function loop() {
   if (S.playing || drag) syncInspector();
   drawHistogram();
   if (S.exporting) $('#mBar').style.width = (S.time / duration() * 100) + '%';
-  requestAnimationFrame(loop);
 }
 if (window.lumina) {
   // File menu (desktop only)
@@ -6414,7 +6712,9 @@ function railDropAt(e) {
   let t = null, onto = null;
   if (inTl) {
     t = Math.max(0, (e.clientX - r.left + tl.scrollLeft - HEADW) / S.pps);
-    const row = e.target.closest?.('.trow[data-id]'); onto = row && !row.classList.contains('klane') ? byId(+row.dataset.id) : null;
+    // (on a shared track, the clip whose bar it was dropped on)
+    const row = e.target.closest?.('.trow[data-id]'), own = e.target.closest?.('[data-lid]');
+    onto = row && !row.classList.contains('klane') ? byId(+(own ? own.dataset.lid : row.dataset.id)) : null;
     // only a transition goes onto a clip; anything else is added at the drop time
     if (!spec.startsWith('trans:')) onto = null; else t = null;
   }

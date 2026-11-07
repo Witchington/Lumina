@@ -57,7 +57,11 @@ function serveFile(file, request) {
 function registerProtocol() {
   protocol.handle('lumina', request => {
     const url = new URL(request.url);
-    if (url.host === 'app' && url.pathname.startsWith('/@media/')) return serveFile(decodeURIComponent(url.pathname.slice('/@media/'.length)), request);
+    if (url.host === 'app' && url.pathname.startsWith('/@media/')) {
+      const file = decodeURIComponent(url.pathname.slice('/@media/'.length)), slow = SELFTEST ? +url.searchParams.get('slow') || 0 : 0;
+      // the self-test can play a file "from a slow drive": each read waits this many milliseconds
+      return slow ? new Promise(r => setTimeout(() => r(serveFile(file, request)), slow)) : serveFile(file, request);
+    }
     if (url.host === 'app' && url.pathname.startsWith('/@models/')) {
       // downloaded speech model files, only from inside Lumina's models folder
       const file = path.normalize(path.join(MODELS, decodeURIComponent(url.pathname.slice('/@models/'.length))));
@@ -264,6 +268,62 @@ ipcMain.handle('export:convert', async (e, { data, name, fmt, src, duration, w, 
     await runFFmpeg(ffmpegArgs(fmt, src, tmp, target, { w, h, fps }), duration, f => e.sender.send('export:progress', f));
   } finally { fs.rmSync(tmp, { force: true }); }
   return target;
+});
+
+// ---------- smooth editing copies ----------
+// Why a video is slow to jump around in: a video only stores a full picture now and then (a "keyframe"); every other
+// frame is a change from the one before. Jumping to a frame means decoding from the keyframe before it. Movies and
+// downloads often have a keyframe only every 5-10 s, and HEVC / AV1 / 4K / 60 fps make each frame heavier still, so
+// on a slower PC every jump (scrubbing, a cut, a new clip starting) waits while seconds of video are decoded.
+// An editing copy is H.264 with a keyframe every half second, at most 1080p: every jump is quick.
+ipcMain.handle('media:probe', async (e, file) => {
+  if (!file || !fs.existsSync(file)) return null;
+  const s = (await runText(FFMPEG, ['-hide_banner', '-i', file])).err;
+  const dm = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(s), vline = (/Stream #[^\n]*Video:[^\n]*/.exec(s) || [''])[0];
+  if (!vline) return { video: false };
+  const wh = /\b(\d{2,5})x(\d{2,5})\b/.exec(vline), fps = /([\d.]+) fps/.exec(vline) || /([\d.]+) tbr/.exec(vline);
+  const out = { video: true, codec: (/Video:\s*(\w+)/.exec(vline) || [])[1] || '', w: wh ? +wh[1] : 0, h: wh ? +wh[2] : 0, fps: fps ? +fps[1] : 0,
+    duration: dm ? +dm[1] * 3600 + +dm[2] * 60 + +dm[3] : 0, kbps: +((/bitrate:\s*(\d+) kb\/s/.exec(s) || [])[1] || 0),
+    audio: (/Stream #[^\n]*Audio:\s*(\w+)/.exec(s) || [])[1] || '', size: fs.statSync(file).size };
+  // keyframes in the first minute (only keyframes are decoded, so this is quick)
+  const k = (await runText(FFMPEG, ['-hide_banner', '-skip_frame', 'nokey', '-t', '60', '-i', file, '-map', '0:v:0', '-vf', 'showinfo', '-f', 'null', '-'])).err;
+  const kt = [...k.matchAll(/pts_time:\s*([\d.]+)/g)].map(m => +m[1]);
+  const span = Math.min(60, out.duration || 60);
+  out.keyGap = kt.length > 1 ? +((kt[kt.length - 1] - kt[0]) / (kt.length - 1)).toFixed(2) : +span.toFixed(2);
+  return out;
+});
+const optJobs = {};
+ipcMain.handle('media:cancel', (e, id) => { const j = optJobs[id]; if (j) { j.cancelled = true; killTree(j.proc); } return true; });
+ipcMain.handle('media:optimize', async (e, { id, file, fps, w, h, duration, audio }) => {
+  if (!file || !fs.existsSync(file)) throw new Error('The video file isn\'t there any more.');
+  const { dir, name } = path.parse(file);
+  // next to the original (so it travels with it); if that folder can't be written to, in Videos\Lumina edit copies
+  let folder = dir; try { fs.accessSync(dir, fs.constants.W_OK); } catch { folder = path.join(app.getPath('videos'), 'Lumina edit copies'); fs.mkdirSync(folder, { recursive: true }); }
+  const target = path.join(folder, `${name} (edit copy).mp4`);
+  // made before and still newer than the original: use it as it is
+  try { if (fs.statSync(target).mtimeMs > fs.statSync(file).mtimeMs && fs.statSync(target).size > 0) return target; } catch {}
+  const part = target + '.part.mp4';
+  // at most 1080 on the short side; even sizes for H.264
+  const big = Math.min(w, h) > 1080, vf = big ? (w >= h ? 'scale=-2:1080' : 'scale=1080:-2') : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  const args = ['-hide_banner', '-y', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
+    // a full picture every half second by the clock (phone and screen recordings have no steady frame rate), and the
+    // frames keep their own timing (otherwise a variable-rate file gets padded out to 1000 frames a second)
+    '-force_key_frames', 'expr:gte(t,n_forced*0.5)', '-fps_mode', 'vfr', '-vf', vf, ...(audio === 'aac' ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '192k']),
+    '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', part];
+  const J = optJobs[id] = { cancelled: false, proc: null };
+  try {
+    await new Promise((resolve, reject) => {
+      const p = J.proc = require('child_process').spawn(FFMPEG, args, { windowsHide: true });
+      let err = '';
+      p.stdout.on('data', d => { const m = /out_time_us=(\d+)/.exec(String(d)); if (m && duration > 0 && !e.sender.isDestroyed()) e.sender.send('media:progress', { id, f: Math.min(1, +m[1] / 1e6 / duration) }); });
+      p.stderr.on('data', d => { err = (err + d).slice(-4000); });
+      p.on('error', reject);
+      p.on('close', code => J.cancelled ? reject(new Error('Cancelled.')) : code === 0 ? resolve() : reject(new Error(err.trim().split('\n').slice(-3).join('\n') || 'FFmpeg stopped with code ' + code)));
+    });
+    fs.renameSync(part, target);
+    return target;
+  } catch (err) { fs.rmSync(part, { force: true }); throw err; }
+  finally { delete optJobs[id]; }
 });
 
 // ---------- Converter: paste a link, get an MP3 or MP4 ----------
