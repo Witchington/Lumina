@@ -17,7 +17,13 @@ Help › Send feedback… opens a form (version, Windows version, three question
 Lumina sends nothing itself. Version and Windows come from `lumina.info` (main.js `app:info`). Test-installed silently into
 the scratchpad, both the speed and main suites passed on the installed copy, then uninstalled. The uninstaller leaves
 `HKCU\Software\Classes\.lumina` behind (a pointer to a removed type, harmless); it was deleted by hand after the test.
-Feedback from friends may change what comes next; ask the user. Sharing the setup file is the user's job: **never upload it**.
+Feedback from friends may change what comes next; ask the user. Don't upload setup files by hand; GitHub's workflow builds them (below).
+**GitHub (2026-11-07, the user's request):** private repo https://github.com/Witchington/Lumina (signed in with `gh` as Witchington;
+Git and GitHub CLI installed with winget). Version is now **0.9.1**; the setup is `dist\Lumina-Setup-<version>.exe`. Pushing a tag
+`v<version>` (matching package.json) runs `.github/workflows/release.yml`: it makes the release, then builds the Windows setup
+and the Linux AppImage (`Lumina-<version>-x86_64.AppImage`) on GitHub's machines and attaches both. The friend's Linux block
+(no-sandbox in AppImages, WebGPU switch, LUMINA_SOFTWARE / LUMINA_X11) is merged into main.js. The Linux build is untested on
+a real Linux PC. Speed test step 24 holds the version in `VER`: change it with each version bump.
 The beginner layout, for reference:
 - **B1 Tool rail (done):** icon tabs down the left (Media, Text, Stickers, Effects, Transitions, Captions, Audio, Adjust), each
   opening a browsable panel with previews to click or drag in, like CapCut. Leave room for an Image tab (PhotoCraft).
@@ -105,6 +111,7 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-07)
+- **GitHub + Linux (2026-11-07):** private repo, release workflow for Windows + Linux, 0.9.1; see "Start here next".
 - **Converter fix: titles with "/" (2026-11-07, the user's report "yt-dlp stopped with code 0"):** a YouTube title with
   "///" is saved by yt-dlp with look-alike slashes (⧸), but its Windows console output drops them, so the printed
   LUMINAFILE path didn't exist and a finished download counted as a failure. yt-dlp now saves to `download.<ext>` in the
@@ -445,14 +452,13 @@ Sources:
 
 ## On hold from before
 3D text, extruded SVG logos, 3D look-and-feel pass, faster export with presets, auto captions.
-Linux build (2026-11-07, user: "just forget the linux build for now"; only bring it up if the user does): a friend's AppImage
-copy sits in `D:\Lumina\lumina linux build` (0.9.0 + a Linux block in main.js and a Linux package.json; reviewed, not merged).
+Linux build: merged and built by GitHub since 0.9.1 (the user asked for it 2026-11-07). The friend's copy stays in `lumina linux build` for reference.
 
 ---
 
 ## Reminders for Claude
 - Do one feature at a time, test it, and ask before changing anything on the system.
-- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all six suites.
+- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all eight suites.
 - The eight suites and their expected `false` results (`beat` and `speed` were added 2026-11-06 and expect none):
   - `beat`: none
   - `speed`: none

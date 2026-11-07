@@ -845,14 +845,15 @@
 
     // ---- 24. C15 friends' test release: version, About box, Help › Send feedback
     {
-      const fbInfo = lumina.info?.version === '0.9.0' && /^Windows \d/.test(lumina.info?.os || '');
+      const VER = '0.9.1', VERX = VER.replace(/\./g, '\\.'); // the version in package.json
+      const fbInfo = lumina.info?.version === VER && /^Windows \d/.test(lumina.info?.os || '');
       const help = MENUS.Help(), names = help.filter(Array.isArray).map(m => m[0]);
       const fbMenu = names.includes('Send feedback…') && names.includes('About Lumina') && help.find(m => m[0] === 'About Lumina')[3] !== false;
       help.find(m => m[0] === 'About Lumina')[2]();
-      const fbAbout = !$('#modal').hidden && $('#mTitle').textContent === 'About Lumina' && /Lumina 0\.9\.0 \(test version\)/.test($('#mText').textContent) && /Send feedback/.test($('#mText').textContent);
+      const fbAbout = !$('#modal').hidden && $('#mTitle').textContent === 'About Lumina' && new RegExp('Lumina ' + VERX + ' \\(test version\\)').test($('#mText').textContent) && /Send feedback/.test($('#mText').textContent);
       $('#modal').hidden = true;
       help.find(m => m[0] === 'Send feedback…')[2](); await new Promise(r => setTimeout(r, 50));
-      const fbT = $('#fbText'), fbForm = !$('#modal').hidden && !!fbT && /Version: 0\.9\.0 \(test\)/.test(fbT.value) && /Computer: Windows \d/.test(fbT.value) && /What would you change or add\?/.test(fbT.value);
+      const fbT = $('#fbText'), fbForm = !$('#modal').hidden && !!fbT && new RegExp('Version: ' + VERX + ' \\(test\\)').test(fbT.value) && /Computer: Windows \d/.test(fbT.value) && /What would you change or add\?/.test(fbT.value);
       const fbCaret = document.activeElement === fbT && fbT.value.slice(0, fbT.selectionStart).endsWith('What were you doing?\n');
       fbT.value = fbT.value.replace('What were you doing?\n', 'What were you doing?\nTesting the feedback box\n');
       $('#fbCopy').click(); await new Promise(r => setTimeout(r, 400));
