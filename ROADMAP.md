@@ -21,7 +21,7 @@ Feedback from friends may change what comes next; ask the user. Don't upload set
 **GitHub (2026-11-07, the user's request):** private repo https://github.com/Witchington/Lumina (signed in with `gh` as Witchington;
 Git and GitHub CLI installed with winget). Version is now **0.9.1**; the setup is `dist\Lumina-Setup-<version>.exe`. Pushing a tag
 `v<version>` (matching package.json) runs `.github/workflows/release.yml`: it makes the release, then builds the Windows setup
-and the Linux AppImage (`Lumina-<version>-x86_64.AppImage`) on GitHub's machines and attaches both. The friend's Linux block
+and the Linux AppImage (`Lumina-<version>-Linux-x86_64.AppImage`) on GitHub's machines and attaches both. The friend's Linux block
 (no-sandbox in AppImages, WebGPU switch, LUMINA_SOFTWARE / LUMINA_X11) is merged into main.js. The Linux build is untested on
 a real Linux PC. Speed test step 24 holds the version in `VER`: change it with each version bump.
 The beginner layout, for reference:

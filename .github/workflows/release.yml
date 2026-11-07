@@ -21,7 +21,7 @@ jobs:
         run: |
           tag="v$(node -p "require('./package.json').version")"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Lumina ${tag#v}" --target "$GITHUB_SHA" \
-            --notes "Windows: download **Lumina-Setup-${tag#v}.exe** and run it. Linux: download **Lumina-${tag#v}-x86_64.AppImage**, make it executable (chmod +x) and run it."
+            --notes "Windows: download **Lumina-Setup-${tag#v}.exe** and run it. Linux: download **Lumina-${tag#v}-Linux-x86_64.AppImage**, make it executable (chmod +x) and run it."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
