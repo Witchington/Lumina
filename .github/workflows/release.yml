@@ -1,0 +1,49 @@
+# Builds the Windows setup and the Linux AppImage on GitHub's own machines and puts both on a Release.
+# Runs when a version tag like v0.9.1 is pushed, or by hand from the Actions tab ("Run workflow").
+name: Build and release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # make the release first, so the two builds don't both try to create it at once
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the release for this version
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Lumina ${tag#v}" --target "$GITHUB_SHA" \
+            --notes "Windows: download **Lumina-Setup-${tag#v}.exe** and run it. Linux: download **Lumina-${tag#v}-x86_64.AppImage**, make it executable (chmod +x) and run it."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build and upload to the release
+        run: npx electron-builder ${{ matrix.target }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

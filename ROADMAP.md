@@ -1,0 +1,466 @@
+# Lumina roadmap
+
+Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An editor for everything.
+
+**This is the plan to follow. Open it first every session.** Work through the Order below, one step at a time.
+`WORKPLAN.md` only holds the details behind each step: the full round lists and the CapCut notes.
+
+---
+
+## ▶ Start here next: EffectCraft Round 8 (Colour II)
+The CapCut phase (C1–C14), the beginner layout (B1–B4) and C15 Friends test release are all done (2026-11-07).
+The Converter tab (links → MP3/MP4 via yt-dlp) was added the same day, then the timeline scrolling fix, layer mute
+and impact copy/paste; see "Where things stand".
+**C15:** version 0.9.0; `dist\Lumina Setup 0.9.0.exe` (~146 MB, installs ~450 MB) lets friends choose the folder and
+adds desktop + Start menu shortcuts and the .lumina file type. Help › About Lumina says "Lumina 0.9.0 (test version)";
+Help › Send feedback… opens a form (version, Windows version, three questions) to fill in and Copy into a message;
+Lumina sends nothing itself. Version and Windows come from `lumina.info` (main.js `app:info`). Test-installed silently into
+the scratchpad, both the speed and main suites passed on the installed copy, then uninstalled. The uninstaller leaves
+`HKCU\Software\Classes\.lumina` behind (a pointer to a removed type, harmless); it was deleted by hand after the test.
+Feedback from friends may change what comes next; ask the user. Sharing the setup file is the user's job: **never upload it**.
+The beginner layout, for reference:
+- **B1 Tool rail (done):** icon tabs down the left (Media, Text, Stickers, Effects, Transitions, Captions, Audio, Adjust), each
+  opening a browsable panel with previews to click or drag in, like CapCut. Leave room for an Image tab (PhotoCraft).
+- **B2 Clip quick bar (done):** with a clip picked, big icon buttons above the timeline (Split, Speed, Mask, Freeze, Separate
+  audio, Volume, Canvas, Animate, Delete), each jumping to the right settings.
+- **B3 Beginner / Pro switch: built, then removed at the user's request (2026-11-07).** Lumina always shows every
+  setting (what was "Pro"). Don't bring a mode switch back unless the user asks.
+- **B4 Welcome + tips (done):** first-run welcome (new, open, sizes like YouTube / TikTok / Square) and one-time tips pointing at
+  key features, which can be turned off.
+
+### Notes for friends' installs
+**Whisper:** the model is not in the setup. Each friend's Lumina downloads it (77 MB) the first time they click Make
+captions, and the button says so.
+**Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
+### EffectCraft, next
+EffectCraft carries on at **Round 8 (Colour II)**: Exposure, Photo Filter, Shadow/Highlight, Change Color,
+Change to Color, Leave Color, Color Balance (HLS), Gamma/Pedestal/Gain, CC Toner, CC Color Offset.
+(Tip for then: Exposure is already in the `kernels` pointwise shader, mode 5. Check which other `.wgsl` files a
+shader file calls into; Round 7's `fx_color` needed `fx_lut` compiled alongside it.)
+
+Every EffectCraft round follows the same steps:
+1. Port the effects.
+2. Self-test them on known colour patches.
+3. Run a speed check.
+4. Update `effects.png`.
+5. Rebuild.
+6. Run all eight suites.
+
+---
+
+## Order (set by the user 2026-11-07)
+Goal: **Lumina is After Effects, Photoshop and CapCut all in one.**
+
+0. **CapCut phase: done (C1–C15, finished 2026-11-07).** Beat sync, bookmarks, velocity curves, anime VFX, ripple editing,
+   multi-select, mask shapes, canvas background, captions, stickers, separate audio, clipboard and keyframe tools, preview
+   zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
+   The step-by-step record is kept below for reference.
+1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
+   **Where we left off: Rounds 1–7 are done; Round 8 (Colour II) is next.** About 248 effects are left, in Rounds 8–31+.
+   - Round 8: Exposure, Photo Filter, Shadow/Highlight, Change Color, Change to Color, Leave Color, and more
+   - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
+   - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
+     They go in just before the effects that need a second layer or other frames (from Round 16, Displacement Map, onward).
+2. **Start and finish PhotoCraft** (https://github.com/storytold/photocraft) as Lumina's **Image mode**, the Photoshop side:
+   paint layers and brushes, selections, adjustment layers, layer styles, crop/resize and PNG/JPG export.
+   Its detailed roadmap gets built when we reach this step.
+
+After those two (only when the user says so): Claude's own features, fixes and tweaks — motion blur, pen-tool masks with
+feather animated over time, the on-hold list below, and fixes spotted along the way.
+
+### CapCut phase record (done)
+Sources:
+   - **OpenCut** (https://github.com/opencut-app/opencut, MIT). Its `main` branch is a rewrite with almost no features yet,
+     so the working editor is **opencut-classic** (https://github.com/opencut-app/opencut-classic, MIT, v0.3.0,
+     commit `cf5e79e9`). That is the version opencut.app runs.
+   - The CapCut anime-edit notes in WORKPLAN.md section 5.
+
+   Steps, in order (details in WORKPLAN.md section 5):
+   - **C1 Beat sync:** detect beats in the music, show beat markers on the timeline, snap clips, cuts and keyframes to them,
+     and auto cut on beat.
+   - **C2 Bookmarks** (OpenCut): timeline markers with notes, colour labels and an optional duration.
+   - **C3 Velocity curves:** a bezier speed-curve editor; CapCut-style presets (Montage, Hero, Bullet, Jump cut, Flash in/out);
+     freeze frame; speeds above 400%; keep pitch when sped up (OpenCut); smooth frame blending.
+   - **C4 GPU anime VFX:** RGB split / chromatic aberration, edge glow, flash overlays, VHS glitch and camera shake,
+     all triggerable by beats.
+   - **C5 Ripple editing** (OpenCut): closing a gap pulls the later clips along.
+   - **C6 Multi-select** (OpenCut): select several clips, then move and resize them together.
+   - **C7 Mask shapes** (OpenCut): split, star, heart, diamond and cinematic bars, with feather and stroke,
+     added to Lumina's rectangle and ellipse.
+   - **C8 Canvas background** (OpenCut): blur, solid colour or gradient behind the video (CapCut's blurred background for
+     vertical clips).
+   - **C9 Captions** (OpenCut): import SRT/VTT transcripts as styled captions. Auto captions (speech to text) is included,
+     but it downloads a speech model, so I'll ask you first.
+   - **C10 Stickers** (OpenCut): shapes and emoji/flag stickers.
+   - **C11 Separate audio** (OpenCut): split a video's sound into its own audio clip.
+   - **C12 Clipboard and keyframe tools** (OpenCut): paste media from the clipboard, copy/paste keyframes, and a keyframe lane
+     per property on a clip.
+   - **C13 Preview zoom and pan** (OpenCut). Done.
+   - **C14 Graph editor** (OpenCut): drag bezier handles to shape easing between keyframes. This was moved forward from step 4. Done.
+   - **C15 Friends test release** (the user's request, right after C14): a setup file to send to friends. Done (0.9.0,
+     2026-11-07): `dist\Lumina Setup 0.9.0.exe`, About box, Help › Send feedback…, test-installed and uninstalled cleanly.
+     Not done (dropped for now): installer page polish, crash log. Sharing the setup is the user's job; never upload it.
+   - C1–C12 and the beginner layout B1, B2, B4 are all done too (B3 was built and then removed).
+
+---
+
+## Where things stand (updated 2026-11-07)
+- **Converter fix: titles with "/" (2026-11-07, the user's report "yt-dlp stopped with code 0"):** a YouTube title with
+  "///" is saved by yt-dlp with look-alike slashes (⧸), but its Windows console output drops them, so the printed
+  LUMINAFILE path didn't exist and a finished download counted as a failure. yt-dlp now saves to `download.<ext>` in the
+  work folder and Lumina finds the file there; the title comes as JSON (`%(title)j`), so the final name keeps the ⧸.
+  stdout is read with `setEncoding('utf8')`. Converter test now also converts a local "slash ⧸⧸⧸ test.webm" (`cvSlash`).
+- **Layer mute, impact copy/paste, grabbable playhead (2026-11-07, asked for by the user and their friend):**
+  - A speaker button in each sound layer's header (`hasSound`, `toggleSound`, `[data-snd]`) mutes just that layer (`L.muted`,
+    the same flag as the video's Mute box, so playback and export both go silent). Shown on audio clips and on videos that
+    still carry their sound; a video whose sound was separated has none (its audio clip has the button). Alt+click hears
+    only that layer; Alt+click it again turns every layer back on. Undoable, saved with the project.
+  - Impacts: Ctrl+C / Ctrl+X / Ctrl+V (and a "Copy impact" button, Edit menu "Copy impact" / "Cut impact") copy the
+    picked impact with its strength and length and paste it at the playhead (`copyImpact`, `pasteImpact`, CLIP kind
+    `impact`). Pasting where an impact already is gets refused with a message.
+  - Keyframe copy/paste already existed (C12); fixed Ctrl+X with a keyframe picked: it now cuts just the keyframe, not the clip.
+  - The playhead line can be grabbed anywhere along it (over clips too) and dragged: `.playhead::before` is a 10 px
+    invisible grip; `drag.grab` keeps the gap to the pointer so it doesn't jump. Keyframes, beats, impacts, bookmarks and
+    clip trim edges right under the line still win (`elementsFromPoint`). Speed step 29 `playheadGrab` (it hides the
+    dialog an earlier step leaves open over the timeline).
+  - Speed suite steps 27 `layerMute` and 28 `copyImpacts`. Step 26's jump-follow check now waits, then runs `tlFollow`
+    itself if Windows paused the screen loop (window covered).
+- **Timeline scrolling fix (2026-11-07, the user's report):** the playhead could slide under the layer names
+  (Layers / Impacts / Bookmarks column) when scrubbing left.
+  - Scrubbing now stops the playhead at the edge of the lanes (`tlView()` gives the visible times).
+  - Holding the pointer past the left or right edge during any timeline drag auto-scrolls that way, faster the further
+    out, and the playhead or dragged clip keeps up. `tlEdgeScroll` runs on its own 16 ms timer, not the screen refresh,
+    which Windows throttles when the window is covered.
+  - A jump out of sight (arrows, Home/End, bookmarks) scrolls to show the playhead (`tlFollow`). Only on a jump, so
+    wheel-scrolling away stays put.
+  - Mouse wheel over the lanes scrolls left/right (a trackpad's sideways swipe too). Over the layer names it scrolls up and
+    down as before. Shift+wheel scrolls up/down anywhere. Ctrl+wheel zooms around the pointer (also moves the Zoom slider).
+  - Speed suite step 26 `timelineEdges` (uses a 60 s title so there's room to scroll).
+- **Converter tab done (2026-11-07, the user's request before EffectCraft Round 8):** tool rail › Converter. Paste a link,
+  pick MP4 (video + sound) or MP3 (sound only, optional "Even out the loudness" = loudnorm −14 LUFS), Convert (or Enter).
+  Links queue and run one at a time; each shows a progress bar and plain-words errors (private, age-restricted, sign-in,
+  unsupported, unavailable, network, 403) with Try again / Dismiss and a toast. Finished files are listed (kept in
+  localStorage `lumina.convRecent`) with Add to timeline / Show in folder. Saves to Downloads unless Change… picks a folder
+  (`lumina.convFolder`). Also `lumina.convFmt`, `lumina.convNorm`.
+  - **How it works (main.js "Converter"):** yt-dlp (Unlicense) is NOT in the setup. On first use the panel offers "Download
+    yt-dlp (24 MB)": `conv:install` fetches `yt-dlp.exe` + `SHA2-256SUMS` from github.com/yt-dlp/yt-dlp/releases/latest, checks
+    SHA-256 and keeps it at `%APPDATA%\Lumina\tools\yt-dlp.exe`; "Update yt-dlp" re-runs the same thing. `conv:run` lets
+    yt-dlp download into a temp folder (MP4 prefers H.264 + AAC, merges to MKV; `--fixup never`), then Lumina's own FFmpeg
+    makes the final MP3 (libmp3lame q0) / MP4 (copies H.264/AAC, else x264 crf 18 + AAC 192k, faststart). That way yt-dlp
+    never needs ffprobe (ffmpeg-static has none). Cancel kills the process tree (taskkill /T). Only http(s) links; file://
+    links are allowed only under `--selftest`.
+  - The user approved downloading yt-dlp 2026.10.26 (checksum matched) on 2026-11-07. First real link (the user's, a
+    SoundCloud track) is DRM-protected, so it can't be downloaded; Lumina now says so in plain words. Second real link (a
+    YouTube video the user picked, 2:05, 1080x1080) worked in the built app: MP3 in 6.5 s (230 kb/s, plays 124.8 s), MP4 in
+    3.4 s (H.264 + AAC copied, no re-encode; plays, and Add to timeline made a 124.9 s video clip). Remind the user: only download media they have rights to.
+  - **All links (same day):** every link is first looked up (`conv:resolve`, `yt-dlp --flat-playlist -J`):
+    - Playlists (YouTube playlists, SoundCloud sets, a page with several videos) become one job each. Entries with their own
+      link keep it; videos embedded in one page are fetched as `--playlist-items N`. Over 50 entries asks first. A video
+      link inside a playlist (`watch?v=…&list=…`) is just that video unless "Whole playlist when a video link is in one"
+      is ticked (`lumina.convPlaylist`).
+    - Live streams are refused until they end ("convert the saved video"); premieres too.
+    - "Sign in with" (Off / Firefox / Chrome / Edge / Brave / Opera / Vivaldi, `lumina.convCookies`, default Off) passes
+      `--cookies-from-browser` for Instagram / Facebook / age-restricted / private content. Untested with a real browser
+      (it reads the user's browser sign-ins; only on their say-so). New Chrome/Edge lock their cookies (app-bound
+      encryption), so the message points to Firefox.
+    - YouTube's JS challenge: yt-dlp runs Lumina's own Electron as Node (`--js-runtimes node:<Lumina.exe>` +
+      `ELECTRON_RUN_AS_NODE=1`), so no Deno download is needed (checked: "Solving JS challenges using node").
+    - Segmented streams (Twitch, Kick, .m3u8, .mpd) show progress by pieces. Links without https:// are accepted.
+    - Checked with the user's YouTube link (details only). Shorts, TikTok, Instagram, X, Facebook, Twitch, Kick and
+      .m3u8 links have NOT been tried with real links yet.
+  - Speed suite step 25 `converter` (queue, MP3 + MP4 made and playable, Add to timeline, failure message, cancel,
+    a two-video page `media\list.html` as a playlist, the playlist / sign-in settings); its
+    railTools check now expects the Converter button. Output goes to `.claude\speed\convout` (emptied each run).
+  - The rebuilt `dist\Lumina Setup 0.9.0.exe` now includes the Converter.
+- **C15 Friends test release done (2026-11-07):** 0.9.0, About text, Help › Send feedback…; details in "Start here next".
+  The speed suite's `release` step checks the version, About box and feedback form (and copies the form to the clipboard).
+- **Beginner / Pro switch removed (2026-11-07, the user's request): everything is always shown.** Gone: the toolbar
+  switch, View › Beginner mode, `setMode`/`MODE`/`proMark`/`BEGIN_HINT`, the `.pro`/`.bhint` CSS, the welcome screen's
+  "How much do you want to see?" choice and the Beginner/Pro tip, and the speed suite's `beginnerPro` step.
+  The B3 notes below are kept as history only.
+- **B4 Welcome + tips done (2026-11-07). Rounds B1–B4 are finished; C15 is next.**
+  - `#welcome` opens at start (`startIntro`) unless `lumina.welcome` = 'off' ("Show this when Lumina starts"). It has four
+    sizes (YouTube 1920×1080, TikTok/Reels/Shorts 1080×1920, Square, 720p: they set `#res`), Open a project… and a
+    Show tips box. Esc, Start editing, a click outside, a file drop or opening a project close it.
+    Help › Welcome screen… brings it back.
+  - Tips (`TIPS`, `#coach`): one at a time, pointing at the rail, Import, the quick bar (waits for a picked clip), the
+    Beginner/Pro switch and Export. "Got it" marks one seen (`lumina.tipsSeen`); "Turn off tips" sets `lumina.tipsOff`.
+    Help › Show tips again resets both. `tipNext()` runs from `quickBar()` (so from every refresh) and after the welcome.
+  - Self-tests: main.js calls `introOff()` (no welcome, no tips, nothing saved).
+- **B3 Beginner / Pro switch done (2026-11-07).**
+  - Toolbar switch `#modeSw` (also View › Beginner mode). `MODE` is saved as `lumina.mode` in localStorage; with nothing
+    saved Lumina starts in **Beginner**. `setMode(m, save)` toggles `body.beginner`; CSS `body.beginner .pro` hides things,
+    so nothing leaves the page and switching back shows it all as it was.
+  - Hidden in Beginner: toolbar Line up/Stack, Shape, Sticker, 3D, Atmosphere, Colour grade, Impact (the rail has all
+    but Impact) and the workspace tabs; in Properties, `proMark()` hides Blend, Turn Y/X (not on 3D), the 3D material
+    sliders, Expressions, Motion tracking and Blend into scene (`PRO_GROUPS`, `PRO_PROPS`, `PRO_ROWS`). Beginner also
+    shows a plain tip per clip kind under the Layer heading (`BEGIN_HINT`, `.bhint`).
+  - Self-tests: main.js puts the test window in Pro (`setMode('pro', false)`, not saved) before each suite.
+- **B2 Clip quick bar done (2026-11-07).**
+  - `#qbar` sits in the timeline's top bar (in place of the hint, `#tlHint`) whenever a clip is picked; `quickBar()` runs
+    from `refresh()`. `qbItems(L)` decides the buttons by kind: Split, Speed, Freeze, Separate audio, Volume, Animate,
+    Mask, Transition, Effects, Canvas, Delete (several clips picked: Split, Copy, Delete). Icons in `QB_ICON`.
+  - `quickAct` either does the job (split, freeze, separate audio, delete, copy; Mask turns on an ellipse mask) or jumps:
+    `jumpTo(group title or selector)` opens Properties, scrolls to it and lights it up (`.flash`); Transition, Effects and
+    Canvas open the matching rail panel.
+  - All eight suites show their usual results (transitions passed at 201 fps once the user cleared the screen).
+- **B1 Tool rail done (2026-11-07).**
+  - `<nav class="rail" id="rail">` is the first column of `main` (60px, always shown; `applyPanels` adds it). Icons are
+    Lumina's own small SVGs (`RAIL_ICON`). Tabs: Media (the Project panel), Text, Stickers, Effects (Effects & Presets),
+    Transitions, Captions, Audio, Adjust, 3D. Clicking one opens the left panel if it was hidden (`openRail`).
+  - New panels live in `#railBody`, built by `RAIL_PANELS[tab].html()`; `dyn` ones (Transitions, Captions, Audio, Adjust)
+    re-render with the selection from `projectPanel`. Cards are `.rcard[data-radd="kind:arg"]` and `railAdd` does the job
+    (text style, shape, emoji, flag, 3D, atmosphere, background, transition, `act:` = `action()`, `file:`, `tab:`).
+  - Drag a card: onto the preview adds at the playhead; onto the timeline adds at the drop time; a transition dropped
+    on a clip's row goes onto that clip (`railDropAt`, mime `application/x-lumina-add`).
+  - The toolbar buttons are all still there (B3 decides what Beginner hides). PhotoCraft's Image tab goes in `RAIL`.
+  - Not done: Media still shows the plain list (no thumbnails, can't drag media from it onto the timeline).
+  - The speed suite's `maskShapes` outline check failed once and passed unchanged on the next run (timing flake).
+- **C14 Graph editor done (2026-11-06). The CapCut phase (C1–C14) is finished.**
+  - A key's `ease` can now be `'custom'` with `bz = [x1, y1, x2, y2]` (a cubic bezier like CSS's; x 0–1, y −0.4–1.4 so it
+    can overshoot). `easeOf(k, u)` / `bezierEase` do the maths; `interp` uses them. Saved with the project; Ctrl+C/V of
+    keyframes carries the curve.
+  - Pick a keyframe (diamond or lane) and the "Keyframe at" group shows the graph (`canvas.kgraph`, `drawKGraph`): time
+    along, how far the value has got up (dashed lines = this key's value and the next one's), with the playhead.
+    Drag either handle; double-click goes back to Smooth. Presets: Ease in, Ease out, Ease in & out, Linear, Overshoot.
+    The Easing menu shows "Custom curve" when a curve is set. Changes go to every key picked at that time.
+  - Not done: the graph shows one move at a time (not a whole-property value graph like a full graph editor); the
+    timeline diamonds don't look different for custom curves.
+- **C13 Preview zoom and pan done (2026-11-06).**
+  - **Zoom:** the zoom box under the preview (Fit, 25–400%, plus the current % when it's in between), Ctrl+scroll or a
+    trackpad pinch (zooms around the pointer), `.` / `,` step through 10/25/50/100/200/400/800%, `/` fits. View menu has
+    the same. `PZ` = screen px per composition px (null = fit), `PX`/`PY` = pan from centre; `fitPreview` lays it out.
+  - **Pan:** Space+drag or middle-drag. A Space tap still plays/pauses; a Space drag puts playback back as it was.
+    At least 40px of the frame always stays on screen. Opening a project goes back to Fit.
+  - Handles, dragging and picking stay right at any zoom (`compPoint` uses the overlay's on-screen box). The overlay
+    canvas is capped at 8192px; above 2 device px per frame px the picture shows sharp pixels.
+  - **Lesson:** there was already a `fitScale(w, h)` (fits media into the frame); a second function with the same name
+    silently replaced it and shrank every picture. The preview one is `previewFit`.
+  - Not done: plain scroll doesn't pan when zoomed (it scales the picked clip, as before); the zoom isn't saved.
+- **C12 Clipboard and keyframe tools done (2026-11-06).**
+  - **Copy / cut / paste clips:** Ctrl+C / Ctrl+X (also Edit menu) copy the selected clips; Ctrl+V pastes them at the
+    playhead, keeping their spacing and stacking. A video and its separated audio copied together stay linked to each other.
+  - **Paste from other apps** (desktop): Ctrl+V reads the system clipboard through main.js (`clip:read`). Files copied in
+    Explorer (`text/uri-list`) are imported like a drop (unsupported files get a message). A copied picture (`image/png`)
+    is saved to `%APPDATA%\Lumina\Pasted\Pasted <date>.png` first, so a saved project finds it again. Text becomes a text clip.
+    Lumina's own copy writes a marker text to the clipboard (`CLIP.mark`); if the clipboard no longer holds it, something
+    newer was copied elsewhere and that wins. The web version uses the browser's paste event instead.
+  - **Keyframes:** pick a keyframe diamond and Ctrl+C copies it (or "Copy keyframe" in its panel group; "Copy all keyframes"
+    in the Keyframes group and Edit menu). Ctrl+V puts the keys on every selected clip at the playhead, same spacing and
+    easing; properties the clip doesn't have are skipped with a note. Delete with a keyframe picked now deletes the keyframe.
+  - **Keyframe lanes:** a ▸ on an animated clip's row (also the Keyframes group, Layer › Show keyframe lanes) opens a row per
+    animated property (`KOPEN`, not saved). A lane's diamonds pick, drag, copy and delete just that property (`S.selKP`,
+    `keysAtSel`).
+  - New `notice()`: a short message that fades by itself, for things that worked. `toast()` stays for problems.
+  - Test: `clipboard` step in the `speed` suite. It overwrites the system clipboard while it runs, and its pasted
+    pictures go to `.claude\speed\pasted`.
+  - Not done: Ctrl+D still duplicates only the main clip (Ctrl+C, Ctrl+V does the whole group); pasting several keyframe
+    times picked by hand (only one time, or all of a clip's keys).
+- **C11 Separate audio done (2026-11-06).** A video clip's panel has a **Sound** group: **Mute** ("Silence this clip's
+  own sound", `L.muted`) and **Separate audio** (also Layer › Separate audio). Separating mutes the video and puts an
+  audio clip of the same file right under it ("Audio · name", same timing, speed, curve, slow-mos and volume), playing
+  through an `<audio>` element. The two share `L.link`: they move, trim and split together (each half stays linked to
+  its half), Alt+drag moves just one, and both bars show ⛓ (a muted video also shows 🔇). Deleting one drops the link
+  (`tidyLinks`); Duplicate makes an unlinked copy; **Unlink** is in both panels. Not done: a waveform on audio bars,
+  and the video's transition fade doesn't carry over to its separated sound.
+- **C10 Stickers done (2026-11-06).** Nothing was downloaded; everything is built in.
+  - **Shape ▾** has six new shapes: Star, Heart, Triangle, Hexagon, Speech bubble (white with a dark outline) and Burst
+    (`shapePath`, sizes in `SHAPE_SIZE`). They use the usual fill / outline colors.
+  - **Sticker ▾** (toolbar, and Layer › New sticker…) opens a picker: nine emoji tabs (about 700 emoji) plus **Flags**,
+    and an "Any emoji" box for anything else (Win + . opens Windows' emoji panel). A sticker is a shape layer with
+    `shape: 'sticker'` and `L.emoji` or `L.flag`, so it moves, keyframes, masks and saves like any shape. Its panel has
+    Width/Height (stretch), Scale, and **Change sticker…**, which swaps it in place and keeps its size.
+  - Emoji use the color font Windows already has (Segoe UI Emoji), so they look like Windows emoji. That font has no
+    flags, so the 49 flags (`FLAGS`) are drawn by Lumina from their official colors and proportions. Flags with
+    detailed emblems (Canada, Brazil, Mexico, Korea, Australia...) are left out. Spain and Peru are their plain
+    civil versions. More flags or a sticker pack would need a download: ask first.
+  - Test: speed suite step 15 `stickers` (shapes, picker, France/Japan swap, US/UK/Germany/Sweden/Swiss/EU pixel
+    checks, color emoji, undo, saved project). All eight suites passed with their usual results.
+- **C9 Captions (SRT/VTT import) done (2026-11-06).** Import media, drag and drop, or Layer › Captions from SRT/VTT…
+  turns a subtitle file into **one** caption clip, a text layer with `cues: [{t0, t1, text}]` (seconds from the clip's
+  start). The whole transcript is one timeline row, with a small block for each line.
+  - **Style:** Barlow, white, size 58, at y .85, with a Fade animation and a background box (`capBox`, `boxColor`,
+    `boxAlpha`). The normal text controls style every line. The animation runs per line, because drawText shifts the
+    layer's start and duration to the current cue before textEnvelope. Size, weight and keyframes still use the real
+    clip.
+  - **Panel (`captionPanel`):** the box options and the list of lines. You can edit each line's text, click its time
+    to jump there, or ✕ to delete it. There are buttons for Add line here (2 s, only in a gap), Export SRT… (through
+    export:save, whose dialog now says "Save captions" for .srt/.vtt) and Import.
+  - **Editing the clip:** split gives each half its own lines, and a line across the cut is shown by both halves.
+    Trimming the head keeps lines in place, because clipState/trimHead shift cues like keyframes.
+  - **Parser (`parseCaptions`):** handles the BOM, CRLF, SRT commas and VTT dots, mm:ss times, cue settings,
+    NOTE/header blocks and cue ids. It strips `<i>`/`<v>` tags and `{\an8}`, and decodes &amp; and similar.
+  - **Test:** speed suite step 13, `captions`. It checks parsing for both formats, the import, the pixels on screen
+    during lines and gaps, the panel edits, the box toggle, adding a line and refusing one where a line already is,
+    split, head trim, the SRT round trip, save/reopen, and that a file with no captions is ignored.
+  - **Auto captions (built 2026-11-06, the user OK'd the model download):** Properties › **Auto captions** on any
+    video or audio clip has a Language menu (or Detect automatically) and Make captions. Whisper base runs on this
+    computer and nothing is uploaded.
+    - **Engine:** Transformers.js 4.3.2 plus the ONNX Runtime Web asyncify wasm, vendored in `vendor/transformers`
+      (see its README). It is a devDependency installed with `--ignore-scripts`, so onnxruntime-node and sharp are
+      never packaged. `speech-worker.js` runs it in a module worker on wasm, single-threaded because the page isn't
+      cross-origin isolated.
+    - **Model:** `onnx-community/whisper-base`, 8-bit encoder and decoder, 77 MB. On the first click, main.js
+      (`speech:download`) downloads it into `%APPDATA%\Lumina\models`, writing .part files and renaming them when
+      done, with progress shown in the panel. The protocol serves it at `lumina://app/@models/`. The worker never
+      fetches anything remotely.
+    - **Flow (`autoCaptions(L)`):** decode the clip's in..out audio at 16 kHz mono, then transcribe with segment
+      timestamps and 30 s chunks. `speechLines()` breaks segments into lines of at most 42 letters, timed by their
+      share of the letters. The times map through `tlTime` (so speed changes are followed) into one caption clip
+      starting at the clip, using the same `captionLayer()` as SRT import.
+    - **Speed:** an 8 s clip took about 4 s in the worker, about 6 s including the first download.
+    - **Test:** speed suite step 14, `autoCaptions`. It uses `.claude/speed/media/speech.wav`, made with Windows'
+      built-in text to speech (System.Speech, run as one PowerShell command, no script file). The sentence is "Hello
+      and welcome to Lumina. Today we are testing automatic captions for videos. This is the last sentence." It
+      checks the line splitting, the panel, the download, that at least 5 of 6 key words are heard, the timing, and
+      the picture on screen. It downloads the model if it's missing. `modelWasReady: false` is expected only on the
+      very first run on a machine.
+    - **Possible later improvements:** word-level timing (a `_timestamped` model), WebGPU, and threads (would need
+      COOP/COEP headers).
+- **C8 Canvas background done (2026-11-06).** Properties › Whole video › **Canvas background**: Black (the old look),
+  Solid colour, Gradient (from/to colour and angle) or Blurred video (blur and darken).
+  - **Code:** `drawCanvasBg()` runs in render() right after the frame is cleared. It reads `S.global.bg`, `bgColor`,
+    `bgColor2`, `bgAngle`, `bgBlur` and `bgDim`, and projects without these fall back to Black. Blurred video uses
+    `bgSourceAt()`, the lowest video/image clip playing at that moment, stretched to fill the frame at 1.08x so the blur
+    doesn't fade at the edges. The panel comes from `canvasBgPanel()`, and choosing a mode redraws the inspector.
+  - **Fix found by the test:** openProject now empties `S.layers` before reloading media. Before this, a frame could draw
+    an old picture clip with a half-loaded image and throw in drawImage.
+  - **Test:** speed suite step 12, `canvasBg`. It checks the pixels for each mode at the sides of a tall white picture,
+    the fallback to black when nothing is playing, the menu and the rows for each mode, and that the setting is kept in a
+    saved project.
+- **C7 Mask shapes done (2026-11-06).** Properties › Mask › shape menu: Rectangle, Oval, **Diamond, Star, Heart, Split,
+  Cinematic bars**.
+  - **New controls:** Mask angle° (turns every shape), Mask outline (width) and Outline color. Both are keyframable.
+    Feather and Invert work on every shape.
+  - **Split** keeps the side above a line through Mask X/Y (Invert for the other side) and hides width and height.
+    **Cinematic bars** keeps a band across the whole frame; Mask height sets the band, and width is hidden.
+  - **Code:** `MASK_SHAPES` and `maskPath(c, L, t, w, h, outline)`. Shapes are built from rotated points, so the drawing
+    transform is never changed. `outline` gives only the visible edges (the lines for split and bars), which the
+    selection overlay and the outline stroke use. The outline is drawn in `paintLayer` after the mask, in screen pixels.
+  - **Tests:** `maskShapes` in the `speed` suite: inside/outside points for every shape, then on-screen pixels for star,
+    split, split inverted, bars, the red outline and feather, plus the panel rows.
+- **C6 Multi-select done (2026-11-06).**
+  - **Selecting:**
+    - Ctrl+click a clip (or its row name) to add or remove it.
+    - Shift+click to select every row from the main clip to the clicked one.
+    - Drag on empty timeline lane space to draw a selection box; Ctrl or Shift adds to the selection.
+    - Ctrl+A or Edit › Select all clips; Esc keeps just the main clip; Edit › Deselect.
+    - A plain click in a lane still moves the playhead; dragging the box puts the playhead back.
+  - **Acting on the group:**
+    - Dragging any selected clip moves them all, and they stop together at 0.
+    - Trimming an edge trims that edge on every selected clip by the same amount; Ripple works too.
+    - Delete removes all of them in one undo step.
+    - A click without dragging on a clip in the group picks just that clip, as in CapCut.
+    - The inspector shows "N clips selected" with Delete N clips and Keep just this one.
+  - **Code:**
+    - `MS` / `selIds` / `setMulti` / `toggleSel` / `rangeSel` / `boxHits`.
+    - `S.sel` stays the main clip, and the group only counts while `S.sel` is still `MS.main`.
+    - The trim code is now `clipState` / `trimHead` / `trimEnd`.
+    - `snapT` ignores clips in the dragged group.
+  - **Tests:** `multiClick`, `multiBox`, `multiMove`, `multiTrim` and `multiDelete`, in the `speed` suite.
+  - **Not done yet:** Ctrl+D duplicates only the main clip; copying and pasting a group comes in C12.
+  - **Effects suite glitch:** in one run, `fx` failed `cornerKept` / `followsLayer` (the Twirl frame came out wrong, then
+    `#fx-add` was missing). A rerun passed, so it was a one-off in the test window; rerun if it shows up again.
+- **C5 Ripple editing done (2026-11-06).** A **Ripple** toolbar button (also Edit › Ripple editing), remembered between
+  sessions.
+  - **What ripples:** with it on, deleting a clip, shortening it (right edge, speed, speed curve) or trimming its start
+    closes the gap. Lengthening a clip pushes later clips along. Trims ripple live while dragging.
+  - **How:** OpenCut's interval diff (removed clips and shortened ends free time, minus time added by the same edit) runs
+    over the whole timeline. Everything starting after a gap moves, including impacts and bookmarks.
+  - **What doesn't:** trimming a start keeps the clip in place and slides its content and keyframes in. Moving a clip
+    never ripples, and a split frees nothing.
+  - **Code:** `rippleSpans` / `rippleFinish` / `rippleRestore`. Tests are in the `speed` suite, which switches Ripple
+    back off when it finishes.
+- **C4 Anime VFX done (2026-11-06).** New "Anime VFX" effect group, written as Lumina's own WebGPU shaders in
+  `shaders/lumina_vfx.wgsl` (packaged via `shaders/**` in package.json, loaded through `FX_PATHS`):
+  - **RGB Split:** sideways at an angle, or out from a centre point.
+  - **Edge Glow:** Sobel edges, blurred, screened or added; one colour or each edge's own; glow-only view.
+  - **Flash:** screen, add or fill, any colour.
+  - **VHS Glitch:** line tearing, a rolling band, colour bleed, colour shift, scanlines, tape noise.
+  - **Camera Shake:** smooth random move and turn, with a zoom that hides the edges.
+  - **Trigger** on each: Always on, on every / 2nd / 4th beat (all layers' beat marks), on impact markers, or on bookmarks.
+    Each hit fades over "Fade after hit". Flash and Shake default to "On every beat".
+  - **Cost:** about 5–6 ms per 1080p frame each. Tests are in the `fx` suite (plus trigger maths in `beat`); `effects.png`
+    now has 49 tiles.
+- **C3 Velocity curves done (2026-11-06).** Video and audio clips have a **Speed** panel:
+  - **Speed curve:** presets Montage, Hero, Bullet, Jump cut, Flash in and Flash out, or Custom. A curve editor shows
+    0.1x–10x on a log scale along the clip; drag points, double-click to add or remove them.
+  - **How the curve works:** it is drawn along the clip's footage (`L.curve = { name, pts, a, b }`) and multiplies Speed,
+    Speed ramp and slow-mos, using a monotone cubic on log speed (no overshoot).
+  - **Split:** splitting a curved clip gives each half a window (a–b) of the same curve, so the split is exact.
+  - **Higher speeds:** clip Speed goes 0.1x–10x, and Speed ramp up to 1000%.
+  - **Keep pitch:** on by default (`preservesPitch`).
+  - **Freeze frame here:** splits the clip, holds that frame silently for 3 s (`freeze: true`, timed like a picture),
+    and pushes later clips back.
+  - **Smooth slow-mo:** frame blending while playing or exporting; each new frame fades in over the time it is held.
+  - **Tests:** new suite `.claude\speed`, expected false: none. That makes **eight suites**.
+- **Test-window note (2026-11-06):** sometimes the hidden test window draws only ~2 frames a second; then `trans` fails
+  `aHeldLastFrame`. The `trans` result now prints `framesPerSecond`; if it's 2, rerun. Chromium's occlusion switches didn't
+  help, so they were not kept.
+- **C2 Bookmarks done (2026-11-06).** A Bookmarks row under Impacts.
+  - **Add and edit:** B adds or removes a bookmark at the playhead (frame-rounded); `[` / `]` jump between them; the
+    Composition menu has the same three. Clicking a bookmark jumps there and opens its panel: note, 8 colour swatches
+    plus any colour, duration (shown as a faint bar), Go to, Delete.
+  - **Notes:** notes of the bookmarks under the playhead show at the top left of the preview (View › Show bookmark notes),
+    never in the export.
+  - **Snapping and dragging:** everything snaps to bookmarks and to the end of their duration. Drag a bookmark to move it
+    (Shift: no snap); dropping it on another merges the two.
+  - **Saving:** bookmarks are saved in the project and covered by undo. Tests are in the `beat` suite.
+- **C1 Beat sync done (2026-11-06).** Audio and video layers have a **Beat sync** panel: Detect beats; Mark = Steady beat
+  (tempo plus dynamic-programming beat tracking) or Every hit (onsets rated by loudness jump, Sensitivity in dB).
+  Beat dots sit on the clip's timeline row; drag one to move it, click it and press Delete to remove it, or use Add beat at
+  playhead / Clear beats. Clips, trims, impacts and keyframes snap to beats; hold Shift to drag without snapping.
+  "Use every 1st/2nd/4th/8th beat" drives Cut on beats (splits a chosen clip) and Impacts on beats.
+  Accuracy on the test track: within 18 ms. A 3-minute song analyses in about 0.65 s.
+  New test suite: `.claude\beat` (expected false: none), so there are now **seven suites**.
+  `split()` now calls `splitAt(layer, time)`, which cut-on-beat reuses.
+- **Round 7 done (2026-11-06):** Vibrance, Color Balance, Black & White, Tritone, Colorama, Channel Mixer and Selective Color,
+  all on EffectCraft's `fxc_point` shader, at about 4 ms per 1080p frame.
+  Colorama has EffectCraft's graphics-card version (the Hue Cycle palette). Its preset palettes, custom palettes, Modify and
+  colour matching only exist in EffectCraft's CPU code, so they're left for later.
+  Selective Color's Colors menu shows one range's four sliders at a time.
+- Lumina is rebuilt (`dist\win-unpacked\Lumina.exe`, the desktop shortcut), and all six self-test suites pass with only their usual expected results.
+- **Already in Lumina:**
+  - The timeline: layers, keyframes, expressions (wiggle/pulse/loop), rect/ellipse masks.
+  - AI background removal, motion tracking, object erase.
+  - Text and variable fonts, SVG parts, 3D.
+  - 44 GPU effects (EffectCraft Rounds 1–7), transitions.
+  - Speed ramps and slow-mo.
+- **Interface so far:**
+  - The purple "L" logo.
+  - The menu bar, tools bar and fixed panels (Project / Composition / Preview + Properties / Timeline).
+  - Effects & Presets and Effect Controls panels.
+  - Workspace tabs.
+  - View › Theme: Default (purple-grey), Greyscale, Cozy Home Theatre.
+  - View › Toggle fullscreen (F11).
+  - The Help menu tagline.
+
+## Waiting on you
+- **New About Lumina text.** Send it whenever you have it. It goes in `const ABOUT_LUMINA` in `Lumina.html`. Until then the item is greyed out.
+- **Layout pieces (optional):** these only happen when you ask, and they don't hold up the Order.
+  - **A. Tool icons** in the tools bar (select, hand, zoom, pen, text, shapes, brush). This is the smallest.
+  - **B. AE-style timeline columns:** switches, parent & link, twirl-down properties.
+  - **C. Dockable panels:** drag, resize, dock, with tabs. This is the biggest.
+  - **D. Photoshop-style panels** for Image mode: Layers, Adjustments, Properties.
+
+## On hold from before
+3D text, extruded SVG logos, 3D look-and-feel pass, faster export with presets, auto captions.
+Linux build (2026-11-07, user: "just forget the linux build for now"; only bring it up if the user does): a friend's AppImage
+copy sits in `D:\Lumina\lumina linux build` (0.9.0 + a Linux block in main.js and a Linux package.json; reviewed, not merged).
+
+---
+
+## Reminders for Claude
+- Do one feature at a time, test it, and ask before changing anything on the system.
+- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all six suites.
+- The eight suites and their expected `false` results (`beat` and `speed` were added 2026-11-06 and expect none):
+  - `beat`: none
+  - `speed`: none
+  - `.claude`: `dirtyAfter`
+  - `trans`: none
+  - `vfont`: `weightRow`, `motion`
+  - `svg`: `orb`, `star`, `star`, `bar`
+  - `3d`: `failed`
+  - `fx`: `propsHasFxRows`
+- Update "Start here next" and "Where things stand" at the end of each session.
+- Say "Round", never the other word. No .bat, .cmd or .ps1 files have been created. If one ever is, say so plainly and explain what it does.

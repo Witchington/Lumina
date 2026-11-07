@@ -1,0 +1,99 @@
+{
+  "name": "lumina",
+  "productName": "Lumina",
+  "version": "0.9.1",
+  "description": "Lumina: a video editor for everything",
+  "main": "electron/main.js",
+  "private": true,
+  "author": "Witchington",
+  "homepage": "https://github.com/Witchington/Lumina",
+  "repository": "github:Witchington/Lumina",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest",
+    "dist": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.lumina.editor",
+    "productName": "Lumina",
+    "electronLanguages": [
+      "en-US"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "Lumina.html",
+      "lumina-icon.png",
+      "lumina.ico",
+      "electron/**",
+      "vendor/**",
+      "shaders/**"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/ffmpeg*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "lumina.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "AudioVideo",
+      "icon": "lumina-icon.png",
+      "executableName": "lumina",
+      "artifactName": "Lumina-${version}-x86_64.AppImage"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Witchington",
+        "repo": "Lumina",
+        "releaseType": "release"
+      }
+    ],
+    "nsis": {
+      "artifactName": "Lumina-Setup-${version}.exe",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lumina"
+    },
+    "fileAssociations": [
+      {
+        "ext": "lumina",
+        "name": "Lumina Project",
+        "description": "Lumina video project",
+        "mimeType": "application/x-lumina-project",
+        "icon": "lumina.ico"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "4.3.2",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/big-shoulders-display": "^5.3.0",
+    "@fontsource-variable/exo-2": "^5.3.0",
+    "@fontsource-variable/montserrat": "^5.3.0",
+    "@fontsource-variable/unbounded": "^5.3.0",
+    "@fontsource/anton": "^5.3.0",
+    "@fontsource/bangers": "^5.3.0",
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/black-ops-one": "^5.3.0",
+    "@fontsource/fraunces": "^5.3.0",
+    "@fontsource/open-sans": "^5.3.0",
+    "@fontsource/russo-one": "^5.3.0",
+    "@mediapipe/tasks-vision": "^0.10.14",
+    "ffmpeg-static": "^5.2.0",
+    "three": "0.186.1"
+  }
+}

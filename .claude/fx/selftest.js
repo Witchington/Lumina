@@ -1,0 +1,480 @@
+// Effects test: EffectCraft's WGSL kernels run through WebGPU on a layer, each effect does its job, keyframes, order, on/off, save/reopen.
+(async () => {
+  const R = { steps: {} }, step = (k, v) => R.steps[k] = v;
+  try {
+    S.global.vignette = 0;
+    await FXG.ready;
+    step('engine', { dev: !!FXG.dev, failed: FXG.failed, shaders: Object.keys(FXG.src), effects: Object.keys(FX) });
+    if (!FXG.dev) throw new Error('no WebGPU: ' + FXG.failed);
+    const dir = 'D:\\Lumina\\.claude\\fx\\media\\';
+    // black | white | red | green | blue | grey patches on top, a grey ramp below
+    const card = await makeCard(['0,0,0', '255,255,255', '220,40,40', '40,200,60', '40,60,220', '128,128,128'], 'card.png', true);
+    card.__path = await lumina.saveExport(await card.arrayBuffer(), 'card.png', dir + 'card.png');
+    const L = await load(card); L.start = 0; L.dur = 6;
+    const draw = (t = 1) => { seek(t); render(t); };
+    const px = (x, y) => pix(x / 1920, y / 1080);
+    const lum = c => .299 * c[0] + .587 * c[1] + .114 * c[2];
+    const frame = () => ctx.getImageData(0, 0, W(), H()).data;
+    const diff = (a, b) => { let mx = 0, n = 0; for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])); if (d > mx) mx = d; if (d > 4) n++; } return { max: mx, changed: n }; };
+    draw(); const plain = frame();
+
+    // the panels: Properties only summarises effects; Effects & Presets lists them all, searches, and adds one
+    // to the selected layer, switching the right-hand panel to Effect Controls
+    S.sel = L.id; setRightTab('props'); setLeftTab('fxp'); refresh();
+    const ui = { propsHasFxRows: !!$('#inspector .fxi'), propsSummary: !!$('#inspector [data-act=ectab]'),
+      listed: document.querySelectorAll('#fxpList .fxp-item').length, known: Object.keys(FX).length, enabled: !$('#fxpList .fxp-item:disabled') };
+    $('#fxpSearch').value = 'blur'; $('#fxpSearch').dispatchEvent(new Event('input'));
+    ui.search = [...document.querySelectorAll('#fxpList .fxp-item')].map(b => b.textContent);
+    $('#fxpList [data-fxid=blur]').click(); await fxWarm('blur');
+    Object.assign(ui, { added: L.fx?.map(x => x.id), tab: RTAB, ecRows: document.querySelectorAll('#inspector .fxi').length, title: $('#ecTab').textContent });
+    $('#inspector [data-act=fxdel][data-fx="0"]').click(); ui.removedInEC = !L.fx?.length;
+    S.sel = null; refresh(); ui.noLayerDisabled = !!$('#fxpList .fxp-item:disabled');
+    $('#fxpSearch').value = ''; $('#fxpSearch').dispatchEvent(new Event('input')); setLeftTab('project');
+    step('panels', ui);
+
+    // add an effect the way a person does: the Add effect menu in Effect Controls
+    S.sel = L.id; setRightTab('fx'); refresh();
+    const opts = [...document.querySelectorAll('#fx-add option')].filter(o => o.value).map(o => o.textContent);
+    const add = async id => { const s = $('#fx-add'); s.value = id; s.dispatchEvent(new Event('input', { bubbles: true })); await fxWarm(id); return L.fx[L.fx.length - 1]; };
+    const only = async id => { while (L.fx?.length) delFX(L, 0); const f = await add(id); return f; };
+    const set = (f, p, v) => { L.p[fxKey(f, p)] = v; };
+
+    // Brightness & Contrast: zero changes nothing; up brightens; contrast spreads the ramp
+    let f = await only('brightness');
+    const panel = { rows: [...document.querySelectorAll('#inspector .fxi .prow')].map(r => r.dataset.p), name: $('#inspector .fxi b')?.textContent, menu: opts };
+    draw(); const bcZero = diff(plain, frame());
+    set(f, 'brightness', 50); draw(); const bcUp = [lum(px(1120, 270)), lum(px(800, 270))];
+    set(f, 'brightness', 0); set(f, 'contrast', 60); draw(); const ctRamp = [lum(px(400, 810)), lum(px(1500, 810))];
+    step('brightness', { panel, zero: bcZero, greyUp: Math.round(bcUp[0]), red: Math.round(bcUp[1]), brighter: bcUp[0] > 150, ramp: ctRamp.map(Math.round), contrastSpreads: ctRamp[0] < 400 / 1920 * 255 - 10 && ctRamp[1] > 1500 / 1920 * 255 + 10 });
+
+    // Gaussian Blur: the hard edge between white and red softens; 0 is untouched; edges repeat or fade
+    f = await only('blur'); set(f, 'blurriness', 0); draw(); const blurZero = diff(plain, frame());
+    set(f, 'blurriness', 40); draw();
+    const row = ctx.getImageData(560, 270, 160, 1).data; let mids = 0; for (let i = 0; i < 160; i++) { const g = row[i * 4 + 1]; if (g > 60 && g < 230) mids++; }
+    // the top edge of the white patch: repeating edge pixels keeps it white, otherwise it fades toward transparent (black)
+    const edgeRepeat = px(480, 1); f.repeat = false; draw(); const edgeFade = px(480, 1); f.repeat = true;
+    step('blur', { zero: blurZero, edgePixels: mids, softened: mids > 40, edgeRepeat: edgeRepeat.join(), edgeFade: edgeFade.join(), repeatWorks: lum(edgeRepeat) > 240 && lum(edgeFade) < 200 });
+
+    // Glow: light spills out of the white patch onto its black neighbour; dark stays dark far away
+    f = await only('glow'); set(f, 'radius', 40); set(f, 'threshold', 50); draw();
+    const glowNear = lum(px(318, 270)), glowFar = lum(px(40, 270)), plainNear = lum([plain[(270 * 1920 + 318) * 4], plain[(270 * 1920 + 318) * 4 + 1], plain[(270 * 1920 + 318) * 4 + 2]]);
+    step('glow', { near: Math.round(glowNear), plainNear: Math.round(plainNear), far: Math.round(glowFar), glows: glowNear > plainNear + 30 && glowFar < 15 });
+
+    // Twirl: 0Â° changes nothing; 180Â° swirls the middle and leaves the corners
+    f = await only('twirl'); set(f, 'angle', 0); draw(); const twZero = diff(plain, frame());
+    set(f, 'angle', 180); set(f, 'radius', 40); draw(); const tw = frame();
+    const twMid = diff(plain.subarray((540 * 1920 + 760) * 4, (540 * 1920 + 1160) * 4), tw.subarray((540 * 1920 + 760) * 4, (540 * 1920 + 1160) * 4)), twCorner = px(30, 1060).join() === [...plain.subarray((1060 * 1920 + 30) * 4, (1060 * 1920 + 30) * 4 + 3)].join();
+    // the centre is a point on the layer: move the layer and the swirl moves with it
+    // where the swirl is: the middle of the pixels it changed, with the layer at x 50% and then moved to 60%
+    const swirlX = () => { f.on = false; draw(); const p0 = frame(); f.on = true; draw(); const p1 = frame(); let sx = 0, n = 0;
+      for (let i = 0; i < p0.length; i += 16) if (Math.abs(p0[i] - p1[i]) + Math.abs(p0[i + 1] - p1[i + 1]) > 40) { sx += (i / 4) % 1920; n++; } return n ? sx / n / 1920 : 0; };
+    const at50 = swirlX(); L.p.x = .6; const at60 = swirlX(); L.p.x = .5;
+    step('twirl', { zero: twZero, middleChanged: twMid.changed, cornerKept: twCorner, swirlAt: [+at50.toFixed(3), +at60.toFixed(3)], followsLayer: Math.abs(at60 - at50 - .1) < .03 });
+
+    // Fractal Noise: a cloudy pattern over the layer, changing with Evolution (keyframed)
+    f = await only('noise'); draw(1);
+    const nd = ctx.getImageData(0, 0, 1920, 1080).data; let s = 0, s2 = 0, n = 0; for (let i = 0; i < nd.length; i += 64) { const v = nd[i]; s += v; s2 += v * v; n++; }
+    const spread = Math.sqrt(s2 / n - (s / n) ** 2);
+    L.keys[fxKey(f, 'evolution')] = [{ t: 0, v: 0, ease: 'linear' }, { t: 4, v: 720, ease: 'linear' }];
+    draw(.5); const e1 = frame(); draw(2.5); const e2 = frame();
+    // keep it inside the layer: shrink the layer, the noise stops at its edge
+    L.p.scale = .5; draw(2.5); const outside = px(100, 100).join(), inside = px(960, 540);
+    L.p.scale = 1;
+    step('noise', { spread: Math.round(spread), cloudy: spread > 20, evolves: diff(e1, e2).changed, inLayerOnly: outside === '0,0,0' && inside.join() !== '0,0,0', outside, inside: inside.join() });
+
+    // Light Rays: rays stream out from the bright patches
+    f = await only('rays'); set(f, 'intensity', 200); draw(); const rays = frame();
+    const raysChange = diff(plain, rays);
+    step('rays', { changed: raysChange.changed, max: raysChange.max, works: raysChange.changed > 10000 });
+
+    // ---- Round 3
+    const P0 = (x, y) => { const i = (y * 1920 + x) * 4; return [plain[i], plain[i + 1], plain[i + 2]]; };
+    // how many pixels along a line differ from the plain picture
+    const lineChanged = (x, y, len, vert) => { let n = 0; for (let i = 0; i < len; i++) { const xx = vert ? x : x + i, yy = vert ? y + i : y, a = px(xx, yy), b = P0(xx, yy); if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) > 12) n++; } return n; };
+    // Directional Blur: 90Â° streaks sideways (the white|red edge softens, the patch's bottom edge doesn't); 0Â° streaks up/down
+    f = await only('directional'); set(f, 'length', 0); draw(); const dirZero = diff(plain, frame());
+    set(f, 'length', 80); set(f, 'direction', 90); draw(); const sideH = lineChanged(560, 270, 160), sideV = lineChanged(480, 480, 120, true);
+    set(f, 'direction', 0); draw(); const upH = lineChanged(560, 270, 160), upV = lineChanged(480, 480, 120, true);
+    step('directional', { zero: dirZero, at90: [sideH, sideV], at0: [upH, upV], works: dirZero.max === 0 && sideH > 40 && sideV < 5 && upH < 5 && upV > 30 });
+
+    // Radial Blur: zoom leaves the centre sharp and streaks the outside; spin turns around the centre
+    f = await only('radial'); set(f, 'amount', 0); draw(); const radZero = diff(plain, frame());
+    const region = (a, x0, y0, s) => { const o = []; for (let y = y0; y < y0 + s; y++) for (let x = x0; x < x0 + s; x++) { const i = (y * 1920 + x) * 4; o.push(a[i], a[i + 1], a[i + 2], 255); } return Uint8ClampedArray.from(o); };
+    // a white spot 40 px left of the white|red edge: with the centre in the middle of the frame its streaks pull red in,
+    // with the centre (a point on the layer) right on the spot it stays sharp
+    set(f, 'amount', 30); draw(); const far = diff(region(plain, 590, 260, 20), region(frame(), 590, 260, 20));
+    set(f, 'centerX', 600 / 1920); set(f, 'centerY', .25); draw(); const near = diff(region(plain, 590, 260, 20), region(frame(), 590, 260, 20));
+    set(f, 'centerX', .5); set(f, 'centerY', .5);
+    f.type = 0; draw(); const spin = diff(plain, frame()); f.type = 1;
+    step('radial', { zero: radZero, spotFromMiddle: far.max, spotAsCentre: near.max, spinChanged: spin.changed,
+      works: radZero.max === 0 && far.max > 30 && near.max < 6 && spin.changed > 50000 });
+
+    // Camera Lens Blur: the result is the plain average over the iris shape, for small irises (pixel by pixel) and big ones (running row totals)
+    f = await only('lens'); set(f, 'radius', 0); draw(); const lensZero = diff(plain, frame());
+    const lensCheck = r => {
+      set(f, 'radius', r); draw();
+      const spans = fxIris(r, 6, 0, 0); let worst = 0;
+      for (const [x, y] of [[640, 270], [330, 300], [1280, 530], [960, 545]]) {
+        const acc = [0, 0, 0]; let n = 0;
+        for (const [dy, l, h] of spans) for (let xx = x + l; xx <= x + h; xx++) { const c = P0(clamp(xx, 0, 1919), clamp(y + dy, 0, 1079)); acc[0] += c[0]; acc[1] += c[1]; acc[2] += c[2]; n++; }
+        const got = px(x, y); worst = Math.max(worst, ...acc.map((v, k) => Math.abs(v / n - got[k])));
+      }
+      return { pixels: spans.reduce((a, s) => a + s[2] - s[1] + 1, 0), worst: +worst.toFixed(2) };
+    };
+    const small = lensCheck(6), big = lensCheck(30);
+    // shapes: a hexagon iris has 6 corners' worth fewer pixels than a circle of the same radius
+    const hex = fxIris(30, 6, 0, 0).reduce((a, s) => a + s[2] - s[1] + 1, 0), circ = fxIris(30, 0, 0, 0).reduce((a, s) => a + s[2] - s[1] + 1, 0);
+    // highlight boost: bright parts bloom harder into the dark next to them
+    set(f, 'radius', 30); draw(); const noBoost = lum(px(300, 270)); set(f, 'hlBright', 100); set(f, 'hlThr', 200); draw(); const boosted = lum(px(300, 270));
+    step('lens', { zero: lensZero, small, big, hexPixels: hex, circlePixels: circ, noBoost: Math.round(noBoost), boosted: Math.round(boosted),
+      works: lensZero.max === 0 && small.pixels <= 256 && big.pixels > 256 && small.worst < 3 && big.worst < 3 && hex < circ && boosted > noBoost + 10 });
+
+    // Sharpen / Unsharp Mask: the red beside white gets darker (its green drops), flat white stays put, 0 changes nothing, a high threshold skips small changes
+    // (Sharpen's blur reaches 1 px, so it's measured on the first red pixel; Unsharp Mask's radius 2 on the second)
+    const sharpTest = async (id, amt, x) => {
+      const g = await only(id); set(g, 'amount', 0); draw(); const z = diff(plain, frame());
+      set(g, 'amount', amt); draw(); const edge = px(x, 270)[1], flat = px(480, 270);
+      return { g, zero: z.max, edgeGreen: edge, plainGreen: P0(x, 270)[1], flat: flat.join() };
+    };
+    const sh = await sharpTest('sharpen', 100, 640), um = await sharpTest('unsharp', 150, 641);
+    set(um.g, 'threshold', 255); draw(); const umThr = diff(plain, frame()).max;
+    step('sharpen', { sharpen: { zero: sh.zero, edgeGreen: sh.edgeGreen, plainGreen: sh.plainGreen, flat: sh.flat }, unsharp: { zero: um.zero, edgeGreen: um.edgeGreen, flat: um.flat, highThreshold: umThr },
+      works: sh.zero === 0 && um.zero === 0 && sh.edgeGreen < sh.plainGreen - 10 && um.edgeGreen < um.plainGreen - 10 && sh.flat === '255,255,255' && um.flat === '255,255,255' && umThr === 0 });
+
+    // Round 3 speed, one 1080p frame each
+    const r3speed = {};
+    for (const [id, vals] of [['directional', { length: 100 }], ['radial', { amount: 40 }], ['lens', { radius: 60 }], ['unsharp', {}]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1 + i / 30); ctx.getImageData(0, 0, 1, 1); r3speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round3speed', r3speed);
+
+    // ---- Round 4
+    const same = (a, b, tol = 3) => a.every((v, k) => Math.abs(v - b[k]) <= tol);
+    const rowSame = (y, x0, x1) => { for (let x = x0; x < x1; x++) if (!same(px(x, y), P0(x, y), 2)) return false; return true; };
+    // Bulge: 0 changes nothing; centred left of the red|green edge it magnifies red over where green was; far away is untouched
+    f = await only('bulge'); set(f, 'height', 0); draw(); const bulgeZero = diff(plain, frame());
+    set(f, 'height', 1); set(f, 'centerX', 900 / 1920); set(f, 'centerY', .25); draw();
+    const bulged = px(990, 270), bulgeFar = same(px(1500, 270), P0(1500, 270), 0);
+    step('bulge', { zero: bulgeZero, at990: bulged.join(), was: P0(990, 270).join(), farKept: bulgeFar, works: bulgeZero.max === 0 && bulged[0] > 180 && bulged[1] < 80 && bulgeFar });
+
+    // Wave Warp: the bottom edge of the patches turns wavy; it moves on its own (speed); 0 height changes nothing
+    f = await only('wave'); set(f, 'height', 0); draw(); const waveZero = diff(plain, frame());
+    set(f, 'height', 20); draw(1); const w1 = frame(); draw(1.25); const w2 = frame();
+    let wavy = 0; for (let x = 0; x < 1920; x += 4) { const i = (530 * 1920 + x) * 4, j = (550 * 1920 + x) * 4; if (Math.abs(w1[i] - plain[i]) > 20 || Math.abs(w1[j] - plain[j]) > 20) wavy++; }
+    step('wave', { zero: waveZero, wavyColumns: wavy, moves: diff(w1, w2).changed, works: waveZero.max === 0 && wavy > 100 && diff(w1, w2).changed > 10000 });
+
+    // Ripple: rings around the centre, moving; the corners are outside its radius
+    f = await only('ripple'); draw(1); const r1 = frame(); draw(1.3); const r2 = frame();
+    const rip = diff(plain, r1);
+    step('ripple', { changed: rip.changed, moves: diff(r1, r2).changed, cornerKept: rowSame(5, 0, 60), works: rip.changed > 2000 && diff(r1, r2).changed > 2000 && rowSame(5, 0, 60) });
+
+    // Fisheye Lens: a round lens: outside it is empty, the middle stays put, between is bent
+    f = await only('cclens'); draw(); const fish = diff(plain, frame());
+    const fishCorner = px(10, 10).join();
+    step('cclens', { changed: fish.changed, corner: fishCorner, works: fish.changed > 100000 && fishCorner === '0,0,0' });
+
+    // Turbulent Displace: wobbles the picture, but pinned edges stay where they are; Evolution changes the wobble
+    f = await only('turbulent'); set(f, 'amount', 0); draw(); const tdZero = diff(plain, frame());
+    set(f, 'amount', 80); draw(); const td1 = frame(); const tdTop = rowSame(0, 0, 1920);
+    set(f, 'evolution', 120); draw(); const td2 = frame();
+    step('turbulent', { zero: tdZero, changed: diff(plain, td1).changed, topEdgePinned: tdTop, evolves: diff(td1, td2).changed,
+      works: tdZero.max === 0 && diff(plain, td1).changed > 20000 && tdTop && diff(td1, td2).changed > 10000 });
+
+    // Mosaic: 40 × 22 blocks; a block across the white|red edge is their average (16 white + 32 red columns); Sharp colors takes the centre pixel
+    f = await only('mosaic'); draw(); const mA = px(630, 10), mB = px(670, 10), mExp = [(16 * 255 + 32 * 220) / 48, (16 * 255 + 32 * 40) / 48, (16 * 255 + 32 * 40) / 48];
+    f.sharp = true; draw(); const mSharp = px(630, 10); f.sharp = false;
+    // a smaller layer: the blocks stay inside it
+    L.p.scale = .5; draw(); const mOut = px(100, 100).join(); L.p.scale = 1;
+    step('mosaic', { block: mA.join(), sameBlock: mB.join(), expected: mExp.map(Math.round).join(), sharp: mSharp.join(), outsideSmallLayer: mOut,
+      works: same(mA, mB, 0) && same(mA, mExp, 2) && mSharp.join() === '220,40,40' && mOut === '0,0,0' });
+
+    const r4speed = {};
+    for (const id of ['bulge', 'wave', 'ripple', 'cclens', 'turbulent', 'mosaic']) {
+      await only(id); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1 + i / 30); ctx.getImageData(0, 0, 1, 1); r4speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round4speed', r4speed);
+
+    // ---- Round 5
+    const closeTo = (a, b, tol) => a.every((v, k) => Math.abs(v - b[k]) <= tol);
+    // Find Edges: flat white stays white, the white|red edge turns dark; Invert flips it (flat goes black)
+    f = await only('findedges'); draw(); const feFlat = px(480, 270), feEdge = lum(px(640, 270));
+    f.invert = true; draw(); const feInv = px(480, 270); f.invert = false;
+    step('findedges', { flat: feFlat.join(), edge: Math.round(feEdge), inverted: feInv.join(), works: feFlat.join() === '255,255,255' && feEdge < 150 && feInv.join() === '0,0,0' });
+
+    // Emboss: flat areas turn mid grey, an edge turns lighter or darker
+    f = await only('emboss'); draw(); const emFlat = px(480, 270), emEdge = lum(px(640, 270));
+    step('emboss', { flat: emFlat.join(), edge: Math.round(emEdge), works: closeTo(emFlat, [128, 128, 128], 2) && Math.abs(emEdge - 128) > 30 });
+
+    // Posterize: 2 levels leaves only 0 or 255 in each colour; 6 levels gives steps of 51
+    f = await only('posterize'); set(f, 'level', 2); draw();
+    let only2 = true; for (let x = 5; x < 1920; x += 37) if (!px(x, 810).every(v => v === 0 || v === 255)) only2 = false;
+    const poRed = px(800, 270).join();
+    set(f, 'level', 6); draw(); let steps51 = true; for (let x = 5; x < 1920; x += 37) if (!px(x, 810).every(v => Math.abs(v - Math.round(v / 51) * 51) <= 1)) steps51 = false;
+    step('posterize', { only0or255: only2, red: poRed, stepsOf51: steps51, works: only2 && poRed === '255,0,0' && steps51 });
+
+    // Threshold: the dark half of the ramp goes black, the light half white
+    f = await only('threshold'); draw(); const thDark = px(400, 810).join(), thLight = px(1500, 810).join();
+    step('threshold', { dark: thDark, light: thLight, works: thDark === '0,0,0' && thLight === '255,255,255' });
+
+    // Strobe Light: flashes white for 0.05 s once a second; random flashes add more; "see-through" hides the layer instead
+    f = await only('strobe'); draw(1.01); const stOn = px(160, 810).join(); draw(1.5); const stOff = diff(plain, frame()).max;
+    set(f, 'random', 100); draw(1.5); const stRand = px(160, 810).join(); set(f, 'random', 0);
+    f.mode = 1; draw(1.01); const stClear = px(480, 270).join(); f.mode = 0;
+    step('strobe', { flash: stOn, between: stOff, randomFlash: stRand, seeThrough: stClear, works: stOn === '255,255,255' && stOff === 0 && stRand === '255,255,255' && stClear === '0,0,0' });
+
+    // Vignette: the corners darken, the middle hardly changes; a negative amount brightens the corners
+    f = await only('vignette'); set(f, 'amount', 100); draw(); const vgCorner = lum(px(1910, 10)), vgMid = lum(px(960, 800)), vgPlain = [lum(P0(1910, 10)), lum(P0(960, 800))];
+    set(f, 'amount', -100); draw(); const vgBright = lum(px(1910, 10));
+    step('vignette', { corner: Math.round(vgCorner), middle: Math.round(vgMid), plain: vgPlain.map(Math.round), brightened: Math.round(vgBright),
+      works: vgCorner < vgPlain[0] - 20 && Math.abs(vgMid - vgPlain[1]) < 8 && vgBright > vgPlain[0] + 20 });
+
+    // Motion Tile: half-size tiles repeat the picture (two blue patches in a row); a smaller layer gets copies all around it;
+    // Mirror edges flips the copy next to it (so the grey patch, not the black one, sits right of the layer)
+    f = await only('motiontile'); set(f, 'tw', 50); set(f, 'th', 50); draw(); const mt1 = px(240, 270), mt2 = px(1200, 270);
+    set(f, 'tw', 100); set(f, 'th', 100); L.p.scale = .5; draw(); const mtAround = lum(px(100, 100)), mtWrap = px(1450, 350);
+    f.mirror = true; draw(); const mtMirror = px(1450, 350); f.mirror = false; L.p.scale = 1;
+    step('motiontile', { tile1: mt1.join(), tile2: mt2.join(), aroundSmallLayer: Math.round(mtAround), rightOfLayer: mtWrap.join(), mirrored: mtMirror.join(),
+      works: closeTo(mt1, [40, 60, 220], 3) && closeTo(mt2, [40, 60, 220], 3) && mtAround > 20 && closeTo(mtWrap, [0, 0, 0], 3) && closeTo(mtMirror, [128, 128, 128], 3) });
+
+    // Gradient Ramp: black at the top to white at the bottom, grey in the middle; half blend mixes the picture back in
+    f = await only('gradientramp'); draw(); const grTop = lum(px(960, 3)), grMid = lum(px(960, 540)), grBot = lum(px(960, 1076));
+    set(f, 'blend', 50); draw(); const grHalf = px(480, 270); set(f, 'blend', 0);
+    step('gradientramp', { top: Math.round(grTop), middle: Math.round(grMid), bottom: Math.round(grBot), halfBlendOnWhite: grHalf.join(),
+      works: grTop < 6 && grBot > 249 && Math.abs(grMid - 127.5) < 4 && grHalf[0] > 150 && grHalf[0] < 230 });
+
+    // 4-Color Gradient: yellow near point 1, blue near point 4; it stays inside the layer
+    f = await only('fourcolor'); draw(); const fcA = px(192, 108), fcD = px(1728, 972);
+    L.p.scale = .5; draw(); const fcOut = px(100, 100).join(); L.p.scale = 1;
+    step('fourcolor', { atPoint1: fcA.join(), atPoint4: fcD.join(), outsideSmallLayer: fcOut,
+      works: fcA[0] > 230 && fcA[1] > 230 && fcA[2] < 30 && fcD[2] > 230 && fcD[0] < 30 && fcOut === '0,0,0' });
+
+    // Grid: white lines every 64 px over the picture; Invert grid paints the cells instead
+    f = await only('grid'); draw(); const gLine = px(64, 300).join(), gCell = px(32, 300).join();
+    f.invert = true; draw(); const gInvLine = px(64, 300).join(), gInvCell = px(32, 300).join(); f.invert = false;
+    step('grid', { line: gLine, cell: gCell, invertedLine: gInvLine, invertedCell: gInvCell,
+      works: gLine === '255,255,255' && gCell === '0,0,0' && gInvLine === '0,0,0' && gInvCell === '255,255,255' });
+
+    const r5speed = {};
+    for (const [id, vals] of [['findedges'], ['emboss'], ['posterize'], ['vignette'], ['motiontile', { tw: 50, th: 50 }], ['gradientramp'], ['fourcolor'], ['grid']]) {
+      const g = await only(id); for (const k in vals || {}) set(g, k, vals[k]); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r5speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round5speed', r5speed);
+
+    // ---- Round 6: color correction
+    // Hue/Saturation: zero changes nothing; +120° turns red green; -100 saturation turns it grey; Colorize paints the grey patch blue
+    f = await only('huesat'); draw(); const hsZero = diff(plain, frame()).max;
+    set(f, 'hue', 120); draw(); const hsGreen = px(800, 270); set(f, 'hue', 0);
+    set(f, 'saturation', -100); draw(); const hsGrey = px(800, 270); set(f, 'saturation', 0);
+    f.colorize = true; set(f, 'cHue', 240); set(f, 'cSat', 100); draw(); const hsBlue = px(1760, 270), hsWhite = px(480, 270).join(); f.colorize = false;
+    step('huesat', { zero: hsZero, redPlus120: hsGreen.join(), redDesaturated: hsGrey.join(), greyColorized: hsBlue.join(), whiteColorized: hsWhite,
+      works: hsZero === 0 && hsGreen[1] > 180 && hsGreen[0] < 60 && Math.max(...hsGrey) - Math.min(...hsGrey) <= 2 && hsBlue[2] > 240 && hsBlue[0] < 10 && hsWhite === '255,255,255' });
+
+    // Levels: input 64-192 stretches the ramp (64 → black, about 199 → white, grey stays grey); gamma 2 lifts grey; output black raises black
+    f = await only('levels'); draw(); const lvZero = diff(plain, frame()).max;
+    set(f, 'inBlack', 64); set(f, 'inWhite', 192); draw(); const x64 = Math.round(64 / 255 * 1920), lvLo = px(x64 - 20, 810), lvHi = px(1500, 810), lvMid = px(1760, 270);
+    set(f, 'inBlack', 0); set(f, 'inWhite', 255); set(f, 'gamma', 2); draw(); const lvGamma = px(1760, 270)[0]; set(f, 'gamma', 1);
+    set(f, 'outBlack', 50); draw(); const lvOut = px(160, 270)[0];
+    step('levels', { zero: lvZero, belowInBlack: lvLo.join(), aboveInWhite: lvHi.join(), grey: lvMid.join(), greyGamma2: lvGamma, blackWithOutBlack50: lvOut,
+      works: lvZero === 0 && lvLo[0] === 0 && lvHi[0] === 255 && Math.abs(lvMid[0] - 128) <= 2 && Math.abs(lvGamma - 181) <= 2 && Math.abs(lvOut - 50) <= 1 });
+
+    // Curves: untouched it changes nothing; midtones 128 → 180 lifts grey but keeps black and white; red midtones down makes grey cyan-ish
+    f = await only('curves'); draw(); const cvZero = diff(plain, frame()).max;
+    set(f, 'rgb128', 180); draw(); const cvGrey = px(1760, 270)[0], cvBlack = px(160, 270)[0], cvWhite = px(480, 270)[0]; set(f, 'rgb128', 128);
+    set(f, 'r128', 60); draw(); const cvRed = px(1760, 270);
+    step('curves', { zero: cvZero, greyLifted: cvGrey, black: cvBlack, white: cvWhite, redMidDown: cvRed.join(),
+      works: cvZero === 0 && cvGrey > 170 && cvGrey < 190 && cvBlack === 0 && cvWhite === 255 && cvRed[0] < 75 && Math.abs(cvRed[1] - 128) <= 2 });
+
+    // Tint: black-to-white makes red grey (its Rec. 601 brightness, 94); map black to red paints the black patch red; 50% is halfway
+    f = await only('tint'); draw(); const tnRed = px(800, 270);
+    f.black = '#ff0000'; draw(); const tnBlack = px(160, 270).join(); f.black = '#000000';
+    set(f, 'amount', 50); draw(); const tnHalf = px(800, 270); set(f, 'amount', 0); draw(); const tnOff = diff(plain, frame()).max;
+    step('tint', { red: tnRed.join(), blackMappedRed: tnBlack, halfOnRed: tnHalf.join(), amount0: tnOff,
+      works: closeTo(tnRed, [94, 94, 94], 2) && tnBlack === '255,0,0' && tnHalf[0] > 150 && tnHalf[0] < 200 && tnOff === 0 });
+
+    const r6speed = {};
+    for (const [id, vals] of [['huesat', { hue: 40, saturation: 30 }], ['levels', { inBlack: 20, gamma: 1.3 }], ['curves', { rgb64: 50, rgb192: 210, r128: 140 }], ['tint', {}]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r6speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round6speed', r6speed);
+
+    // ---- Round 7: colour I. Patches at y 270: black 160, white 480, red 800, green 1120, blue 1440, grey 1760
+    const RED = 800, GRN = 1120, GRY = 1760, BLK = 160, WHT = 480, Y = 270;
+    // Vibrance: zero changes nothing; -100 saturation makes red grey; +100 vibrance makes red purer and leaves grey grey
+    f = await only('vibrance'); draw(); const vbZero = diff(plain, frame()).max;
+    set(f, 'saturation', -100); draw(); const vbGrey = px(RED, Y); set(f, 'saturation', 0);
+    set(f, 'vibrance', 100); draw(); const vbRed = px(RED, Y), vbG = px(GRY, Y);
+    const fxcPipe = FXG.pipes['fx_color:fxc_point'];
+    if (fxcPipe?.err || !fxcPipe?.pipe) { const m = FXG.mods.fx_color; step('fxcKernel', { built: !!fxcPipe?.pipe, err: fxcPipe?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }
+    step('vibrance', { zero: vbZero, desaturatedRed: vbGrey.join(), vibrantRed: vbRed.join(), grey: vbG.join(),
+      works: vbZero === 0 && Math.max(...vbGrey) - Math.min(...vbGrey) <= 2 && vbRed[1] < 35 && vbRed[0] >= 220 && closeTo(vbG, [128, 128, 128], 1) });
+
+    // Color Balance: shadows blue +100 turns black navy (0,0,128); highlights red -100 turns white cyan-ish (128,255,255);
+    // midtones red +100 makes grey pink, and Preserve luminosity pulls its brightness back toward grey's
+    f = await only('colorbalance'); draw(); const cbZero = diff(plain, frame()).max;
+    set(f, 'shadowBlue', 100); draw(); const cbBlack = px(BLK, Y); set(f, 'shadowBlue', 0);
+    set(f, 'hiRed', -100); draw(); const cbWhite = px(WHT, Y); set(f, 'hiRed', 0);
+    set(f, 'midRed', 100); draw(); const cbPink = px(GRY, Y); f.preserve = true; draw(); const cbKept = px(GRY, Y); f.preserve = false;
+    step('colorbalance', { zero: cbZero, blackShadowBlue: cbBlack.join(), whiteHighlightRedDown: cbWhite.join(), greyMidRed: cbPink.join(), preserved: cbKept.join(),
+      works: cbZero === 0 && closeTo(cbBlack, [0, 0, 128], 2) && closeTo(cbWhite, [128, 255, 255], 2) && closeTo(cbPink, [255, 128, 128], 2) && lum(cbKept) < lum(cbPink) - 15 });
+
+    // Black & White: red becomes grey at 40% between its min and max (112); green 42.5% (108); grey stays grey; Tint warms grey
+    f = await only('blackwhite'); draw(); const bwRed = px(RED, Y), bwGreen = px(GRN, Y), bwGrey = px(GRY, Y);
+    set(f, 'reds', 100); draw(); const bwRed100 = px(RED, Y); set(f, 'reds', 40);
+    f.tint = true; draw(); const bwTint = px(GRY, Y); f.tint = false;
+    step('blackwhite', { red: bwRed.join(), green: bwGreen.join(), grey: bwGrey.join(), redsAt100: bwRed100.join(), tintedGrey: bwTint.join(),
+      works: closeTo(bwRed, [112, 112, 112], 2) && closeTo(bwGreen, [108, 108, 108], 2) && closeTo(bwGrey, [128, 128, 128], 1) && closeTo(bwRed100, [220, 220, 220], 2) && bwTint[0] > bwTint[2] + 20 });
+
+    // Tritone: black → Shadows, white → Highlights, mid grey → Midtones (128, 102, 77); Blend 100 is the original
+    f = await only('tritone'); draw(); const ttBlack = px(BLK, Y).join(), ttWhite = px(WHT, Y).join(), ttGrey = px(GRY, Y);
+    set(f, 'blend', 100); draw(); const ttOrig = diff(plain, frame()).max;
+    step('tritone', { black: ttBlack, white: ttWhite, grey: ttGrey.join(), blend100: ttOrig,
+      works: ttBlack === '0,0,0' && ttWhite === '255,255,255' && closeTo(ttGrey, [128, 102, 77], 3) && ttOrig === 0 });
+
+    // Colorama: brightness around the colour wheel: black → red, mid grey → cyan; Phase shift 120° turns black green;
+    // without Smooth palette the grey lands exactly on cyan's step
+    f = await only('colorama'); draw(); const caBlack = px(BLK, Y), caGrey = px(GRY, Y);
+    set(f, 'shift', 120); draw(); const caShift = px(BLK, Y); set(f, 'shift', 0);
+    f.smooth = false; draw(); const caStep = px(GRY, Y); f.smooth = true;
+    step('colorama', { black: caBlack.join(), grey: caGrey.join(), blackShift120: caShift.join(), greyStepped: caStep.join(),
+      works: closeTo(caBlack, [255, 0, 0], 1) && caGrey[0] < 10 && caGrey[1] > 240 && caGrey[2] > 240 && closeTo(caShift, [0, 255, 0], 1) && closeTo(caStep, [0, 255, 255], 1) });
+
+    // Channel Mixer: the default changes nothing; swapping red and blue turns red blue; Monochrome copies the red output everywhere
+    f = await only('channelmixer'); draw(); const cmZero = diff(plain, frame()).max;
+    set(f, 'rr', 0); set(f, 'rb', 100); set(f, 'bb', 0); set(f, 'br', 100); draw(); const cmSwap = px(RED, Y);
+    set(f, 'rr', 100); set(f, 'rb', 0); set(f, 'bb', 100); set(f, 'br', 0); f.mono = true; draw(); const cmMono = px(RED, Y); f.mono = false;
+    step('channelmixer', { zero: cmZero, redSwapped: cmSwap.join(), redMono: cmMono.join(),
+      works: cmZero === 0 && closeTo(cmSwap, [40, 40, 220], 1) && closeTo(cmMono, [220, 220, 220], 1) });
+
+    // Selective Color: Reds cyan +100 takes red out of the red patch only (relative: 70.6% × its 13.7% ink → about 195;
+    // absolute: all of it → about 40); green and grey stay. The Colors menu shows one range's four sliders at a time.
+    f = await only('selectivecolor'); draw(); const scZero = diff(plain, frame()).max;
+    const scRows = () => [...document.querySelectorAll('#inspector .fxi .prow')].map(r => PROPS[r.dataset.p]?.label);
+    S.sel = L.id; setRightTab('fx'); refresh(); const scShown = scRows();
+    const scPick = $(`#fx-${f.uid}-range`); scPick.value = 4; scPick.dispatchEvent(new Event('input', { bubbles: true })); const scBlues = scRows();
+    set(f, 'redsCyan', 100); draw(); const scRel = px(RED, Y), scGreen = px(GRN, Y), scGrey = px(GRY, Y);
+    f.method = 1; draw(); const scAbs = px(RED, Y); f.method = 0;
+    step('selectivecolor', { zero: scZero, panelRows: scShown, afterPickingBlues: scBlues, relativeRed: scRel.join(), absoluteRed: scAbs.join(), green: scGreen.join(), grey: scGrey.join(),
+      works: scZero === 0 && scShown.length === 4 && scBlues.length === 4 && scBlues.every(l => l.startsWith('Blues')) && Math.abs(scRel[0] - 195) <= 3 && scRel[1] === 40
+        && Math.abs(scAbs[0] - 40) <= 3 && closeTo(scGreen, P0(GRN, Y), 1) && closeTo(scGrey, P0(GRY, Y), 1) });
+
+    const r7speed = {};
+    for (const [id, vals] of [['vibrance', { vibrance: 50 }], ['colorbalance', { midRed: 30 }], ['blackwhite', {}], ['tritone', {}], ['colorama', {}], ['channelmixer', { rg: 30 }], ['selectivecolor', { redsCyan: 40 }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r7speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round7speed', r7speed);
+
+    // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
+    f = await only('rgbsplit');
+    if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }
+    // RGB Split, 12 px sideways: just right of black|white, red comes from the black side; just left of white|red, blue comes from red
+    set(f, 'amount', 0); draw(); const rsZero = diff(plain, frame()).max;
+    set(f, 'amount', 12); draw(); const rsA = px(330, 270), rsB = px(630, 270), rsFlat = px(480, 270);
+    f.mode = 1; draw(); const rsRad = px(324, 270); f.mode = 0;
+    // fired by a bookmark at 1 s, fading over 0.3 s: full at 1.0, a quarter (3 px, too small to reach 330) at 1.15, gone by 1.4
+    f.trigger = 10; S.bookmarks = [{ id: 99901, t: 1, note: '', color: '#ffffff', dur: 0 }];
+    draw(1); const trAt = px(330, 270); draw(1.15); const trMid = px(330, 270), trMidGain = +vfxGain({ T: 1.15 }, k => k === 'trigger' ? 10 : .3).toFixed(4); draw(1.4); const trGone = diff(plain, frame()).max;
+    S.bookmarks = []; f.trigger = 0;
+    step('rgbsplit', { zero: rsZero, rightOfBlackEdge: rsA.join(), leftOfRedEdge: rsB.join(), flatWhite: rsFlat.join(), radial: rsRad.join(), trigger: { at1: trAt.join(), at115: trMid.join(), gainAt115: trMidGain, at14max: trGone },
+      works: rsZero === 0 && closeTo(rsA, [0, 255, 255], 2) && closeTo(rsB, [255, 255, 40], 2) && rsFlat.join() === '255,255,255' && rsRad[2] < 40
+        && closeTo(trAt, [0, 255, 255], 2) && trMid.join() === '255,255,255' && Math.abs(trMidGain - .25) < .001 && trGone === 0 });
+
+    // Edge Glow: far from any edge black stays black; beside the black|white edge, the black side lights up; Glow only shows just edges
+    f = await only('edgeglow'); draw(); const egFar = px(100, 270), egNear = lum(px(312, 270)), egPlainNear = lum(P0(312, 270));
+    f.mix = 2; draw(); const egOnlyFlat = px(480, 120), egOnlyEdge = lum(px(320, 120)); f.mix = 0;
+    step('edgeglow', { farBlack: egFar.join(), nearEdge: Math.round(egNear), plainNearEdge: Math.round(egPlainNear), glowOnlyFlat: egOnlyFlat.join(), glowOnlyEdge: Math.round(egOnlyEdge),
+      works: closeTo(egFar, [0, 0, 0], 3) && egNear > egPlainNear + 40 && closeTo(egOnlyFlat, [0, 0, 0], 3) && egOnlyEdge > 60 });
+
+    // Flash (Always on): screen white turns black white and keeps white white; 50% makes black mid grey; Fill with red paints red
+    f = await only('flash'); f.trigger = 0; draw(); const flBlack = px(160, 270).join(), flWhite = px(480, 270).join();
+    set(f, 'amount', 50); draw(); const flHalf = px(160, 270)[0];
+    set(f, 'amount', 100); f.color = '#ff0000'; f.mode = 2; draw(); const flFill = px(480, 270).join();
+    f.trigger = 1; draw(); const flNoBeats = diff(plain, frame()).max;   // on beats, with no beats anywhere: nothing
+    step('flash', { black: flBlack, white: flWhite, half: flHalf, fillRed: flFill, onBeatsWithNoBeats: flNoBeats,
+      works: flBlack === '255,255,255' && flWhite === '255,255,255' && Math.abs(flHalf - 128) <= 2 && flFill === '255,0,0' && flNoBeats === 0 });
+
+    // VHS Glitch: strength 0 changes nothing; on, much of the frame changes, and it moves from frame to frame
+    f = await only('vhs'); set(f, 'strength', 0); draw(); const vhZero = diff(plain, frame()).max;
+    set(f, 'strength', 100); draw(1); const vh1 = frame(); draw(1.2); const vh2 = frame();
+    // scanlines darken every few rows of flat white
+    let scanDark = 0; for (let y = 400; y < 460; y++) if (px(480, y)[1] < 235) scanDark++;
+    step('vhs', { zero: vhZero, changed: diff(plain, vh1).changed, moves: diff(vh1, vh2).changed, darkRowsOf60: scanDark,
+      works: vhZero === 0 && diff(plain, vh1).changed > 200000 && diff(vh1, vh2).changed > 20000 && scanDark >= 10 && scanDark <= 55 });
+
+    // Camera Shake (Always on): amount and rotation 0 change nothing; on, the picture moves differently at different moments
+    f = await only('shake'); f.trigger = 0; set(f, 'amount', 0); set(f, 'rotation', 0); draw(); const shZero = diff(plain, frame()).max;
+    set(f, 'amount', 25); set(f, 'rotation', 2); draw(1); const sh1 = frame(); draw(1.13); const sh2 = frame();
+    // where the black|white edge is on row 270: it moves by up to the shake amount, plus the zoom that hides the frame edges
+    // (about 7% here, which alone pushes an edge 640 px from the centre out by ~45 px)
+    const edgeX = fr => { for (let x = 200; x < 480; x++) { const i = (270 * 1920 + x) * 4; if (fr[i + 1] > 128) return x; } return -1; };
+    step('shake', { zero: shZero, edgeAt: [edgeX(plain), edgeX(sh1), edgeX(sh2)], moves: diff(sh1, sh2).changed,
+      works: shZero === 0 && edgeX(sh1) !== edgeX(sh2) && Math.abs(edgeX(sh1) - 320) < 80 && Math.abs(edgeX(sh2) - 320) < 80 && diff(sh1, sh2).changed > 10000 });
+
+    const c4speed = {};
+    for (const [id, vals, opts] of [['rgbsplit', { amount: 20 }, { trigger: 0 }], ['edgeglow', {}, { trigger: 0 }], ['flash', { amount: 60 }, { trigger: 0 }], ['vhs', {}, { trigger: 0 }], ['shake', {}, { trigger: 0 }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); c4speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('c4speed', c4speed);
+
+    // a stack: order matters, and switching one off skips it
+    while (L.fx?.length) delFX(L, 0);
+    const a = await add('twirl'), b = await add('blur'); set(a, 'angle', 270); set(b, 'blurriness', 20);
+    draw(); const ab = frame(); [L.fx[0], L.fx[1]] = [L.fx[1], L.fx[0]]; draw(); const ba = frame(); [L.fx[0], L.fx[1]] = [L.fx[1], L.fx[0]];
+    b.on = false; draw(); const aOnly = frame(); b.on = true;
+    while (L.fx.length > 1) delFX(L, 1); draw(); const twirlAlone = frame();
+    const orderMatters = diff(ab, ba).changed, offSkips = diff(aOnly, twirlAlone).max;
+    // inspector buttons: move down, remove
+    await add('glow'); S.sel = L.id; refresh(); $('#inspector [data-act=fxdn][data-fx="0"]').click(); const afterMove = L.fx.map(x => x.id);
+    $('#inspector [data-act=fxdel][data-fx="1"]').click(); const afterDel = L.fx.map(x => x.id);
+    step('stack', { orderMatters, offSkips, afterMove, afterDel, propsCleaned: !Object.keys(L.p).some(k => k.startsWith(`fx${a.uid}_`)) });
+
+    // speed: blur + glow + light rays on a 1080p frame
+    while (L.fx?.length) delFX(L, 0);
+    for (const id of ['blur', 'glow', 'rays']) await add(id);
+    draw(); await new Promise(r => setTimeout(r, 50));
+    const t0 = performance.now(); for (let i = 0; i < 30; i++) { draw(1 + i / 30); } ctx.getImageData(0, 0, 1, 1); const ms = (performance.now() - t0) / 30;
+    step('speed', { msPerFrame: +ms.toFixed(1), fps: Math.round(1000 / ms) });
+
+    // saved and reopened: the same picture
+    L.keys[fxKey(L.fx[0], 'blurriness')] = [{ t: 0, v: 5, ease: 'smooth' }, { t: 3, v: 30, ease: 'smooth' }];
+    draw(2); const pre = frame();
+    PROJ.path = dir + 'fx.lumina'; await saveProject();
+    S.layers = []; for (const k in RT) delete RT[k]; refresh();
+    await openProject(dir + 'fx.lumina'); await fxWarmAll();
+    draw(2); const post = frame();
+    const L2 = S.layers[0];
+    step('reopened', { fx: (L2.fx || []).map(x => x.id), keyed: !!L2.keys[fxKey(L2.fx[0], 'blurriness')], same: diff(pre, post) });
+    // undo brings a removed effect back
+    S.sel = L2.id; refresh(); $('#inspector [data-act=fxdel][data-fx="0"]').click(); const n1 = L2.fx.length; undo(); const n2 = selLayer()?.fx?.length ?? byId(L2.id)?.fx?.length;
+    step('undo', { afterDelete: n1, afterUndo: n2 });
+
+    // picture: each effect on the card
+    const shots = [['none'], ['brightness', { contrast: 60, brightness: 10 }], ['blur', { blurriness: 30 }], ['glow', { radius: 60, threshold: 40, intensity: 1.5 }], ['twirl', { angle: 300, radius: 45 }], ['noise', {}], ['rays', { intensity: 250, radius: 80 }],
+      ['directional', { length: 120, direction: 90 }], ['radial', { amount: 40 }], ['lens', { radius: 25, hlBright: 80, hlThr: 200 }], ['unsharp', { amount: 300, radius: 4 }],
+      ['bulge', { height: 1.5, hradius: 400, vradius: 400 }], ['wave', { height: 25, width: 80 }], ['ripple', { radius: 80, waveHeight: 30 }], ['cclens', {}], ['turbulent', { amount: 120 }], ['mosaic', {}],
+      ['findedges', {}], ['emboss', { relief: 3 }], ['posterize', { level: 4 }], ['threshold', {}], ['vignette', { amount: 100 }], ['motiontile', { tw: 50, th: 50 }],
+      ['gradientramp', { blend: 40 }], ['fourcolor', {}], ['grid', {}],
+      ['huesat', { hue: 150, saturation: 40 }], ['levels', { inBlack: 40, inWhite: 200, gamma: 1.4 }], ['curves', { rgb64: 40, rgb192: 220, b64: 100, r192: 230 }], ['tint', {}],
+      ['vibrance', { vibrance: 100 }], ['colorbalance', { shadowBlue: 60, hiRed: 40 }], ['blackwhite', {}], ['tritone', {}], ['colorama', {}], ['channelmixer', { rr: 0, rb: 100, bb: 0, br: 100 }], ['selectivecolor', { redsCyan: 100, greensYellow: -100 }],
+      ['rgbsplit', { amount: 30 }, { trigger: 0 }], ['edgeglow', { radius: 20 }, { trigger: 0 }], ['flash', { amount: 55 }, { trigger: 0, color: '#9fdcff' }], ['vhs', {}, { trigger: 0 }], ['shake', { amount: 40, rotation: 4 }, { trigger: 0 }]];
+    const T = S.layers[0];
+    const strip = document.createElement('canvas'); strip.width = 4 * 480; strip.height = Math.ceil(shots.length / 4) * 270; const sx = strip.getContext('2d');
+    for (let i = 0; i < shots.length; i++) {
+      while (T.fx?.length) delFX(T, 0);
+      const [id, vals, opts] = shots[i];
+      if (id !== 'none') { const g = addFX(T, id); await fxWarm(id); for (const k in vals) T.p[fxKey(g, k)] = vals[k]; Object.assign(g, opts || {}); }
+      draw(1); sx.drawImage(canvas, (i % 4) * 480, Math.floor(i / 4) * 270, 480, 270);
+      sx.fillStyle = '#ff0'; sx.font = '20px sans-serif'; sx.fillText(id === 'none' ? 'Original' : FX[id].name, (i % 4) * 480 + 10, Math.floor(i / 4) * 270 + 28);
+    }
+    await lumina.saveExport(await new Promise(r => strip.toBlob(b => b.arrayBuffer().then(r))), 'x.png', 'D:\\Lumina\\.claude\\fx\\effects.png');
+    while (T.fx?.length) delFX(T, 0); const g = addFX(T, 'glow'); await fxWarm('glow'); T.p[fxKey(g, 'radius')] = 40;
+    $('#modal').hidden = true; S.sel = T.id; refresh(); draw(1);
+    R.errors = __errs;
+  } catch (e) { R.error = String(e && e.stack || e); R.errors = window.__errs; }
+  return R;
+})()

@@ -1,0 +1,18 @@
+# installed packages and build output (GitHub rebuilds these)
+node_modules/
+dist/
+lumina linux build/dist/
+lumina linux build/node_modules/
+
+# downloaded videos: not ours to share
+Converted Links/
+
+# self-test results written on each run
+selftest.json
+selftest.png
+.claude/**/selftest.json
+.claude/**/selftest.png
+.claude/settings.local.json
+
+# converter test output, written on each run
+.claude/speed/convout/
