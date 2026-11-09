@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('lumina', {
   clipRead: () => ipcRenderer.invoke('clip:read'),
   clipWrite: d => ipcRenderer.invoke('clip:write', d),
   showInFolder:p => ipcRenderer.invoke('show-in-folder', p),
+  claudeGet: () => ipcRenderer.invoke('claude:get'),
+  claudeSet: on => ipcRenderer.invoke('claude:set', on),
+  claudeProbe: opts => ipcRenderer.invoke('claude:probe', opts),   // self tests only (main.js refuses it otherwise)
   setDirty: v => ipcRenderer.send('dirty', v),
   setTitle: t => ipcRenderer.send('title', t),
   closeNow: () => ipcRenderer.send('close-now'),

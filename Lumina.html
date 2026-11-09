@@ -381,6 +381,10 @@ footer { background: var(--glass); backdrop-filter: blur(16px) saturate(140%); b
 .menubar .pop .mhead span { display: block; margin-top: 4px; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12.5px; color: var(--muted); white-space: normal; line-height: 1.45; }
 .menubar [data-menu="Help"] .pop { left: auto; right: 0; }
 [data-menu="Help"] .pop .mhead b { font: 500 16px var(--brand); text-transform: none; letter-spacing: .01em; color: var(--title); }
+#claudeLight { order: 99; margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: .8; }
+#claudeLight::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #6b6b74; }
+#claudeLight.busy::before { background: #4be37a; box-shadow: 0 0 7px #4be37a; }
+#claudeLight[hidden] { display: none; }
 header.toolbar { padding: 6px 10px; gap: 6px; }
 header.toolbar > button, header.toolbar > select, header.toolbar .menu > button { padding: 4px 11px; font-size: 13px; }
 .wspaces { display: flex; gap: 2px; margin-right: 10px; }
@@ -544,6 +548,7 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
   <div class="logo"><img src="lumina-icon.png" alt="">Lumina</div>
   <div class="menu" id="fileMenu" hidden></div>
   <!-- Edit / Composition / Layer / View / Window / Help are built in script (buildMenubar) -->
+  <span id="claudeLight" hidden>Claude</span>
 </nav>
 <header class="toolbar">
   <button id="btnImport" class="primary">Import media</button>
@@ -8396,6 +8401,99 @@ function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => toast('Fullscreen is not available here.'));
 }
 document.addEventListener('keydown', e => { if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); } });
+
+// ---------- Claude control (MCP step M1) ----------
+// Edit › Allow Claude to control Lumina turns on a door in main.js (127.0.0.1 only, with a key). Claude's MCP server
+// (electron/mcp.js) calls LuminaAPI.call(name, args) through it. M1's tools only look; nothing here changes the project.
+let CLAUDE_ON = false, claudeLightT = 0;
+function claudeLight(busy) {
+  const el = $('#claudeLight'); if (!el) return;
+  el.hidden = !CLAUDE_ON; el.classList.toggle('busy', !!busy);
+  el.title = busy ? 'Claude is looking at this project right now' : 'Claude may control Lumina (Edit › Allow Claude to control Lumina)';
+}
+async function setClaude(on) {
+  try { CLAUDE_ON = !!(await lumina.claudeSet(!!on)).enabled; } catch (e) { toast('Could not change Claude control: ' + (e.message || e)); }
+  claudeLight();
+  notice(CLAUDE_ON ? 'Claude can now look at Lumina. Only Claude Code on this computer can connect, with Lumina\'s own key.' : 'Claude control is off. Nothing can connect to Lumina.');
+}
+if (window.lumina?.claudeGet) lumina.claudeGet().then(s => { CLAUDE_ON = !!s.enabled; claudeLight(); }).catch(() => { });
+const apiNum = v => typeof v === 'number' && isFinite(v) ? +v.toFixed(4) : v;
+const apiLayer = id => {
+  const L = S.layers.find(x => x.id === +id);
+  if (!L) throw new Error(`There is no layer with id ${id}. get_project lists the layers and their ids.`);
+  return L;
+};
+const API_TOOLS = {
+  get_project() {
+    return {
+      name: projectName(), path: PROJ.path, unsavedChanges: !!PROJ.dirty, mode: isStill() ? 'image' : 'video',
+      width: W(), height: H(), fps: S.fps, duration: apiNum(duration()), playhead: apiNum(S.time), playing: !!S.playing,
+      selectedLayer: S.sel ?? null, background: S.global.bg ?? null, bookmarks: (S.bookmarks || []).map(b => apiNum(b.t ?? b)),
+      layerOrder: 'the first layer is drawn on top',
+      layers: S.layers.map(L => ({ id: L.id, name: L.name, kind: L.kind, start: apiNum(L.start), length: apiNum(len(L)), end: apiNum(endOf(L)),
+        visible: L.visible !== false, effects: (L.fx || []).map(f => FX[f.id]?.name || f.id) }))
+    };
+  },
+  get_layer({ id }) {
+    const L = apiLayer(id), out = {};
+    for (const [k, v] of Object.entries(L)) if (v == null || typeof v !== 'object') out[k] = apiNum(v);
+    out.length = apiNum(len(L)); out.end = apiNum(endOf(L));
+    const M = L.media != null ? MEDIA[L.media] : null;
+    if (M) out.media = { name: M.name, type: M.type, duration: apiNum(M.duration), width: M.w, height: M.h };
+    // properties that differ from a new layer's, at the playhead
+    out.properties = {};
+    for (const k of Object.keys(L.p)) if (!/^fx\d+_/.test(k)) { const v = val(L, k, S.time); if (v !== BASE_P[k] || L.keys[k]?.length) out.properties[k] = apiNum(v); }
+    out.keyframes = {};
+    for (const [k, arr] of Object.entries(L.keys || {})) if (arr?.length) out.keyframes[k] = arr.map(q => ({ t: apiNum(q.t), v: apiNum(q.v), ...(q.ease ? { ease: q.ease } : {}) }));
+    out.effects = (L.fx || []).map((f, i) => {
+      const D = FX[f.id], settings = {};
+      for (const d of D?.params || []) {
+        if (!d.type) settings[d.id] = apiNum(val(L, fxKey(f, d.id), S.time));
+        else if (d.type === 'pt') settings[d.id] = [apiNum(val(L, fxKey(f, d.id + 'X'), S.time)), apiNum(val(L, fxKey(f, d.id + 'Y'), S.time))];
+        else if (d.type !== 'btn') settings[d.id] = f[d.id];
+      }
+      return { index: i, id: f.id, name: D?.name || f.id, on: f.on !== false, settings };
+    });
+    return out;
+  },
+  list_effects({ query, id } = {}) {
+    if (id) {
+      const D = FX[id]; if (!D) throw new Error(`There is no effect with id "${id}". Call list_effects without an id to see them.`);
+      return { id, name: D.name, group: D.cat, settings: D.params.filter(d => d.type !== 'btn').map(d => ({ id: d.id, label: d.label, type: d.type || 'number',
+        default: d.def, ...(d.min != null ? { min: d.min, max: d.max } : {}), ...(d.opts ? { options: d.opts } : {}) })) };
+    }
+    const q = (query || '').toLowerCase(), groups = {};
+    let count = 0;
+    for (const [k, D] of Object.entries(FX)) {
+      if (q && !(`${k} ${D.name} ${D.cat}`.toLowerCase().includes(q))) continue;
+      (groups[D.cat || 'Other'] ||= []).push({ id: k, name: D.name }); count++;
+    }
+    return { count, groups };
+  },
+  async snapshot({ time, max_width } = {}) {
+    const t0 = S.time, t = time == null || S.playing ? S.time : clamp(+time || 0, 0, duration());
+    const settleAt = async at => { seek(at); for (let i = 0; i < 4; i++) { syncMedia(at); await new Promise(r => setTimeout(r, 120)); } render(); await new Promise(r => requestAnimationFrame(r)); render(); };
+    if (t !== S.time) await settleAt(t); else render();
+    const cv = $('#out'), k = Math.min(1, (+max_width || 960) / cv.width), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(cv.width * k)); c.height = Math.max(1, Math.round(cv.height * k));
+    c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
+    const data = c.toDataURL('image/png').split(',')[1];
+    if (t !== t0) { await settleAt(t0); drawOverlay(); }
+    return { time: apiNum(t), width: c.width, height: c.height, projectSize: [W(), H()], __image: { data, mimeType: 'image/png' } };
+  }
+};
+window.LuminaAPI = {
+  version: 1,
+  tools: Object.keys(API_TOOLS),
+  async call(name, args) {
+    if (!Object.hasOwn(API_TOOLS, name)) return { ok: false, error: `Lumina has no tool called "${name}".` };
+    clearTimeout(claudeLightT); claudeLight(true);
+    try { return { ok: true, result: await API_TOOLS[name](args || {}) }; }
+    catch (e) { return { ok: false, error: String(e?.message || e) }; }
+    finally { claudeLightT = setTimeout(() => claudeLight(false), 1500); }
+  }
+};
+
 const MENUS = {
   Edit: () => [['Undo', 'Ctrl+Z', undo], ['Redo', 'Ctrl+Shift+Z', redo], '-',
     [selImpact() ? 'Cut impact' : keysAtSel(selLayer()).length ? 'Cut keyframe' : 'Cut', 'Ctrl+X', () => copySel(true), !!selLayer() || !!selImpact()], [selImpact() ? 'Copy impact' : keysAtSel(selLayer()).length ? 'Copy keyframe' : 'Copy', 'Ctrl+C', () => copySel(false), !!selLayer() || !!selImpact()],
@@ -8403,7 +8501,8 @@ const MENUS = {
     ['Copy all keyframes', '', () => copyKeys(selLayer(), Object.values(selLayer().keys).flat()), !!selLayer() && Object.keys(selLayer().keys).length > 0], '-',
     ['Duplicate', 'Ctrl+D', () => action('dup'), !!selLayer()], ['Split at playhead', 'S', split, !!selLayer()], ['Delete', 'Del', del, S.sel != null], '-',
     ['Select all clips', 'Ctrl+A', selectAll, S.layers.length > 0], ['Deselect', '', () => { clearMulti(); S.sel = null; S.selKey = null; refresh(); }, S.sel != null], '-',
-    ['Ripple editing', '', () => setRipple(!rippleOn), true, rippleOn]],
+    ['Ripple editing', '', () => setRipple(!rippleOn), true, rippleOn], '-',
+    ['Allow Claude to control Lumina', '', () => setClaude(!CLAUDE_ON), !!window.lumina?.claudeSet, CLAUDE_ON]],
   Composition: () => [['Import media…', '', () => $('#file').click()], '-',
     ['Add impact marker', 'I', addImpact], ['Add color grade layer', '', () => $('#btnGrade').click()], '-',
     [bookmarkAt(S.time) ? 'Remove bookmark at playhead' : 'Add bookmark at playhead', 'B', toggleBookmark],

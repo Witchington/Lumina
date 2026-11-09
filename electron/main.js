@@ -784,6 +784,71 @@ ipcMain.on('title', (e, t) => { if (win) win.setTitle(t); });
 // the version and Windows version, for the About box and Help › Send feedback
 ipcMain.on('app:info', e => { e.returnValue = { version: app.getVersion(), os: `${process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'} ${require('os').release()}` }; });
 
+// ---------- Claude control (MCP step M1) ----------
+// Off until the user ticks Edit › Allow Claude to control Lumina. Then a small door listens on 127.0.0.1 only (a random
+// free port, never the network) and every call needs the key kept in claude-control.json in Lumina's settings folder.
+// electron/mcp.js, which Claude Code starts, reads that file and passes Claude's tool calls through the door to
+// LuminaAPI in the window. Self tests use their own control file in the test folder.
+const http = require('http'), crypto = require('crypto');
+const CTRL_FILE = () => SELFTEST && process.env.LUMINA_TESTDIR ? path.join(process.env.LUMINA_TESTDIR, 'claude-control.json') : path.join(app.getPath('userData'), 'claude-control.json');
+const readCtrl = () => { try { return JSON.parse(fs.readFileSync(CTRL_FILE(), 'utf8')); } catch { return {}; } };
+const writeCtrl = c => { fs.mkdirSync(path.dirname(CTRL_FILE()), { recursive: true }); fs.writeFileSync(CTRL_FILE(), JSON.stringify(c, null, 2)); };
+let door = null;
+function doorRequest(req, res, key) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  // web pages always send an Origin and can't fake the Host, so this keeps browsers out; the key keeps other programs out
+  if (req.headers.origin || !/^127\.0\.0\.1:\d+$/.test(req.headers.host || '')) return send(403, { ok: false, error: 'Refused: only Claude Code on this computer may connect.' });
+  const given = Buffer.from(String(req.headers['x-lumina-key'] || '')), want = Buffer.from(key);
+  if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return send(401, { ok: false, error: 'Wrong or missing key.' });
+  if (req.method !== 'POST' || req.url !== '/call') return send(404, { ok: false, error: 'Unknown request.' });
+  let body = ''; req.setEncoding('utf8');
+  req.on('data', d => { body += d; if (body.length > 1e6) req.destroy(); });
+  req.on('end', async () => {
+    let msg; try { msg = JSON.parse(body); } catch { return send(400, { ok: false, error: 'The request was not JSON.' }); }
+    if (!win || win.isDestroyed()) return send(503, { ok: false, error: 'Lumina has no window open.' });
+    try {
+      const js = `window.LuminaAPI ? LuminaAPI.call(${JSON.stringify(String(msg.tool || ''))}, ${JSON.stringify(msg.args ?? {})}) : { ok: false, error: 'Lumina is still starting.' }`;
+      send(200, await win.webContents.executeJavaScript(js, true));
+    } catch (e) { send(500, { ok: false, error: String(e && e.message || e) }); }
+  });
+}
+function openDoor() {
+  return new Promise((ok, bad) => {
+    if (door) return ok();
+    const c = readCtrl(); c.key ||= crypto.randomBytes(32).toString('hex');
+    const srv = http.createServer((req, res) => doorRequest(req, res, c.key));
+    srv.on('error', bad);
+    srv.listen(0, '127.0.0.1', () => { door = srv; Object.assign(c, { enabled: true, port: srv.address().port, pid: process.pid }); writeCtrl(c); ok(); });
+  });
+}
+// off = the switch is unticked; quitting keeps the switch on but the door is gone until Lumina opens again
+function closeDoor(keepSwitch) {
+  if (door) { door.close(); door = null; }
+  const c = readCtrl(); if (!Object.keys(c).length) return;
+  if (!keepSwitch) c.enabled = false;
+  delete c.port; delete c.pid; writeCtrl(c);
+}
+ipcMain.handle('claude:get', () => ({ enabled: !!door, port: door ? door.address().port : null }));
+ipcMain.handle('claude:set', async (e, on) => { if (on) await openDoor(); else closeDoor(false); return { enabled: !!door, port: door ? door.address().port : null }; });
+app.on('will-quit', () => { if (door) closeDoor(true); });
+// self tests only: start electron/mcp.js the way Claude Code would, send it lines, and hand back what it answered
+if (SELFTEST) ipcMain.handle('claude:probe', (e, { lines, want, env = {} }) => new Promise(done => {
+  if (env.wrongKey) { const f = CTRL_FILE().replace(/\.json$/, '-wrong.json'); fs.writeFileSync(f, JSON.stringify({ ...readCtrl(), key: '0'.repeat(64) })); env = { LUMINA_CONTROL_FILE: f }; }
+  const p = require('child_process').spawn(process.execPath, [path.join(__dirname, 'mcp.js')],
+    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMINA_CONTROL_FILE: CTRL_FILE(), ...env }, windowsHide: true });
+  let out = '', err = '', got = [];
+  const finish = () => { clearTimeout(timer); try { p.kill(); } catch { } done({ replies: got, stderr: err.slice(0, 4000), rest: out.slice(0, 2000) }); };
+  const timer = setTimeout(finish, 30000);
+  p.stderr.on('data', d => err += d);
+  p.stdout.on('data', d => {
+    out += d; let i;
+    while ((i = out.indexOf('\n')) >= 0) { const line = out.slice(0, i); out = out.slice(i + 1); try { got.push(JSON.parse(line)); } catch { got.push({ notJson: line.slice(0, 300) }); } }
+    if (got.length >= want) finish();
+  });
+  p.on('exit', finish);
+  for (const l of lines) p.stdin.write((typeof l === 'string' ? l : JSON.stringify(l)) + '\n');
+}));
+
 // ---------- self test (npm run selftest): drives the editor and writes results to selftest.json ----------
 async function runSelftest() {
   // test files live outside the app; the built app is pointed at them with LUMINA_TESTDIR
@@ -817,6 +882,8 @@ else {
     registerProtocol();
     pendingOpen = projectArg(process.argv) || null;
     createWindow();
+    // the switch stays as the user left it; self tests turn it on themselves
+    if (!SELFTEST && readCtrl().enabled) openDoor().catch(() => { });
   });
   app.on('window-all-closed', () => app.quit());
 }

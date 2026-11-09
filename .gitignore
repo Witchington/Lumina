@@ -25,3 +25,6 @@ selftest.png
 # image test output (PhotoCraft Round 1), written on each run
 .claude/image/out/
 .claude/photo/out/
+
+# Claude control: the door's key and port (never shared; the self test writes its own)
+claude-control*.json

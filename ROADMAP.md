@@ -7,7 +7,7 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M1; ask the user which
+## ▶ Start here next: Round 12 (Keying II + mattes), MCP step M2 (editing tools), or hooking MCP to Claude Code (ask first); ask the user which
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
@@ -74,7 +74,7 @@ The beginner layout, for reference:
 - **B4 Welcome + tips (done):** first-run welcome (new, open, sizes like YouTube / TikTok / Square) and one-time tips pointing at
   key features, which can be turned off.
 
-### Claude control (MCP), asked for by the user 2026-11-08: design, not started
+### Claude control (MCP), asked for by the user 2026-11-08: M1 done 2026-11-09, M2 next
 Goal: Claude edits a project in the running Lumina through tools (add clips, text, effects, keyframes, look at frames,
 export) instead of only writing Lumina's code.
 
@@ -94,7 +94,30 @@ export) instead of only writing Lumina's code.
    the user first**. No .bat/.cmd/.ps1 file is needed.
 
 **Steps (one at a time, each tested; a `mcp` self-test suite is added in M1 and joins the others)**
-- **M1 Bridge + looking:** the door, the MCP server, the Settings switch, and read-only tools: `get_project` (size, fps,
+- **M1 done (2026-11-09).** What was built:
+  - **Lumina.html:** `LuminaAPI.call(name, args)`, which always returns `{ ok, result | error }`, with four look-only
+    tools: `get_project`, `get_layer` (only the properties that differ from a new layer, plus keyframes and effect settings),
+    `list_effects` (`query` searches, `id` gives one effect's settings) and `snapshot` (a PNG; the playhead goes back
+    afterwards).
+  - The switch is **Edit › Allow Claude to control Lumina**. There's no Settings window, and the Edit menu is where AE keeps
+    Preferences. A "Claude" light sits on the right of the menu bar while the switch is on, and turns green while a call runs.
+  - **main.js:** the door is on 127.0.0.1 at a random port. It refuses requests that carry an Origin or a Host other than
+    127.0.0.1, and needs the key (`X-Lumina-Key`, checked with timingSafeEqual). The file
+    `%APPDATA%\Lumina\claude-control.json` holds `{enabled, key, port, pid}`. On quit the port is removed but the
+    switch stays.
+  - **electron/mcp.js:** stdio JSON-RPC with initialize, ping, tools/list and tools/call. It uses only Node's built-in
+    modules, so it runs under Lumina.exe (`ELECTRON_RUN_AS_NODE=1`) for friends, or under plain `node`.
+  - **Test suite `.claude\mcp`** (expected false: none). It starts mcp.js the way Claude Code does (main.js
+    `claude:probe`, self tests only) and covers:
+    - switch off: the tools are listed, and every call says how to turn the switch on;
+    - switch on: all four tools, a snapshot that really shows the star, unknown tool and method, ping, a parse error;
+    - a wrong key is refused, and a web page's fetch is blocked;
+    - the project and the undo list are unchanged afterwards.
+  - **Not done yet: hooking it to Claude Code (ask the user first).** On this PC use Node, so Claude doesn't hold
+    Lumina.exe open (otherwise `npm run dist` fails with EBUSY):
+    `claude mcp add lumina -- "C:\Program Files\nodejs\node.exe" "D:\Lumina\electron\mcp.js"`.
+    For friends: `claude mcp add lumina -e ELECTRON_RUN_AS_NODE=1 -- "<install>\Lumina.exe" "<install>\resources\app.asar\electron\mcp.js"`.
+- **M1 Bridge + looking (the plan):** the door, the MCP server, the Settings switch, and read-only tools: `get_project` (size, fps,
   length, layers), `get_layer`, `list_effects`, `snapshot` (the frame at a time, as a picture Claude can see).
 - **M2 Editing:** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
   `delete_layer`, `add_effect`, `set_effect`, `undo` / `redo`.
@@ -161,7 +184,7 @@ Every EffectCraft round follows the same steps:
 3. Run a speed check.
 4. Update `effects.png`.
 5. Rebuild.
-6. Run all eleven suites.
+6. Run all twelve suites.
 
 ---
 
@@ -773,8 +796,9 @@ Linux build: merged and built by GitHub since 0.9.1 (the user asked for it 2026-
 
 ## Reminders for Claude
 - Do one feature at a time, test it, and ask before changing anything on the system.
-- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all eleven suites.
-- The eleven suites and their expected `false` results (`beat` and `speed` were added 2026-11-06, `timeline` 2026-11-07, `image` and `photo` 2026-11-08; all five expect none):
+- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all twelve suites.
+- The twelve suites and their expected `false` results (`beat` and `speed` were added 2026-11-06, `timeline` 2026-11-07, `image` and `photo` 2026-11-08, `mcp` 2026-11-09; all six expect none):
+  - `mcp`: none
   - `photo`: none
   - `image`: none
   - `timeline`: none
