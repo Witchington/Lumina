@@ -7,14 +7,23 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: EffectCraft Round 11 (Keying I)
+## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M1; ask the user which
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
-Rounds 8, 9, 10 (Lumetri Color) and the Round 6 leftovers are done. Round 11 is next, Keying I: Color Key, Linear Color
-Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key. Linear Color Key is already
-in `fx_color`'s `fxc_point` (Round 7's family; host code in EffectCraft's `crates/gpu/src/fx_color.rs`); look for the rest
-in `fx_key.wgsl` and `crates/gpu/src/fx_key.rs`, and check `context.rs` for which files it compiles with. Effects that need
-the picture measured can use `E.read(img)` (Round 9), which reads it back from the graphics card mid-stack.
+**One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
+OK (never push). Round 11 is committed (2026-11-09; all eleven suites pass, after fixing a name clash: Round 11's mask
+shape helper is `maskShapePath`, because the stickers already have a `shapePath`). The setup that replaces the old Lumina
+is done too (see its section). Round 12's code and tests are drafted in `.claude\round12-draft\` (r12.py edits Lumina.html and
+appends r12_shader.wgsl to shaders\lumina_key.wgsl; r12test.py adds the fx tests; its SP path points at the old
+scratchpad, so fix that first). Not applied yet.
+Rounds 8–11 and the Round 6 leftovers are done. Round 12 is next, Keying II + mattes: Keylight, Spill Suppressor, Advanced
+Spill Suppressor, Key Cleaner, Unmult, Screen Key, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard / Soft
+Matte. Most are ops of `fx_key.wgsl`'s `fxk_point` (Lumina's `fx_key` family, built with `fx_distort`): 7 Spill Suppressor,
+8 Advanced Spill (with `fxk_reduce`), 10 Unmult, 22/23 Screen Key, 25 Key Cleaner, 26 Matte Choker, 29–35 Refine Matte;
+Keylight is in `fx_color.wgsl` ("Key Light"), CC Simple Wire Removal is `fx_pixel2`'s `fp2_wire`. The CPU versions (the
+reference for each op's settings) are EffectCraft's `crates/effects/src/keying.rs`, `keying2.rs`, `keylight.rs` and `matte.rs`
+(copies in the scratchpad's `ec-ref/effects-crate`). Round 11's helpers: `fxThinFeather`, `fxMorphFrac` (`fxn_morph`),
+`fxKeyApply`, `E.upload(canvas)`.
 - **The user's goal now includes Premiere Pro:** everything After Effects *and* Premiere Pro have, and every effect they
   offer ("screen effects"). EffectCraft covers After Effects' effects. Premiere Pro's own extras (its video effects and
   transitions list, Lumetri scopes, Essential Sound/Graphics, multicam, auto reframe, proxies, nested sequences…) need a
@@ -65,12 +74,84 @@ The beginner layout, for reference:
 - **B4 Welcome + tips (done):** first-run welcome (new, open, sizes like YouTube / TikTok / Square) and one-time tips pointing at
   key features, which can be turned off.
 
+### Claude control (MCP), asked for by the user 2026-11-08: design, not started
+Goal: Claude edits a project in the running Lumina through tools (add clips, text, effects, keyframes, look at frames,
+export) instead of only writing Lumina's code.
+
+**How it fits together**
+1. **Inside Lumina (Lumina.html): `window.LuminaAPI`**, a table of tools that call Lumina's own functions (`newLayer`,
+   `insertLayer`, `addFiles`, `seek`, `startExport`…). Every change ends with `commit()` + `refresh()`, so each thing Claude
+   does is one Ctrl+Z, and the user sees it happen.
+2. **Lumina's main process (electron/main.js): a local door.** A small HTTP server on 127.0.0.1 only (never the network),
+   **off until the user turns on "Allow Claude to control Lumina"** in Settings. A random key is written to Lumina's own
+   settings folder; a call without the key is refused. A call runs `LuminaAPI` in the window with `executeJavaScript`,
+   the same way `--selftest` drives the editor.
+3. **The MCP server (electron/mcp.js): what Claude talks to.** Claude Code starts it over stdio. It reads the key, lists the
+   tools, and passes each call to the door. It runs with Lumina.exe itself (`ELECTRON_RUN_AS_NODE=1`), so friends don't
+   need Node. The protocol (initialize, tools/list, tools/call over JSON-RPC) is written by hand: **no new download**.
+   If an SDK is wanted later, ask before downloading it.
+4. **Hooking it to Claude Code:** one `claude mcp add` line (or a `.mcp.json`). That changes Claude's settings, so **ask
+   the user first**. No .bat/.cmd/.ps1 file is needed.
+
+**Steps (one at a time, each tested; a `mcp` self-test suite is added in M1 and joins the others)**
+- **M1 Bridge + looking:** the door, the MCP server, the Settings switch, and read-only tools: `get_project` (size, fps,
+  length, layers), `get_layer`, `list_effects`, `snapshot` (the frame at a time, as a picture Claude can see).
+- **M2 Editing:** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
+  `delete_layer`, `add_effect`, `set_effect`, `undo` / `redo`.
+- **M3 Media:** `import_media` (a file path), `place_media` on the timeline, captions, `optimize`.
+- **M4 Output + Image mode:** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.
+- **Safety:** local only, key, off by default, every edit undoable, a status light in Lumina while Claude is connected.
+
+### Setup replaces the old Lumina (asked for by the user 2026-11-08): done 2026-11-09
+**Done:** `build/installer.nsh` (an installer script, not a .bat/.cmd/.ps1). The user picked **No = cancel the setup**
+(keeping both copies would drop the old one off Windows' installed-apps list). electron-builder already runs the old
+uninstaller quietly before installing and starts the folder page on the old folder; the new `customInit` adds the
+question before that (not asked on /S quiet installs or auto-updates), and `customUnInstall` removes the leftover `.lumina`
+key on a real uninstall when it still says "Lumina Project". **Tested 2026-11-09:** 0.9.1 installed quietly into the
+scratchpad, then the new setup was run with its windows answered through UI Automation: the question showed the old version
+and folder; No closed the setup and left 0.9.1 alone; Yes went on, the folder page started on the old folder, it was
+changed to another folder, and the install removed the old folder and put shortcuts and the .lumina type on the new copy;
+settings in %APPDATA%\Lumina were kept; the main, speed and fx suites passed on the installed copy; the uninstall removed
+everything, including `.lumina`. The user's Desktop shortcut was backed up and put back.
+**Still to know:** the 0.9.1 and 0.9.2 setups already out there don't have the question, but they don't need it; only the
+new setup asks. Not uploaded or released.
+
+**The plan as written:**
+Goal: a friend with an older Lumina runs the new setup and it handles the old copy for them. They should not have to
+uninstall by hand first.
+
+**What the setup does**
+1. **Finds the old Lumina.** It looks for the uninstall entry in the registry under the same `appId`
+   (`com.lumina.editor`), so it finds every version from 0.9.0 on, wherever it was installed.
+2. **Asks, never forces.** It shows "An older Lumina (version X) is installed in <folder>. Remove it and install
+   the new version?" with Yes / No.
+   - **Yes:** run the old uninstaller silently, then install.
+   - **No:** install anyway, side by side, or cancel. Pick one when building it; ask the user.
+3. **Keeps the folder choice.** The folder page still shows. It starts on the old Lumina's folder, and the friend can change it.
+4. **Keeps the friend's own things.** Projects, settings, the Whisper model and recent files live outside the install folder.
+   They are never deleted. Say so in the question.
+5. **Cleans up what the old uninstaller left.** The leftover `HKCU\Software\Classes\.lumina` key (see C15 above) is removed,
+   and shortcuts and the .lumina file type point at the new copy.
+
+**How:** electron-builder's NSIS settings in package.json (`oneClick: false` and
+`allowToChangeInstallationDirectory: true` are already set), plus a custom include, `build/installer.nsh`, using the
+`customInit` / `customUnInstall` macros for the question and the cleanup. An `.nsh` is an installer script, not a
+.bat/.cmd/.ps1. Still tell the user when it's created.
+
+**Test:**
+1. Install an older setup (e.g. 0.9.2) into the scratchpad, silently.
+2. Run the new setup and check each path: Yes, No, and a changed folder.
+3. Check the old files are gone, the new version runs, settings and projects are kept, and the suites pass on the installed copy.
+4. Uninstall afterwards.
+
+Don't upload the setup, and don't release it, without the user saying so.
+
 ### Notes for friends' installs
 **Whisper:** the model is not in the setup. Each friend's Lumina downloads it (77 MB) the first time they click Make
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 11 (Keying I)**.
+EffectCraft carries on at **Round 12 (Keying II + mattes)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -92,8 +173,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–10 and the Round 6 leftovers are done; Round 11 (Keying I) is next.** About 225 effects
-   are left, in Rounds 11–31+.
+   **Where we left off: Rounds 1–11 and the Round 6 leftovers are done; Round 12 (Keying II + mattes) is next.** About 217
+   effects are left, in Rounds 12–31+.
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -158,6 +239,19 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 11 done (2026-11-08): Keying I**, a new Keying group in the Effects menu:
+  - **Color Key**, **Luma Key**, **Color Range**, **Extract**, **Difference Matte** and **Color Difference Key** run in
+    EffectCraft's `fx_key.wgsl` (`fxk_point` ops 1, 2, 3, 4, 6 and 9, then op 5 to apply the matte); **Linear Color Key**
+    in `fx_color`'s `fxc_point` op 8. Edge Thin / Edge Feather (`fxThinFeather`) use `fx_noise`'s `fxn_morph` and a blur.
+  - **Difference Matte** compares with another layer as it shows in the frame (it can be hidden); "If layer sizes differ"
+    is left out, since both are compared in the frame.
+  - **Inner/Outer Key** is Lumina's `shaders/lumina_key.wgsl`, a port of EffectCraft's `keying2::inner_outer_key`. Lumina
+    layers have one mask (already applied before effects), so the inside and outside are shapes drawn on the effect
+    (Rectangle, Oval, Diamond, Star, Heart; center, width, height, angle). The Cleanup Foreground / Background brush paths are
+    left out (Lumina has no paths yet).
+  - Tests (`.claude\fx`, steps `colorkey` … `innerouterkey`, `keyingMenu`, `round11speed`): each keyer's matte checked on
+    the colour patches, e.g. Color Difference Key on blue keeps 0.372 of the blue patch (15, 22, 82); Inner/Outer Key with a
+    20 px highlight radius takes out red beside the white patch. About 4–7 ms a frame each.
 - **EffectCraft's Round 6 leftovers done (2026-11-08):**
   - **Hue/Saturation** has a Channel Control menu: Master or one of Reds, Yellows, Greens, Cyans, Blues, Magentas, each with
     its own hue / saturation / lightness and range start / end / falloffs (`HS_RANGES`). Ranges with a change run in
