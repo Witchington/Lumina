@@ -7,7 +7,7 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 12 (Keying II + mattes), MCP step M2 (editing tools), or hooking MCP to Claude Code (ask first); ask the user which
+## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M2 (editing tools); ask the user which
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
@@ -113,8 +113,10 @@ export) instead of only writing Lumina's code.
     - switch on: all four tools, a snapshot that really shows the star, unknown tool and method, ping, a parse error;
     - a wrong key is refused, and a web page's fetch is blocked;
     - the project and the undo list are unchanged afterwards.
-  - **Not done yet: hooking it to Claude Code (ask the user first).** On this PC use Node, so Claude doesn't hold
-    Lumina.exe open (otherwise `npm run dist` fails with EBUSY):
+  - **Hooked to Claude Code on this PC (2026-11-09, the user said yes):** `D:\Lumina\.mcp.json` (git-ignored; the `claude`
+    command isn't on PATH here, the app has its own) runs it with Node, so Claude doesn't hold Lumina.exe open (otherwise
+    `npm run dist` fails with EBUSY). A new session loads it; Claude Code asks once to allow the project's server. The
+    same thing as a command:
     `claude mcp add lumina -- "C:\Program Files\nodejs\node.exe" "D:\Lumina\electron\mcp.js"`.
     For friends: `claude mcp add lumina -e ELECTRON_RUN_AS_NODE=1 -- "<install>\Lumina.exe" "<install>\resources\app.asar\electron\mcp.js"`.
 - **M1 Bridge + looking (the plan):** the door, the MCP server, the Settings switch, and read-only tools: `get_project` (size, fps,

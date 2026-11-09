@@ -28,3 +28,6 @@ selftest.png
 
 # Claude control: the door's key and port (never shared; the self test writes its own)
 claude-control*.json
+
+# this PC's Claude Code link to Lumina (local paths)
+.mcp.json
