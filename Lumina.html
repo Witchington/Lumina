@@ -151,7 +151,6 @@ main { display: grid; grid-template-columns: 1fr 330px; min-height: 0; }
 }
 .cwrap { position: absolute; box-shadow: 0 8px 30px rgba(0, 0, 0, .45); }
 .cwrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-#out { background: #000; }
 #ov { cursor: default; touch-action: none; }
 .drop { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--drop-fg); cursor: pointer; }
 .drop h2 { font: 500 30px var(--brand); color: #d8ccff; margin: 0 0 8px; text-shadow: 0 0 22px rgba(var(--acc2-rgb), .4); }
@@ -185,6 +184,9 @@ aside h3 { font: 600 11.5px var(--display); text-transform: uppercase; letter-sp
 .frow { display: grid; grid-template-columns: 82px 1fr; gap: 8px; align-items: center; margin-bottom: 7px; }
 .frow:has(> .iv) { grid-template-columns: 82px 1fr 34px; }
 .frow .iv { font: 11px var(--mono); color: var(--muted); text-align: right; }
+.fxcurve { margin: 4px 0 8px; }
+.fxcurve-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.curvebox { display: block; width: 100%; max-width: 260px; aspect-ratio: 1; margin: 0 auto 6px; border-radius: 6px; background: var(--solid-2); border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
 .frow input[type=text], .frow select, .frow textarea { width: 100%; }
 .frow input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--line-strong); border-radius: 5px; background: none; }
 textarea { resize: vertical; min-height: 48px; }
@@ -326,6 +328,14 @@ footer { background: var(--glass); backdrop-filter: blur(16px) saturate(140%); b
 .coach[data-side="left"]::before { right: -6px; top: var(--ay, 18px); }
 .coach[data-side="top"]::before { bottom: -6px; left: var(--ax, 24px); }
 .coach[data-side="bottom"]::before { top: -6px; left: var(--ax, 24px); }
+.imgopts { margin: -4px 0 12px; } .imgopts[hidden], .imgopts .frow[hidden] { display: none; }
+/* tabs along the top of a format dialog (Save as: Project, Video, Image, Moving image) */
+.ftabs { display: flex; gap: 4px; padding: 3px; margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--solid-2); }
+.ftabs button { flex: 1; border: 0; box-shadow: none; background: none; padding: 7px 10px; border-radius: 7px; font-weight: 600; font-size: 13px; color: var(--muted); }
+.ftabs button span { margin-left: 6px; font: 11px var(--mono); opacity: .7; }
+.ftabs button:hover { color: var(--fg); background: rgba(var(--acc-rgb), .06); }
+.ftabs button.on { color: var(--fg); background: rgba(var(--acc-rgb), .18); box-shadow: inset 0 0 0 1px var(--accent); }
+.ftext { margin: 0 0 8px; }
 .fmts { display: grid; gap: 4px; max-height: min(430px, 60vh); overflow-y: auto; margin: 4px 0 14px; padding-right: 2px; }
 .fmt { display: grid; grid-template-columns: 18px 1fr; gap: 2px 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
 .fmt:hover { border-color: var(--line-strong); background: rgba(var(--acc-rgb), .05); }
@@ -496,6 +506,37 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
 .fxp-item:hover:not(:disabled) { background: var(--sel-row); }
 .fxp-item:disabled { opacity: .45; }
 .fx-sum { margin: 0 0 8px; }
+/* Image mode (PhotoCraft P3): one still picture; no timeline or play controls, a Layers panel instead */
+body.still { grid-template-rows: auto auto 1fr; }
+body.still #pTimeline, body.still .vid-only { display: none !important; }
+.checker, #out { background: repeating-conic-gradient(#3b3b40 0 25%, #2c2c30 0 50%) 0 0 / 16px 16px; }
+.p-layers { min-height: 0; }
+.lyr-top { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--label); }
+.lyr-top input[type=range] { flex: 1; min-width: 0; }
+.lyr-top input[type=number] { width: 54px; padding: 2px 4px; }
+.lyr-list { flex: 1; overflow: auto; min-height: 0; font-size: 12.5px; }
+.lyr { display: grid; grid-template-columns: 24px 24px 50px 1fr auto; align-items: center; gap: 4px; padding: 3px 8px 3px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.lyr:hover { background: rgba(var(--acc-rgb), .06); }
+.lyr.sel { background: var(--sel-row); }
+.lyr.off .lyr-th, .lyr.off .lyr-nm { opacity: .45; }
+.lyr.dropabove { box-shadow: inset 0 2px 0 var(--accent); }
+.lyr.dropbelow { box-shadow: inset 0 -2px 0 var(--accent); }
+.lyr-b { width: 24px; height: 24px; padding: 0; background: none; border: 0; box-shadow: none; display: grid; place-items: center; color: var(--muted); opacity: .55; }
+.lyr-b[aria-pressed=true] { color: var(--fg); opacity: 1; }
+.lyr-b svg { width: 16px; height: 16px; }
+.lyr-th { width: 48px; height: 32px; object-fit: contain; border: 1px solid var(--line); border-radius: 3px; display: block; }
+.lyr-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyr-nm input { width: 100%; padding: 1px 4px; font-size: 12px; }
+.lyr-op { color: var(--muted); font-size: 11px; }
+.lyr.bgrow { cursor: default; }
+.lyr.bgrow input[type=color] { width: 48px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 3px; }
+.lyr-foot { flex-wrap: wrap; gap: 4px; }
+.cropbar { display: flex; align-items: center; gap: 6px; }
+.cropbar b { font: 12px var(--mono); }
+.anchor { display: grid; grid-template-columns: repeat(3, 26px); gap: 3px; }
+.anchor button { width: 26px; height: 26px; padding: 0; font-size: 13px; }
+.anchor button.on { background: var(--accent); color: #fff; }
+.imgdlg .frow input[type=number] { width: 110px; }
 </style>
 </head>
 <body>
@@ -506,12 +547,13 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
 </nav>
 <header class="toolbar">
   <button id="btnImport" class="primary">Import media</button>
-  <select id="place" title="Where new clips go">
+  <select id="place" class="vid-only" title="Where new clips go">
     <option value="line">Line up</option>
     <option value="stack">Stack</option>
   </select>
-  <input id="file" type="file" accept="video/*,image/*,audio/*,.svg,.srt,.vtt" multiple hidden>
+  <input id="file" type="file" accept="video/*,image/*,audio/*,.svg,.srt,.vtt,.psd,.psb,.tga,.heic,.heif,.jp2,.j2k,.exr,.hdr,.dds,.qoi,.pcx,.pnm,.ppm,.pgm,.pbm,.pam,.sgi,.xwd,.dng,.nef,.nrw,.cr2,.cr3,.crw,.arw,.orf,.rw2,.raf,.srw,.pef,.raw,.3fr,.erf,.kdc,.mrw,.iiq,.x3f" multiple hidden>
   <input id="bgfile" type="file" accept="video/*,image/*,.svg" hidden>
+  <input id="imgdocfile" type="file" hidden>
   <button id="btnText">Text</button>
   <div class="menu" id="shapeMenu"></div>
   <div class="menu" id="stickerMenu"><button id="btnSticker" aria-haspopup="true" title="Emoji and flag stickers, built in">Sticker ▾</button><div class="pop stpop" id="stickerPop" hidden></div></div>
@@ -519,9 +561,9 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
   <div class="menu" id="atmoMenu"></div>
   <button id="btnGrade" title="Add a layer that color-grades everything below it">Color grade</button>
   <input id="lutfile" type="file" accept=".cube" hidden>
-  <button id="btnImpact" title="A hit-flash with shake and a sound, at the playhead (I)">Impact</button>
-  <button id="btnSplit">Split</button>
-  <button id="btnRipple" aria-pressed="false" title="Ripple editing: deleting or shortening a clip closes the gap, lengthening it pushes later clips along">Ripple</button>
+  <button id="btnImpact" class="vid-only" title="A hit-flash with shake and a sound, at the playhead (I)">Impact</button>
+  <button id="btnSplit" class="vid-only">Split</button>
+  <button id="btnRipple" class="vid-only" aria-pressed="false" title="Ripple editing: deleting or shortening a clip closes the gap, lengthening it pushes later clips along">Ripple</button>
   <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
   <button id="btnRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
   <div class="spacer"></div>
@@ -565,14 +607,15 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
       <select id="pzoom" title="Preview zoom (Ctrl+scroll, . and , keys; Space+drag or middle-drag to pan)">
         <option value="fit">Fit</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option><option value="4">400%</option><option value="c" hidden>100%</option>
       </select>
-      <span class="tc" id="tc">00:00:00 / 00:00:00</span>
-      <select id="res" title="Composition size">
+      <span class="tc vid-only" id="tc">00:00:00 / 00:00:00</span>
+      <select id="res" class="vid-only" title="Composition size">
         <option value="1280x720">720p</option>
         <option value="1920x1080" selected>1080p</option>
         <option value="1080x1920">Vertical 1080×1920</option>
         <option value="1080x1080">Square 1080×1080</option>
       </select>
-      <select id="fps" title="Frame rate"><option>30</option><option selected>60</option></select>
+      <select id="fps" class="vid-only" title="Frame rate"><option>30</option><option selected>60</option></select>
+      <span class="cropbar" id="cropBar" hidden>Crop to <b id="cropSize"></b><button class="primary" id="cropOk" title="Enter">Crop</button><button id="cropNo" title="Esc">Cancel</button></span>
       <span class="spacer"></span>
       <span class="hint" id="vsize"></span>
     </div>
@@ -597,6 +640,12 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
       <div class="ph"><span class="tab on" data-rtab="props">Properties</span><span class="tab" data-rtab="fx" id="ecTab">Effect Controls</span></div>
       <aside id="inspector"></aside>
     </section>
+    <section class="panel p-layers" id="pLayers" hidden>
+      <div class="ph"><span class="tab on">Layers</span></div>
+      <div class="lyr-top"><label for="lyrOp">Opacity</label><input type="range" id="lyrOp" min="0" max="100" step="1"><input type="number" id="lyrOpN" min="0" max="100" step="1" aria-label="Opacity %"></div>
+      <div class="lyr-list" id="lyrList"></div>
+      <div class="pf lyr-foot"><button data-lyrf="up" title="Move the layer up (drawn over more)">Up</button><button data-lyrf="down" title="Move the layer down">Down</button><button data-lyrf="dup" title="Ctrl+D">Duplicate</button><button data-lyrf="del" title="Del">Delete</button></div>
+    </section>
   </div>
 </main>
 
@@ -617,7 +666,7 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
     <div class="whead"><img src="lumina-icon.png" alt=""><div><h2 id="wTitle">Welcome to Lumina</h2><p class="empty">Make a video: drop in clips, add text, music and effects, then export.</p></div></div>
     <h3 class="wsub">Start a new video</h3>
     <div class="wsizes" id="wSizes"></div>
-    <div class="wrow" id="wOpenRow"><button id="wOpen">Open a project…</button><span class="hint">or drop videos, photos and music anywhere</span></div>
+    <div class="wrow" id="wOpenRow"><button id="wOpen">Open a project…</button><button id="wNewImg" title="Image mode: one picture with layers, no timeline">New image…</button><span class="hint">or drop videos, photos and music anywhere</span></div>
     <div class="wfoot"><label><input type="checkbox" id="wShow"> Show this when Lumina starts</label><label><input type="checkbox" id="wTips"> Show tips</label><span class="spacer"></span><button class="primary" id="wGo">Start editing</button></div>
   </div>
 </div>
@@ -643,6 +692,9 @@ const ov = $('#ov'), octx = ov.getContext('2d');
 const tmp = document.createElement('canvas'), tctx = tmp.getContext('2d');
 const HEADW = 230;
 let uid = 1;
+// Image mode (PhotoCraft P3): the crop box while it's up, and which mode the screen is showing
+let CROP = null, cropDrag = null, stillShown = null;
+const LTH = {};   // layer id -> its little picture in the Layers panel
 
 const S = {
   layers: [],          // index 0 is drawn on top
@@ -927,7 +979,7 @@ const propLabel = p =>PROPS[p]?.label || { rate: 'Speed' }[p] || p.replace(/^fx\
 
 // ---------- undo ----------
 const undoStack = [], redoStack = [];
-const snapshot = () => JSON.stringify({ layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global });
+const snapshot = () => JSON.stringify({ layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, size: [W(), H()] });
 function commit() {
   const s = snapshot();
   if (undoStack[undoStack.length - 1] === s) return;
@@ -938,6 +990,7 @@ function commit() {
 function restore(s) {
   const d = JSON.parse(s);
   S.layers = d.layers; S.impacts = d.impacts; S.bookmarks = d.bookmarks || []; S.global = d.global;
+  if (d.size && (d.size[0] !== W() || d.size[1] !== H())) { setCanvasSize(d.size[0], d.size[1]); CROP = null; cropUI(); }
   const ids = new Set(S.layers.map(L => L.id));
   for (const id in RT) if (!ids.has(+id)) { RT[id].el?.pause?.(); delete RT[id]; }
   S.layers.forEach(ensureRT);
@@ -986,6 +1039,7 @@ function newLayer(kind, extra) {
   return { id: uid++, kind, name: kind, start: 0, dur: 5, visible: true, blend: 'source-over', p: { ...BASE_P }, keys: {}, expr: {}, ...extra };
 }
 function insertLayer(L) {
+  if (isStill()) { L.start = 0; L.dur = Math.max(L.dur, S.time + 5); if (L.kind === 'text' && !L.cues) L.anim = 'none'; }
   if (L.kind === 'text' || L.kind === 'shape' || L.kind === '3d') S.layers.unshift(L);
   else {
     let i = S.layers.findIndex(x => x.kind === 'video' || x.kind === 'image' || x.kind === 'audio');
@@ -1020,7 +1074,14 @@ function separateAudio(V) {
 function unlinkClip(L) { const M = linkMate(L); delete L.link; if (M) delete M.link; }
 // a link with only one clip left (the other was deleted) is dropped
 function tidyLinks() { for (const x of S.layers) if (x.link != null && !linkMate(x)) delete x.link; }
-const IMG_EXT = /\.(svg|png|jpe?g|gif|webp|bmp|avif)$/i, AUD_EXT = /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i, VID_EXT = /\.(mp4|m4v|mov|webm|mkv)$/i, CAP_EXT = /\.(srt|vtt)$/i;
+// pictures Lumina opens: the ones Chromium shows itself (NATIVE_IMG), and the rest, turned into a PNG first (openImageURL)
+const NATIVE_IMG = /\.(svg|png|jpe?g|jfif|gif|webp|bmp|avif|ico)$/i;
+// a picture's address for <img>: itself, or (any other format) its PNG from Lumina's image cache
+async function openImageURL(path) {
+  if (!path || NATIVE_IMG.test(path) || !window.lumina?.openImage) return window.lumina ? lumina.mediaURL(path) : path;
+  return lumina.mediaURL((await lumina.openImage(path)).png);
+}
+const IMG_EXT = /\.(svg|png|jpe?g|jfif|gif|webp|bmp|avif|ico|tiff?|psd|psb|tga|heic|heif|jp2|j2k|jpf|jpx|exr|hdr|dds|qoi|pcx|pbm|pgm|ppm|pnm|pam|sgi|rgb|xbm|xwd|sun|ras|dng|nef|nrw|cr2|cr3|crw|arw|srf|sr2|orf|rw2|raf|srw|pef|raw|rwl|3fr|erf|kdc|mrw|mef|mos|iiq|x3f)$/i, AUD_EXT = /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i, VID_EXT = /\.(mp4|m4v|mov|webm|mkv)$/i, CAP_EXT = /\.(srt|vtt)$/i;
 function addFiles(files, opts = {}) {
   [...files].forEach(f => {
     if (/\.(srt|vtt)$/i.test(f.name)) { f.text().then(s => importCaptions(s, f.name)); return; }
@@ -1029,6 +1090,7 @@ function addFiles(files, opts = {}) {
     const path = f.__path || window.lumina?.pathFor(f) || '';
     const url = path ? window.lumina.mediaURL(path) : URL.createObjectURL(f), mid = uid++;
     const done = (m) => {
+      if (opts.asDoc && type === 'image') fitCanvasTo(m.w, m.h);
       MEDIA[mid] = { url, type, name: f.name, path, ...m };
       const L = newLayer(type, { name: f.name, media: mid });
       if (type === 'image') { L.start = S.time; L.dur = 5; }
@@ -1045,12 +1107,18 @@ function addFiles(files, opts = {}) {
       } else insertLayer(L);
       if (!S.sel) S.sel = L.id;
       commit(); refresh();
+      if (opts.asDoc) { undoStack.splice(0, undoStack.length - 1); markDirty(false); notice(`Opened “${f.name}” as an image, ${W()}×${H()}.`); }
       if (type === 'video' && path) probeMedia(mid, true);
     };
     const fail = () => toast(`Couldn't read ${f.name}. Try MP4 (H.264), WebM, PNG, JPG, SVG or MP3.`);
     if (isSVGFile(f)) f.text().then(loadSVG).then(m => m ? done(m) : fail(), fail);
     else if (type === 'image') {
-      const img = new Image(); img.onload = () => done({ img, w: img.naturalWidth || 512, h: img.naturalHeight || 512 }); img.onerror = fail; img.src = url;
+      const img = new Image(); img.onload = () => done({ img, w: img.naturalWidth || 512, h: img.naturalHeight || 512 }); img.onerror = fail;
+      // TIFF, PSD, HEIC, RAW and the rest: their PNG copy is what's shown (the project keeps the original's path)
+      if (path && !NATIVE_IMG.test(path)) {
+        notice(`Opening “${f.name}”…`);
+        openImageURL(path).then(u => img.src = u, e => toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')));
+      } else img.src = url;
     } else {
       const probe = document.createElement(type === 'audio' ? 'audio' : 'video'); probe.preload = 'metadata';
       probe.onloadedmetadata = () => done({ duration: probe.duration, w: probe.videoWidth, h: probe.videoHeight }); probe.onerror = fail; probe.src = url;
@@ -1455,6 +1523,7 @@ function masterClock() {
   if (t >= L.start && t <= endOf(L)) S.time = t;
 }
 async function play() {
+  if (isStill()) return;
   if (!S.layers.length) return;
   audioInit(); if (AC.state === 'suspended') await AC.resume().catch(() => {});
   if (S.time >= duration() - .02) S.time = 0;
@@ -2228,8 +2297,11 @@ const FX_DIR = 'vendor/effectcraft/shaders/';
 // each kernel family compiles as one module: common.wgsl + kernels.wgsl + its own files (as EffectCraft does)
 // (fx_noise also gets the median kernel EffectCraft picks for graphics cards: median_private)
 const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_light'], fx_generate: ['fx_generate'], fx_noise: ['fx_noise', 'median_private'], fx_stylize: ['fx_stylize'], fx_color: ['fx_lut', 'fx_color'],   // fx_color's Lumetri calls fx_lut's fxl_lut_apply
-  lumina_vfx: ['lumina_vfx'] };       // Lumina's own anime VFX (C4), in shaders/ rather than EffectCraft's folder
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl' };
+  fx_tone: ['fx_tone'],               // Round 8 on: tonal and colour corrections (fxt_point)
+  fx_pixel2: ['fx_stylize', 'fx_pixel2'],   // Round 9 on: EffectCraft's pixel ports (Color Link's fp2_point; it uses fx_stylize's noise, as EffectCraft builds it)
+  lumina_vfx: ['lumina_vfx'],         // Lumina's own anime VFX (C4), in shaders/ rather than EffectCraft's folder
+  lumina_lumetri: ['lumina_lumetri'] };   // Round 10: Lumetri Color, ported from EffectCraft's CPU maths (shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2290,7 +2362,7 @@ function fxValue(L, f, d, t, E) {
   if (!d.type) return val(L, fxKey(f, d.id), t);
   if (d.type === 'pt') return E.pt(val(L, fxKey(f, d.id + 'X'), t), val(L, fxKey(f, d.id + 'Y'), t));
   const v = f[d.id] ?? (typeof d.def === 'function' ? d.def(L) : d.def);
-  return d.type === 'pick' ? +v : d.type === 'check' ? !!v : d.type === 'color' ? hexRGB(v) : v;
+  return d.type === 'pick' ? (d.str ? v ?? '' : +v) : d.type === 'check' ? !!v : d.type === 'color' ? hexRGB(v) : v;
 }
 function fxApply(L, t, lc) {
   const list = (L.fx || []).filter(f => f.on !== false && FX[f.id]), r = RT[L.id];
@@ -2302,7 +2374,8 @@ function fxApply(L, t, lc) {
     if (!p?.pipe) { waiting = true; if (p?.wait && !p.redraw) p.redraw = p.wait.then(() => render()); }
   }
   if (waiting) return;
-  const dev = FXG.dev, w = W(), h = H(), key = w + 'x' + h, enc = dev.createCommandEncoder();
+  const dev = FXG.dev, w = W(), h = H(), key = w + 'x' + h;
+  let enc = dev.createCommandEncoder();
   if (FXG.poolKey !== key) { FXG.pool.forEach(x => x.destroy()); FXG.pool = []; FXG.poolKey = key; }
   let used = 0, slot = 0;
   // working images are reused from frame to frame (the queue runs everything in order, so that's safe)
@@ -2310,6 +2383,15 @@ function fxApply(L, t, lc) {
     usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }));
   const m = r.m, sc = Math.hypot(m.a, m.b) || 1, bw = r.box?.w || w, bh = r.box?.h || h;
   const temp = [];   // this frame's odd-sized images and data tables, freed once the card is done with them
+  if (FXG.cv.width !== w || FXG.cv.height !== h) { FXG.cv.width = w; FXG.cv.height = h; }
+  // draws an image onto the effects canvas and sends the work so far to the graphics card
+  const blit = img => {
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: FXG.gctx.getCurrentTexture().createView(), loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store' }] });
+    rp.setPipeline(FXG.blit);
+    rp.setBindGroup(0, dev.createBindGroup({ layout: FXG.blit.getBindGroupLayout(0), entries: [{ binding: 0, resource: img.createView() }] }));
+    rp.draw(3); rp.end();
+    dev.queue.submit([enc.finish()]);
+  };
   const E = {
     w, h, sc,
     rot: Math.atan2(m.b, m.a),                    // the layer's on-screen rotation (radians)
@@ -2343,6 +2425,15 @@ function fxApply(L, t, lc) {
       const [gx, gy] = groups || [Math.ceil(w / 16), Math.ceil(h / 16)]; pass.dispatchWorkgroups(Math.max(1, gx), Math.max(1, gy)); pass.end();
     },
     run(fam, entry, buf, src, aux, groups, data) { const out = tex(); this.into(fam, entry, buf, src, aux, out, groups, data); return out; },
+    // the picture as it reaches an effect, read back from the graphics card (8 bits, at most `max` pixels on its longer
+    // side): the effects that measure it (Auto Levels, Equalize, Color Link…) do that on the CPU, as EffectCraft's do
+    read(img, max = 640) {
+      const c = (this._rd ||= new Map()), had = c.get(img);
+      if (had?.max === max) return had;
+      blit(img); enc = dev.createCommandEncoder();
+      const R = fxGrab(FXG.cv, max); R.max = max; c.set(img, R); return R;
+    },
+    lumaMean(img) { return fxLumaOf(this.read(img, 320)); },   // its average brightness, 0..1 (Shadow/Highlight's Auto Amounts)
     clear(src) { return this.run('kernels', 'fill', fxP({}, { 0: [0, 0, 0, 0] }), src); }
   };
   const src = tex();
@@ -2350,15 +2441,11 @@ function fxApply(L, t, lc) {
   let cur = src, clip = false;
   for (const f of list) {
     const D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), t, E);
+    E.fx = f; E.L = L;
     cur = D.run(E, cur, q) || cur;
     if (D.clip) clip = true;
   }
-  if (FXG.cv.width !== w || FXG.cv.height !== h) { FXG.cv.width = w; FXG.cv.height = h; }
-  const rp = enc.beginRenderPass({ colorAttachments: [{ view: FXG.gctx.getCurrentTexture().createView(), loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store' }] });
-  rp.setPipeline(FXG.blit);
-  rp.setBindGroup(0, dev.createBindGroup({ layout: FXG.blit.getBindGroupLayout(0), entries: [{ binding: 0, resource: cur.createView() }] }));
-  rp.draw(3); rp.end();
-  dev.queue.submit([enc.finish()]);
+  blit(cur);
   if (temp.length) dev.queue.onSubmittedWorkDone().then(() => temp.forEach(x => x.destroy()));
   const c = lc.cx; c.save(); c.setTransform(1, 0, 0, 1, 0, 0); Object.assign(c, { globalCompositeOperation: 'copy', globalAlpha: 1, filter: 'none' });
   c.drawImage(FXG.cv, 0, 0);
@@ -2431,6 +2518,240 @@ const VFX_K = name => [['lumina_vfx', name]];
 // Round 7's colour effects share one kernel, fx_color's fxc_point; u[0].x picks the operation
 const FXC_K = [['fx_color', 'fxc_point']];
 function fxColor(E, img, op, u, f) { u = { ...u }; u[0] = [op, ...(u[0] || []).slice(1)]; while (u[0].length < 4) u[0].push(0); return E.run('fx_color', 'fxc_point', fxP(u, f), img); }
+// Round 8's colour effects share fx_tone's fxt_point; u[0].x picks the operation (layouts in EffectCraft's crates/gpu/src/fx_tone.rs)
+const FXT_K = [['fx_tone', 'fxt_point']];
+function fxTone(E, img, op, u = {}, f = {}, aux = null, data = null) { u = { ...u }; u[0] = [op, ...(u[0] || []).slice(1)]; while (u[0].length < 4) u[0].push(0); return E.run('fx_tone', 'fxt_point', fxP(u, f), img, aux, null, data); }
+// effectcraft_color::rgb_to_hsl (the same maths as common.wgsl's): hue, saturation and lightness, all 0..1
+function fxHSL([r, g, b]) {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  if (Math.abs(mx - mn) < 1e-7) return [0, 0, l];
+  const d = mx - mn, s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? ((g - b) / d + (g < b ? 6 : 0)) / 6 : mx === g ? ((b - r) / d + 2) / 6 : ((r - g) / d + 4) / 6;
+  return [h, s, l];
+}
+// color2::hist_mean of the alpha-weighted luminance histogram (1024 bins), measured on a small copy of the layer
+const FX_SMALL = document.createElement('canvas'), FX_SMALL_CX = FX_SMALL.getContext('2d', { willReadFrequently: true });
+// a canvas copied small enough to measure: { d: straight RGBA bytes, w, h, k: its scale }
+function fxGrab(cv, max = 640) {
+  const k = Math.min(1, max / Math.max(cv.width, cv.height)), w = Math.max(1, Math.round(cv.width * k)), h = Math.max(1, Math.round(cv.height * k));
+  if (FX_SMALL.width !== w || FX_SMALL.height !== h) { FX_SMALL.width = w; FX_SMALL.height = h; }
+  FX_SMALL_CX.clearRect(0, 0, w, h); FX_SMALL_CX.drawImage(cv, 0, 0, w, h);
+  return { d: FX_SMALL_CX.getImageData(0, 0, w, h).data, w, h, k };
+}
+const FX_BINS = 1024, fxBin = v => Math.min(FX_BINS - 1, Math.round(clamp(v, 0, 1) * (FX_BINS - 1))), fxLum = (r, g, b) => .2126 * r + .7152 * g + .0722 * b;
+function fxLumaOf(R) {
+  const d = R.d; let s = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3] / 255; if (a <= 1e-4) continue;
+    s += a * fxBin(fxLum(d[i], d[i + 1], d[i + 2]) / 255); n += a;
+  }
+  return n > 0 ? s / n / (FX_BINS - 1) : .5;
+}
+function fxLumaMean(cv) { return fxLumaOf(fxGrab(cv, 320)); }
+// color2::histograms: alpha-weighted histograms of straight R, G, B and luminance
+function fxHist(R) {
+  const h = [0, 1, 2, 3].map(() => new Float64Array(FX_BINS)), d = R.d;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3] / 255; if (a <= 1e-4) continue;
+    const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+    h[0][fxBin(r)] += a; h[1][fxBin(g)] += a; h[2][fxBin(b)] += a; h[3][fxBin(fxLum(r, g, b))] += a;
+  }
+  return h;
+}
+// color2::clip_points: the (low, high) values that clip the `black` / `white` fractions of a histogram
+function fxClip(h, black, white) {
+  let total = 0; for (const v of h) total += v;
+  if (total <= 0) return [0, 1];
+  let acc = 0, lo = 0, hi = FX_BINS - 1;
+  for (let i = 0; i < FX_BINS; i++) { acc += h[i]; if (acc > total * black) { lo = i; break; } }
+  acc = 0;
+  for (let i = FX_BINS - 1; i >= 0; i--) { acc += h[i]; if (acc > total * white) { hi = i; break; } }
+  lo /= FX_BINS - 1; hi /= FX_BINS - 1;
+  return hi - lo < 1e-3 ? [0, 1] : [lo, hi];
+}
+// color2::auto_correct_settings: each channel's input range and gamma. kind 0 Auto Levels (per channel), 1 Auto Contrast
+// (one range for all three), 2 Auto Color (per channel, and Snap Neutral Midtones moves each channel's mean to the common one)
+function fxAuto(R, kind, black, white, snap) {
+  const h = fxHist(R);
+  let ranges;
+  if (kind === 1) { const c = new Float64Array(FX_BINS); for (let k = 0; k < 3; k++) for (let i = 0; i < FX_BINS; i++) c[i] += h[k][i]; const r = fxClip(c, black, white); ranges = [r, r, r]; }
+  else ranges = [0, 1, 2].map(k => fxClip(h[k], black, white));
+  const gam = [1, 1, 1];
+  if (kind === 2 && snap) {
+    const st = (v, [lo, hi]) => clamp((v - lo) / (hi - lo), 0, 1), s = [0, 0, 0, 0], d = R.d;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3] / 255; if (a <= 1e-4) continue;
+      for (let k = 0; k < 3; k++) s[k] += st(d[i + k] / 255, ranges[k]) * a;
+      s[3] += a;
+    }
+    if (s[3] > 0) {
+      const m = [0, 1, 2].map(k => s[k] / s[3]), target = (m[0] + m[1] + m[2]) / 3;
+      for (let k = 0; k < 3; k++) if (m[k] > 1e-3 && m[k] < .999 && target > 1e-3 && target < .999) gam[k] = clamp(Math.log(target) / Math.log(m[k]), .2, 5);
+    }
+  }
+  return [ranges.map(r => r[0]), ranges.map(r => r[1]), gam];
+}
+// color2::equalize_tables: cumulative histograms of R, G and B (RGB), of luminance (Brightness) or of all three (Photoshop Style)
+function fxEqualize(R, style) {
+  const h = fxHist(R), cdf = a => { let t = 0; for (const v of a) t += v; t = Math.max(t, 1e-12); let acc = 0; return Array.from(a, v => (acc += v) / t); };
+  if (style === 1) return [cdf(h[3])];
+  if (style === 2) { const c = new Float64Array(FX_BINS); for (let k = 0; k < 3; k++) for (let i = 0; i < FX_BINS; i++) c[i] += h[k][i]; return [cdf(c)]; }
+  return [cdf(h[0]), cdf(h[1]), cdf(h[2])];
+}
+// Color Link's Sample menu and Blending Mode menu (the numbers are the blend modes' places in EffectCraft's BlendMode::ALL)
+const LINK_SAMPLES = ['Average', 'Median', 'Brightest', 'Darkest', 'Max RGB', 'Min RGB', 'Average alpha', 'Median alpha', 'Max alpha', 'Min alpha'];
+const LINK_MODES = [['Normal', 0], ['Add', 9], ['Multiply', 4], ['Screen', 11], ['Overlay', 16], ['Soft light', 17], ['Hard light', 18], ['Darken', 3],
+  ['Lighten', 10], ['Difference', 23], ['Hue', 28], ['Color', 30], ['Luminosity', 31]];
+// color2::sample_color: one colour (and alpha) standing for a picture, leaving out the fraction `clip` at each extreme
+function fxSampleColor(R, how, clip) {
+  clip = clamp(clip, 0, .49);
+  const d = R.d, n = d.length / 4, am = how >= 6, al = new Float32Array(n), ch = [[], [], []], lum = [], ws = [0, 0, 0, 0];
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    const a = d[i + 3] / 255; al[j] = a;
+    if (am || a <= 1e-3) continue;
+    const c = [d[i] / 255, d[i + 1] / 255, d[i + 2] / 255];
+    for (let k = 0; k < 3; k++) { ch[k].push(c[k]); ws[k] += c[k] * a; }
+    lum.push([fxLum(...c), c]); ws[3] += a;
+  }
+  const qt = (v, f) => v.length ? v[Math.min(v.length - 1, Math.round(f * (v.length - 1)))] : 0;
+  const trim = v => { if (!v.length) return 0; v.sort((x, y) => x - y); const cut = Math.floor(v.length * clip), s = v.slice(cut, v.length - cut); return s.length ? s.reduce((x, y) => x + y, 0) / s.length : qt(v, .5); };
+  if (am) {
+    al.sort();
+    return [[0, 0, 0], how === 7 ? qt(al, .5) : how === 8 ? qt(al, 1 - clip) : how === 9 ? qt(al, clip) : trim(Array.from(al))];
+  }
+  if (!lum.length) return [[0, 0, 0], 1];
+  let c;
+  if (how === 1) c = ch.map(v => qt(v.sort((x, y) => x - y), .5));
+  else if (how === 2 || how === 3) { lum.sort((x, y) => x[0] - y[0]); c = qt(lum, how === 2 ? 1 - clip : clip)[1]; }
+  else if (how === 4 || how === 5) c = ch.map(v => qt(v.sort((x, y) => x - y), how === 4 ? 1 - clip : clip));
+  else if (how === 0 && clip <= 0) c = [0, 1, 2].map(k => ws[k] / ws[3]);
+  else c = ch.map(trim);
+  return [c, 1];
+}
+// color3::parse_map: PS Arbitrary Map's map, values 0-1 (or 0-255), an identity ramp of 256 when there are fewer than two
+function fxParseMap(str) {
+  const v = String(str || '').split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite);
+  if (v.length < 2) return Array.from({ length: 256 }, (_, i) => Math.fround(i / 255));
+  const k = Math.max(0, ...v) > 1 ? 1 / 255 : 1;
+  return v.map(x => Math.fround(clamp(x * k, 0, 1)));
+}
+// fx_tone.rs arbitrary_map_table: the map as straight pieces (start, value, slope) in the CPU's f64 phase domain, each start
+// the first f32 at that boundary (found by searching f32 bit patterns), so the shader never wraps to the wrong end
+function fxMapTable(map, phase) {
+  const n = map.length;
+  if (n < 2 || n > 4096 || !Number.isFinite(phase)) return null;
+  const scale = n - 1, offset = phase * scale / 255;
+  if (Math.abs(offset) >= 2 ** 52) return null;
+  const F = new Float32Array(1), U = new Uint32Array(F.buffer), fb = b => { U[0] = b; return F[0]; }, ONE = 0x3f800000;
+  const at = v => {
+    let x = (v * scale + offset) % n; if (x < 0) x += n;
+    const i = Math.floor(x) % n, a = map[i] ?? 0, b = map[Math.min(i + 1, n - 1)] ?? a;
+    return [Math.fround(a + (b - a) * Math.fround(x - Math.floor(x))), Math.fround((b - a) * scale)];
+  };
+  const pts = [0], first = Math.floor(offset) + 1;
+  for (let i = 0; i <= n; i++) {
+    const boundary = first + i;
+    if (boundary > scale + offset) break;
+    let lo = 0, hi = ONE;
+    while (lo < hi) { const mid = lo + Math.floor((hi - lo) / 2); if (fb(mid) * scale + offset < boundary) lo = mid + 1; else hi = mid; }
+    const st = fb(lo); if (st > pts[pts.length - 1]) pts.push(st);
+  }
+  if (pts[pts.length - 1] !== 1) pts.push(1);
+  return pts.flatMap(v => [v, ...at(v)]);
+}
+// Color Stabilizer (ocio effects::color_stabilizer_maps): the mean straight colour of a square around a frame point
+function fxSampleMean(R, [x, y], r) {
+  const cx = x * R.k, cy = y * R.k, rr = Math.max(.5, r * R.k), d = R.d, acc = [0, 0, 0, 0];
+  const x0 = Math.max(0, Math.floor(cx - rr)), x1 = Math.min(R.w, Math.ceil(cx + rr)), y0 = Math.max(0, Math.floor(cy - rr)), y1 = Math.min(R.h, Math.ceil(cy + rr));
+  for (let j = y0; j < y1; j++) for (let i = x0; i < x1; i++) {
+    const o = (j * R.w + i) * 4, a = d[o + 3] / 255;
+    for (let k = 0; k < 3; k++) acc[k] += d[o + k] / 255 * a;
+    acc[3] += a;
+  }
+  return acc[3] <= 1e-9 ? [0, 0, 0] : [acc[0] / acc[3], acc[1] / acc[3], acc[2] / acc[3]];
+}
+// ...and one straight-line map per channel from the current samples to the reference frame's: Brightness offsets by the
+// black point, Levels maps black and white points, Curves goes through all three
+function fxStabMaps(cur, ref, mode) {
+  return [0, 1, 2].map(k => {
+    const off = (c0, r0) => [[0, r0 - c0], [1, 1 + r0 - c0]];
+    if (mode === 0) return off(cur[0][k], ref[0][k]);
+    if (mode === 1) {
+      const c0 = cur[0][k], c1 = cur[2][k], r0 = ref[0][k], r1 = ref[2][k];
+      return Math.abs(c1 - c0) < 1e-6 ? off(c0, r0) : c0 < c1 ? [[c0, r0], [c1, r1]] : [[c1, r1], [c0, r0]];
+    }
+    const v = [[0, 0]];
+    for (const [x, y] of [0, 1, 2].map(i => [cur[i][k], ref[i][k]]).sort((a, b) => a[0] - b[0])) if (x > v[v.length - 1][0] + 1e-4 && x < 1 - 1e-4) v.push([x, y]);
+    v.push([1, 1]); return v;
+  });
+}
+// Hue/Saturation's colour ranges (color_fx::HUESAT_RANGES): id, name, centre hue
+const HS_RANGES = [['reds', 'Reds', 0], ['yellows', 'Yellows', 60], ['greens', 'Greens', 120], ['cyans', 'Cyans', 180], ['blues', 'Blues', 240], ['magentas', 'Magentas', 300]];
+// the sliders Curves had before its graph (still read for older projects): channel prefix and the points' inputs
+const CURVES_OLD = [['rgb', [0, 64, 128, 192, 255]], ['r', [64, 128, 192]], ['g', [64, 128, 192]], ['b', [64, 128, 192]]];
+// an older project's Curves channel as graph points ("x,y …", 0..1), or '' when it's the straight line
+function curvesOld(L, f, i) {
+  const [c, xs] = CURVES_OLD[i], pts = xs.map(x => [x / 255, val(L, fxKey(f, c + x), S.time) / 255]);
+  if (c !== 'rgb') pts.unshift([0, 0]), pts.push([1, 1]);
+  return pts.every(([x, y]) => Math.abs(x - y) < 1e-6) ? '' : pts.map(([x, y]) => `${+x.toFixed(4)},${+y.toFixed(4)}`).join(' ');
+}
+// Lumetri Color's settings (color3::specs), in sections
+const LMT_K = [['lumina_lumetri', 'llm_grade'], ['lumina_lumetri', 'llm_key'], ['lumina_lumetri', 'llm_matte'], ['lumina_lumetri', 'llm_final'], ['lumina_lumetri', 'llm_sharpen'], ...BLUR_K];
+const LMT_TONES = ['RGB', 'Red', 'Green', 'Blue'].flatMap(c => ['Shadows', 'Midtones', 'Highlights'].map(t => ['curve' + c + t, `${c} curve: ${t.toLowerCase()}`]));
+const LMT_RGB = [['rgbMaster', 'RGB curve'], ['rgbRed', 'Red curve'], ['rgbGreen', 'Green curve'], ['rgbBlue', 'Blue curve']];
+const LMT_HS = [['hueVsSat', 'Hue vs saturation', true], ['hueVsHue', 'Hue vs hue', true], ['hueVsLuma', 'Hue vs luma', true], ['lumaVsSat', 'Luma vs saturation', false], ['satVsSat', 'Saturation vs saturation', false]];
+const LMT_LOOKS = ['None', 'Custom (a LUT)', 'Warm film', 'Cool night', 'Bleach bypass', 'Teal & orange', 'Faded matte', 'Monochrome'];
+const lutOpts = () => [['', 'None'], ...Object.entries(LUTS).map(([id, l]) => [id, esc(l.name)])];
+const LMT_PARAMS = (() => {
+  const sec = (n, list) => list.map(d => ({ ...d, show: f => +(f.section ?? 0) === n && (!d.show || d.show(f)) }));
+  const bi = (id, label, def = 0) => ({ id, label, def, min: -100, max: 100, dec: 1 });
+  const pc = (id, label, def = 0, max = 100) => ({ id, label, def, min: 0, max, dec: 1 });
+  const grey = (id, label) => ({ id, label, type: 'color', def: '#808080' });
+  return [
+    { id: 'section', label: 'Show', type: 'pick', def: 0, panel: true, opts: [[0, 'Basic correction'], [1, 'Creative'], [2, 'Curves'], [3, 'Color wheels'], [4, 'HSL secondary'], [5, 'Vignette']] },
+    ...sec(0, [
+      { id: 'inLut', label: 'Input LUT', type: 'pick', str: true, def: '', opts: lutOpts },
+      { id: 'hdr', label: 'High dynamic range', type: 'check', def: false, panel: true },
+      bi('temperature', 'Temperature'), bi('tint', 'Tint'),
+      { id: 'exposure', label: 'Exposure', def: 0, min: -5, max: 5, dec: 2 },
+      bi('contrast', 'Contrast'), bi('highlights', 'Highlights'), bi('shadows', 'Shadows'), bi('whites', 'Whites'), bi('blacks', 'Blacks'),
+      { id: 'hdrWhite', label: 'HDR white', def: 100, min: 100, max: 10000, dec: 0, show: f => !!f.hdr },
+      { ...bi('hdrSpecular', 'HDR specular'), show: f => !!f.hdr },
+      pc('saturation', 'Saturation', 100, 200)]),
+    ...sec(1, [
+      { id: 'look', label: 'Look', type: 'pick', def: 0, panel: true, opts: LMT_LOOKS.map((n, i) => [i, n]) },
+      { id: 'lookLut', label: 'Look LUT', type: 'pick', str: true, def: '', opts: lutOpts, show: f => +(f.look ?? 0) === 1 },
+      pc('intensity', 'Intensity', 100, 200), pc('faded', 'Faded film'), bi('sharpen', 'Sharpen'), bi('vibrance', 'Vibrance'), pc('csat', 'Saturation', 100, 200),
+      grey('shadowTint', 'Shadow tint'), grey('highlightTint', 'Highlight tint'), bi('tintBalance', 'Tint balance')]),
+    ...sec(2, [
+      ...LMT_TONES.map(([id, label]) => bi(id, label)),
+      { id: 'curveSel', label: 'Curve', type: 'pick', def: 0, panel: true, opts: [...LMT_RGB, ...LMT_HS].map(([, n], i) => [i, n]) },
+      ...LMT_RGB.map(([id, label], i) => ({ id, label, type: 'curve', mode: 'fc', color: ['rgb', 'red', 'green', 'blue'][i], def: '0,0 1,1', show: f => +(f.curveSel ?? 0) === i })),
+      ...LMT_HS.map(([id, label, per], i) => ({ id, label: label + ' (middle = no change)', type: 'curve', mode: per ? 'hue' : 'flat', color: 'hue', def: '', show: f => +(f.curveSel ?? 0) === i + 4 }))]),
+    ...sec(3, [grey('wheelShadows', 'Shadows'), grey('wheelMids', 'Midtones'), grey('wheelHighs', 'Highlights')]),
+    ...sec(4, [
+      { id: 'hueOn', label: 'Key on hue', type: 'check', def: true },
+      { id: 'hueCenter', label: 'Hue center°', def: 0, min: 0, max: 360, dec: 1 }, { id: 'hueRange', label: 'Hue range°', def: 180, min: 0, max: 180, dec: 1 },
+      { id: 'hueSoft', label: 'Hue softness°', def: 0, min: 0, max: 180, dec: 1 },
+      { id: 'satOn', label: 'Key on saturation', type: 'check', def: true },
+      pc('satLow', 'Saturation low'), pc('satHigh', 'Saturation high', 100), pc('satSoft', 'Saturation softness'),
+      { id: 'lightOn', label: 'Key on lightness', type: 'check', def: true },
+      pc('lightLow', 'Lightness low'), pc('lightHigh', 'Lightness high', 100), pc('lightSoft', 'Lightness softness'),
+      { id: 'showMask', label: 'Show mask', type: 'check', def: false },
+      { id: 'maskStyle', label: 'Mask style', type: 'pick', def: 0, opts: [[0, 'Color/gray'], [1, 'Color/black'], [2, 'White/black']] },
+      { id: 'invert', label: 'Invert mask', type: 'check', def: false },
+      pc('denoise', 'Denoise'), pc('blur', 'Blur'),
+      grey('secWheel', 'Correction'), bi('secTemp', 'Temperature'), bi('secTint', 'Tint'), bi('secContrast', 'Contrast'), bi('secSharpen', 'Sharpen'),
+      pc('secSat', 'Saturation', 100, 200)]),
+    ...sec(5, [{ id: 'vigAmount', label: 'Amount', def: 0, min: -5, max: 5, dec: 2 }, pc('vigMid', 'Midpoint', 50), bi('vigRound', 'Roundness'), pc('vigFeather', 'Feather', 50)])];
+})();
+// Photo Filter's Filter menu (effects::PHOTO_FILTERS); the last one, Custom, uses the Color setting
+const PHOTO_FILTERS = [['Warming Filter (85)', [240, 140, 30]], ['Warming Filter (LBA)', [245, 155, 25]], ['Warming Filter (81)', [240, 180, 40]],
+  ['Cooling Filter (80)', [20, 110, 250]], ['Cooling Filter (LBB)', [20, 95, 245]], ['Cooling Filter (82)', [30, 180, 250]],
+  ['Red', [230, 30, 30]], ['Orange', [240, 130, 30]], ['Yellow', [245, 225, 35]], ['Green', [30, 200, 30]], ['Cyan', [30, 200, 230]], ['Blue', [30, 55, 230]],
+  ['Violet', [150, 30, 230]], ['Magenta', [225, 30, 225]], ['Sepia', [170, 120, 55]], ['Deep Red', [250, 0, 0]], ['Deep Blue', [0, 40, 200]],
+  ['Deep Emerald', [0, 135, 0]], ['Deep Yellow', [255, 210, 0]], ['Underwater', [0, 190, 175]], ['Custom', [0, 0, 0]]];
+const RGB3 = [['red', 'Red'], ['green', 'Green'], ['blue', 'Blue']];
 // Selective Color's ranges and inks, in the kernel's order (color2::SC_IDS)
 const SC_RANGES = ['Reds', 'Yellows', 'Greens', 'Cyans', 'Blues', 'Magentas', 'Whites', 'Neutrals', 'Blacks'], SC_INKS = ['Cyan', 'Magenta', 'Yellow', 'Black'];
 const SC_KEY = (r, ink) => SC_RANGES[r].toLowerCase() + ink;
@@ -2793,44 +3114,70 @@ const FX = {
         1: [fe, fe, q('opacity') / 100, Math.max(0, E.px(q('border')))], 2: [...q('color'), 1] }), img);
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
-  huesat: { name: 'Hue/Saturation', cat: 'Color', kernels: [['kernels', 'pointwise']], params: [
-      { id: 'hue', label: 'Hue°', def: 0, min: -180, max: 180, dec: 0 },
-      { id: 'saturation', label: 'Saturation', def: 0, min: -100, max: 100, dec: 0 },
-      { id: 'lightness', label: 'Lightness', def: 0, min: -100, max: 100, dec: 0 },
+  // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's
+  // fx_tone.rs hue_saturation), Master / Colorize alone in the base pointwise kernel
+  huesat: { name: 'Hue/Saturation', cat: 'Color', kernels: [['kernels', 'pointwise'], ...FXT_K], params: [
+      { id: 'channel', label: 'Channel control', type: 'pick', def: 0, panel: true, opts: [[0, 'Master'], ...HS_RANGES.map(([, n], i) => [i + 1, n])] },
+      { id: 'hue', label: 'Hue°', def: 0, min: -180, max: 180, dec: 0, show: f => !+(f.channel ?? 0) },
+      { id: 'saturation', label: 'Saturation', def: 0, min: -100, max: 100, dec: 0, show: f => !+(f.channel ?? 0) },
+      { id: 'lightness', label: 'Lightness', def: 0, min: -100, max: 100, dec: 0, show: f => !+(f.channel ?? 0) },
+      ...HS_RANGES.flatMap(([r, n, c], i) => {
+        const on = f => +(f.channel ?? 0) === i + 1, one = n.replace(/s$/, '');
+        return [{ id: r + 'Hue', label: `${one} hue°`, def: 0, min: -180, max: 180, dec: 0, show: on },
+          { id: r + 'Sat', label: `${one} saturation`, def: 0, min: -100, max: 100, dec: 0, show: on },
+          { id: r + 'Light', label: `${one} lightness`, def: 0, min: -100, max: 100, dec: 0, show: on },
+          { id: r + 'Start', label: `${one} range start°`, def: c - 15, min: -180, max: 360, dec: 0, show: on },
+          { id: r + 'End', label: `${one} range end°`, def: c + 15, min: -180, max: 360, dec: 0, show: on },
+          { id: r + 'FallStart', label: `${one} start falloff°`, def: 30, min: 0, max: 90, dec: 0, show: on },
+          { id: r + 'FallEnd', label: `${one} end falloff°`, def: 30, min: 0, max: 90, dec: 0, show: on }];
+      }),
       { id: 'colorize', label: 'Colorize (one color)', type: 'check', def: false },
       { id: 'cHue', label: 'Colorize hue°', def: 0, min: 0, max: 360, dec: 0 },
       { id: 'cSat', label: 'Colorize saturation', def: 25, min: 0, max: 100, dec: 0 },
       { id: 'cLight', label: 'Colorize lightness', def: 0, min: -100, max: 100, dec: 0 }],
     run(E, img, q) {
-      const col = !!q('colorize');
-      if (!col && !q('hue') && !q('saturation') && !q('lightness')) return img;
+      const col = !!q('colorize'), m = [q('hue') / 360, q('saturation') / 100, q('lightness') / 100];
+      const ranges = col ? [] : HS_RANGES.map(([r]) => [q(r + 'Start'), q(r + 'End'), Math.max(0, q(r + 'FallStart')), Math.max(0, q(r + 'FallEnd')), q(r + 'Hue') / 360, q(r + 'Sat') / 100, q(r + 'Light') / 100])
+        .filter(v => v[4] || v[5] || v[6]);
+      if (ranges.length) return fxTone(E, img, 14, { 0: [14, 0, ranges.length, 0] }, { 0: [...m, 0] }, null, E.data(ranges.flat()));
+      if (!col && !m[0] && !m[1] && !m[2]) return img;
       return E.run('kernels', 'pointwise', fxP({ 0: [3, col, 0, 0] }, {
-        0: [q('hue') / 360, q('saturation') / 100, q('lightness') / 100, 0],
-        1: [q('cHue') / 360, q('cSat') / 100, q('cLight') / 100, 0] }), img);
+        0: [...m, 0], 1: [q('cHue') / 360, q('cSat') / 100, q('cLight') / 100, 0] }), img);
     } },
-  levels: { name: 'Levels', cat: 'Color', kernels: [['kernels', 'pointwise']], params: [
-      { id: 'inBlack', label: 'Input black', def: 0, min: 0, max: 255, dec: 0 },
-      { id: 'inWhite', label: 'Input white', def: 255, min: 0, max: 255, dec: 0 },
-      { id: 'gamma', label: 'Gamma (midtones)', def: 1, min: .1, max: 10, dec: 2 },
-      { id: 'outBlack', label: 'Output black', def: 0, min: 0, max: 255, dec: 0 },
-      { id: 'outWhite', label: 'Output white', def: 255, min: 0, max: 255, dec: 0 }],
+  // the Channel menu shows RGB or one channel's controls; any channel's change runs in fx_tone's op 15 (fx_tone.rs levels)
+  levels: { name: 'Levels', cat: 'Color', kernels: [['kernels', 'pointwise'], ...FXT_K], params: [
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, panel: true, opts: [[0, 'RGB'], [1, 'Red'], [2, 'Green'], [3, 'Blue'], [4, 'Alpha']] },
+      ...[['', 'RGB', 0], ['red', 'Red', 1], ['green', 'Green', 2], ['blue', 'Blue', 3], ['alpha', 'Alpha', 4]].flatMap(([c, n, i]) => {
+        const id = k => c ? c + k : k[0].toLowerCase() + k.slice(1), on = f => +(f.channel ?? 0) === i, pre = c ? n + ' ' : '';
+        return [{ id: id('InBlack'), label: pre + 'input black', def: 0, min: 0, max: 255, dec: 0, show: on },
+          { id: id('InWhite'), label: pre + 'input white', def: 255, min: 0, max: 255, dec: 0, show: on },
+          { id: id('Gamma'), label: c ? n + ' gamma' : 'Gamma (midtones)', def: 1, min: .1, max: 10, dec: 2, show: on },
+          { id: id('OutBlack'), label: pre + 'output black', def: 0, min: 0, max: 255, dec: 0, show: on },
+          { id: id('OutWhite'), label: pre + 'output white', def: 255, min: 0, max: 255, dec: 0, show: on }];
+      })],
     run(E, img, q) {
       const v = ['inBlack', 'inWhite', 'outBlack', 'outWhite'].map(k => q(k) / 255), g = Math.max(.01, q('gamma'));
+      const ch = ['red', 'green', 'blue', 'alpha'].map(c => [q(c + 'InBlack') / 255, q(c + 'InWhite') / 255, Math.max(.01, q(c + 'Gamma')), q(c + 'OutBlack') / 255, q(c + 'OutWhite') / 255]);
+      if (ch.some(l => l[0] !== 0 || l[1] !== 1 || l[2] !== 1 || l[3] !== 0 || l[4] !== 1))
+        return fxTone(E, img, 15, {}, {}, null, E.data([v[0], v[1], g, v[2], v[3], 1, 1, ...ch.flatMap(l => [...l, 1, 1])]));
       if (v[0] === 0 && v[1] === 1 && v[2] === 0 && v[3] === 1 && g === 1) return img;
       // Lumina works in 8 bits a channel, so both "Clip To Output" switches are on (color_fx::levels_clip)
       return E.run('kernels', 'pointwise', fxP({ 0: [4, 1, 1, 0] }, { 0: [v[0], v[1], g, v[2]], 1: [v[3], 0, 0, 0] }), img);
     } },
+  // Curves: a graph per channel (drag points, click to add, double-click to remove). Projects from before the graph kept
+  // their curves as sliders at fixed points; those still count until the graph is changed.
   curves: { name: 'Curves', cat: 'Color', kernels: [['kernels', 'pointwise']], params: [
-      ...[[0, 'Black'], [64, 'Shadows'], [128, 'Midtones'], [192, 'Highlights'], [255, 'White']].map(([x, n]) =>
-        ({ id: 'rgb' + x, label: `All: ${n} (${x}) →`, def: x, min: 0, max: 255, dec: 0 })),
-      ...['Red', 'Green', 'Blue'].flatMap(c => [[64, 'shadows'], [128, 'midtones'], [192, 'highlights']].map(([x, n]) =>
-        ({ id: c[0].toLowerCase() + x, label: `${c}: ${n} →`, def: x, min: 0, max: 255, dec: 0 })))],
+      { id: 'chan', label: 'Channel', type: 'pick', def: 0, panel: true, opts: [[0, 'RGB'], [1, 'Red'], [2, 'Green'], [3, 'Blue']] },
+      ...[['cRGB', 'RGB', 'rgb'], ['cRed', 'Red', 'red'], ['cGreen', 'Green', 'green'], ['cBlue', 'Blue', 'blue']].map(([id, n, color], i) =>
+        ({ id, label: n + ' curve', type: 'curve', mode: 'natural', color, def: '', show: f => +(f.chan ?? 0) === i, fallback: (L, f) => curvesOld(L, f, i) })),
+      ...CURVES_OLD.flatMap(([c, xs]) => xs.map(x => ({ id: c + x, label: `${c} ${x}`, def: x, min: 0, max: 255, dec: 0, show: () => false })))],
     run(E, img, q) {
-      const chans = [['rgb', [0, 64, 128, 192, 255]], ...['r', 'g', 'b'].map(c => [c, [64, 128, 192]])];
       const data = [], offs = [-1, -1, -1, -1, -1];
-      chans.forEach(([c, xs], i) => {
-        const pts = xs.map(x => [x / 255, q(c + x) / 255]);
-        if (c !== 'rgb') pts.unshift([0, 0]), pts.push([1, 1]);
+      CURVES_OLD.forEach(([c, xs], i) => {
+        const str = q(['cRGB', 'cRed', 'cGreen', 'cBlue'][i]);
+        let pts;
+        if (str) pts = fxPoints(str, false);
+        else { pts = xs.map(x => [x / 255, q(c + x) / 255]); if (c !== 'rgb') pts.unshift([0, 0]), pts.push([1, 1]); }
         const t = fxCurve(pts); if (!t) return;
         offs[i] = data.length; data.push(t.xs.length, ...t.xs, ...t.ys, ...t.ms, ...t.lut);
       });
@@ -2907,6 +3254,312 @@ const FX = {
       const adj = SC_RANGES.flatMap((_, r) => SC_INKS.map(ink => q(SC_KEY(r, ink)) / 100));
       if (adj.every(v => !v)) return img;
       return E.run('fx_color', 'fxc_point', fxP({ 0: [7, q('method') === 0, 0, 0] }), img, null, null, E.data(adj));
+    } },
+  // ---- Round 8: colour II (EffectCraft's fxt_point kernel in fx_tone.wgsl, host code from crates/gpu/src/fx_tone.rs;
+  //      Exposure runs in the base kernels' pointwise op 5, as EffectCraft's does) ----
+  exposure: { name: 'Exposure', cat: 'Color', kernels: [['kernels', 'pointwise']], params: [
+      { id: 'channels', label: 'Channels', type: 'pick', def: 0, opts: [[0, 'Master'], [1, 'Individual channels']] },
+      ...[['master', 'Master'], ...RGB3].flatMap(([k, n]) => [
+        { id: k + 'Exposure', label: `${n}: exposure`, def: 0, min: -10, max: 10, dec: 2, show: f => (f.channels ?? 0) === (k === 'master' ? 0 : 1) },
+        { id: k + 'Offset', label: `${n}: offset`, def: 0, min: -.5, max: .5, dec: 4, show: f => (f.channels ?? 0) === (k === 'master' ? 0 : 1) },
+        { id: k + 'Gamma', label: `${n}: gamma correction`, def: 1, min: .1, max: 10, dec: 2, show: f => (f.channels ?? 0) === (k === 'master' ? 0 : 1) }]),
+      { id: 'bypass', label: 'Bypass linear light conversion', type: 'check', def: false }],
+    run(E, img, q) {
+      const one = k => [2 ** q(k + 'Exposure'), q(k + 'Offset'), Math.max(.01, q(k + 'Gamma'))];
+      const s = q('channels') === 1 ? RGB3.map(([k]) => one(k)) : [0, 1, 2].map(() => one('master'));
+      if (s.every(([e, o, g]) => e === 1 && o === 0 && g === 1)) return img;
+      return E.run('kernels', 'pointwise', fxP({ 0: [5, q('bypass'), 0, 0] }, { 0: [...s.map(x => x[0]), 0], 1: [...s.map(x => x[1]), 0], 2: [...s.map(x => x[2]), 0] }), img);
+    } },
+  photofilter: { name: 'Photo Filter', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'filter', label: 'Filter', type: 'pick', def: 0, opts: PHOTO_FILTERS.map(([n], i) => [i, n]) },
+      { id: 'color', label: 'Color', type: 'color', def: '#ed8a17', show: f => +(f.filter ?? 0) === PHOTO_FILTERS.length - 1 },
+      { id: 'density', label: 'Density %', def: 25, min: 0, max: 100, dec: 1 },
+      { id: 'preserve', label: 'Preserve luminosity', type: 'check', def: true }],
+    run(E, img, q) {
+      const fi = q('filter'), d = q('density') / 100; if (d === 0) return img;
+      const c = fi === PHOTO_FILTERS.length - 1 ? q('color') : (PHOTO_FILTERS[fi] || PHOTO_FILTERS[0])[1].map(v => v / 255);
+      return fxTone(E, img, 3, { 0: [3, q('preserve'), 0, 0] }, { 0: [...c, d] });
+    } },
+  // Shadow/Highlight: Auto Amounts measures the layer's average brightness on the CPU (a small copy), as EffectCraft does;
+  // the bases are its blurred luminance. (Black/White Clip, Temporal Smoothing and Scene Detect need the frame read back
+  // from the graphics card or other frames, so they're left for later.)
+  shadowhighlight: { name: 'Shadow/Highlight', cat: 'Color', kernels: [...FXT_K, ...BLUR_K], params: [
+      { id: 'auto', label: 'Auto amounts', type: 'check', def: true },
+      { id: 'shadowAmount', label: 'Shadow amount', def: 50, min: 0, max: 100, dec: 0, show: f => f.auto === false },
+      { id: 'highlightAmount', label: 'Highlight amount', def: 0, min: 0, max: 100, dec: 0, show: f => f.auto === false },
+      { id: 'shadowWidth', label: 'Shadow tonal width', def: 50, min: 0, max: 100, dec: 0 },
+      { id: 'shadowRadius', label: 'Shadow radius', def: 30, min: 0, max: 300, dec: 0 },
+      { id: 'highlightWidth', label: 'Highlight tonal width', def: 50, min: 0, max: 100, dec: 0 },
+      { id: 'highlightRadius', label: 'Highlight radius', def: 30, min: 0, max: 300, dec: 0 },
+      { id: 'colorCorrection', label: 'Color correction', def: 20, min: -100, max: 100, dec: 0 },
+      { id: 'midtoneContrast', label: 'Midtone contrast', def: 0, min: -100, max: 100, dec: 0 },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      let sa = q('shadowAmount') / 100, ha = q('highlightAmount') / 100;
+      if (q('auto')) { const m = E.lumaMean(img); sa = clamp((.6 - m) * 1.5, 0, 1) * .8 + .1; ha = clamp((m - .6) * 1.5, 0, 1) * .8; }
+      const mc = q('midtoneContrast') / 100, blend = clamp(q('blend') / 100, 0, 1);
+      if ((!sa && !ha && !mc) || blend >= 1) return img;
+      const luma = fxTone(E, img, 19), sr = E.px(Math.max(0, q('shadowRadius'))) / 2, hr = E.px(Math.max(0, q('highlightRadius'))) / 2;
+      const bs = fxGauss(E, luma, sr, sr, true), bh = Math.abs(hr - sr) < 1e-9 ? bs : fxGauss(E, luma, hr, hr, true);
+      const bases = fxTone(E, bs, 21, {}, {}, bh);
+      return fxTone(E, img, 20, {}, { 0: [sa, ha, Math.max(.01, q('shadowWidth') / 100), Math.max(.01, q('highlightWidth') / 100)], 1: [q('colorCorrection') / 100, mc, blend, 0] }, bases);
+    } },
+  changecolor: { name: 'Change Color', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: [[0, 'Corrected layer'], [1, 'Color correction mask']] },
+      { id: 'hue', label: 'Hue transform°', def: 0, min: -180, max: 180, dec: 1 },
+      { id: 'lightness', label: 'Lightness transform', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'saturation', label: 'Saturation transform', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'color', label: 'Color to change', type: 'color', def: '#cc3333' },
+      { id: 'tolerance', label: 'Matching tolerance %', def: 15, min: 0, max: 100, dec: 1 },
+      { id: 'softness', label: 'Matching softness %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'match', label: 'Match colors', type: 'pick', def: 1, opts: [[0, 'Using RGB'], [1, 'Using hue'], [2, 'Using chroma']] },
+      { id: 'invert', label: 'Invert color correction mask', type: 'check', def: false }],
+    run(E, img, q) {
+      const view = q('view') === 1, dh = q('hue') / 360, dl = q('lightness') / 100, ds = q('saturation') / 100;
+      if (!view && !dh && !dl && !ds) return img;
+      const k = q('color');
+      return fxTone(E, img, 6, { 0: [6, q('match'), (view ? 1 : 0) | (q('invert') ? 2 : 0), 0] }, { 0: [...k, fxHSL(k)[0]], 1: [dh, dl, ds, 0], 2: [q('tolerance') / 100, q('softness') / 100, 0, 0] });
+    } },
+  changetocolor: { name: 'Change to Color', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'from', label: 'From', type: 'color', def: '#ff0000' },
+      { id: 'to', label: 'To', type: 'color', def: '#0000ff' },
+      { id: 'change', label: 'Change', type: 'pick', def: 0, opts: [[0, 'Hue'], [1, 'Hue & lightness'], [2, 'Hue & saturation'], [3, 'Hue, lightness & saturation']] },
+      { id: 'changeBy', label: 'Change by', type: 'pick', def: 0, opts: [[0, 'Setting to color'], [1, 'Transforming to color']] },
+      { id: 'tolHue', label: 'Tolerance: hue %', def: 5, min: 0, max: 100, dec: 1 },
+      { id: 'tolLight', label: 'Tolerance: lightness %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'tolSat', label: 'Tolerance: saturation %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'softness', label: 'Softness %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'viewMatte', label: 'View correction matte', type: 'check', def: false }],
+    run(E, img, q) {
+      const fr = fxHSL(q('from')), to = fxHSL(q('to')), ch = q('change');
+      const flags = (ch === 1 || ch === 3 ? 1 : 0) | (ch === 2 || ch === 3 ? 2 : 0) | (q('changeBy') === 1 ? 4 : 0) | (q('viewMatte') ? 8 : 0);
+      return fxTone(E, img, 4, { 0: [4, flags, 0, 0] }, { 0: [...fr, q('softness') / 100], 1: [...to, 0], 2: [q('tolHue') / 100, q('tolLight') / 100, q('tolSat') / 100, 0] });
+    } },
+  leavecolor: { name: 'Leave Color', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'amount', label: 'Amount to decolor %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'color', label: 'Color to leave', type: 'color', def: '#ff0000' },
+      { id: 'tolerance', label: 'Tolerance %', def: 15, min: 0, max: 100, dec: 1 },
+      { id: 'softness', label: 'Edge softness %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'match', label: 'Match colors', type: 'pick', def: 0, opts: [[0, 'Using RGB'], [1, 'Using hue']] }],
+    run(E, img, q) {
+      const amt = q('amount') / 100; if (amt <= 0) return img;
+      const k = q('color');
+      return fxTone(E, img, 5, { 0: [5, q('match') === 1, 0, 0] }, { 0: [...k, fxHSL(k)[0]], 1: [amt, q('tolerance') / 100, q('softness') / 100, 0] });
+    } },
+  colorbalancehls: { name: 'Color Balance (HLS)', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'hue', label: 'Hue°', def: 0, min: -180, max: 180, dec: 1 },
+      { id: 'lightness', label: 'Lightness', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'saturation', label: 'Saturation', def: 0, min: -100, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const dh = q('hue') / 360, dl = q('lightness') / 100, ds = q('saturation') / 100;
+      return dh || dl || ds ? fxTone(E, img, 8, {}, { 0: [dh, dl, ds, 0] }) : img;
+    } },
+  gammapedestalgain: { name: 'Gamma/Pedestal/Gain', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'blackStretch', label: 'Black stretch', def: 0, min: 0, max: 4, dec: 2 },
+      ...RGB3.flatMap(([k, n]) => [
+        { id: k + 'Gamma', label: `${n} gamma`, def: 1, min: .1, max: 4, dec: 2 },
+        { id: k + 'Pedestal', label: `${n} pedestal`, def: 0, min: -1, max: 1, dec: 2 },
+        { id: k + 'Gain', label: `${n} gain`, def: 1, min: 0, max: 2, dec: 2 }])],
+    run(E, img, q) {
+      const ch = RGB3.map(([k]) => [Math.max(.01, q(k + 'Gamma')), q(k + 'Pedestal'), q(k + 'Gain'), 0]), st = Math.max(0, q('blackStretch'));
+      if (!st && ch.every(([g, p, k]) => g === 1 && p === 0 && k === 1)) return img;
+      return fxTone(E, img, 2, {}, { 0: ch[0], 1: ch[1], 2: ch[2], 3: [st, 0, 0, 0] });
+    } },
+  cctoner: { name: 'CC Toner', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'tones', label: 'Tones', type: 'pick', def: 1, opts: [[0, 'Duotone'], [1, 'Tritone'], [2, 'Pentone']] },
+      { id: 'highlights', label: 'Highlights', type: 'color', def: '#ffffff' },
+      { id: 'brights', label: 'Brights', type: 'color', def: '#dbc7a3', show: f => +(f.tones ?? 1) === 2 },
+      { id: 'midtones', label: 'Midtones', type: 'color', def: '#8c6e47', show: f => +(f.tones ?? 1) !== 0 },
+      { id: 'darktones', label: 'Darktones', type: 'color', def: '#422e1a', show: f => +(f.tones ?? 1) === 2 },
+      { id: 'shadows', label: 'Shadows', type: 'color', def: '#000000' },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const b = clamp(q('blend') / 100, 0, 1); if (b >= 1) return img;
+      const ids = q('tones') === 0 ? ['shadows', 'highlights'] : q('tones') === 2 ? ['shadows', 'darktones', 'midtones', 'brights', 'highlights'] : ['shadows', 'midtones', 'highlights'];
+      const f = { 0: [b, 0, 0, 0] }; ids.forEach((id, i) => f[1 + i] = [...q(id), 0]);
+      return fxTone(E, img, 9, { 0: [9, ids.length - 1, 0, 0] }, f);
+    } },
+  cccoloroffset: { name: 'CC Color Offset', cat: 'Color', kernels: FXT_K, params: [
+      ...RGB3.map(([k, n]) => ({ id: k + 'Phase', label: `${n} phase°`, def: 0, min: -360, max: 360, dec: 0 })),
+      { id: 'overflow', label: 'Overflow', type: 'pick', def: 0, opts: [[0, 'Wrap'], [1, 'Solarize'], [2, 'Polarize']] }],
+    run(E, img, q) {
+      const o = RGB3.map(([k]) => { const v = q(k + 'Phase') / 360; return v - Math.floor(v); });
+      return o.some(Boolean) ? fxTone(E, img, 10, { 0: [10, q('overflow'), 0, 0] }, { 0: [...o, 0] }) : img;
+    } },
+  // ---- Round 9: colour III, auto & broadcast (fx_tone's fxt_point, Color Link in fx_pixel2's fp2_point; host code from
+  //      EffectCraft's crates/gpu/src/fx_tone.rs and fx_pixel2.rs). The auto effects, Equalize, Color Link and Color
+  //      Stabilizer read the picture back from the graphics card and measure it on the CPU, as EffectCraft's do.
+  //      (Temporal Smoothing and Scene Detect, which need other frames, are left for later.) ----
+  ...Object.fromEntries([['autolevels', 'Auto Levels', 0], ['autocontrast', 'Auto Contrast', 1], ['autocolor', 'Auto Color', 2]].map(([id, name, kind]) => [id, {
+    name, cat: 'Color', kernels: FXT_K, params: [
+      { id: 'blackClip', label: 'Black clip %', def: .1, min: 0, max: 10, dec: 2 },
+      { id: 'whiteClip', label: 'White clip %', def: .1, min: 0, max: 10, dec: 2 },
+      ...(kind === 2 ? [{ id: 'snap', label: 'Snap neutral midtones', type: 'check', def: true }] : []),
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const blend = clamp(q('blend') / 100, 0, 1); if (blend >= 1) return img;
+      const [lo, hi, g] = fxAuto(E.read(img), kind, clamp(q('blackClip'), 0, 49) / 100, clamp(q('whiteClip'), 0, 49) / 100, kind === 2 && q('snap'));
+      return fxTone(E, img, 16, {}, { 0: [...lo, 0], 1: [...hi, 0], 2: [...g, blend] });
+    } }])),
+  equalize: { name: 'Equalize', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'style', label: 'Equalize', type: 'pick', def: 0, opts: [[0, 'RGB'], [1, 'Brightness'], [2, 'Photoshop style']] },
+      { id: 'amount', label: 'Amount to equalize %', def: 100, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const amt = clamp(q('amount') / 100, 0, 1); if (amt <= 0) return img;
+      const t = fxEqualize(E.read(img), q('style'));
+      return fxTone(E, img, 17, { 0: [17, q('style'), FX_BINS, 0] }, { 0: [amt, 0, 0, 0] }, null, E.data(t.flat()));
+    } },
+  broadcast: { name: 'Broadcast Colors', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'locale', label: 'Broadcast locale', type: 'pick', def: 0, opts: [[0, 'NTSC'], [1, 'PAL']] },
+      { id: 'how', label: 'How to make color safe', type: 'pick', def: 0, opts: [[0, 'Reduce luminance'], [1, 'Reduce saturation'], [2, 'Key out unsafe'], [3, 'Key out safe']] },
+      { id: 'maxSignal', label: 'Maximum signal amplitude (IRE)', def: 110, min: 90, max: 120, dec: 0 }],
+    run(E, img, q) {
+      const pal = q('locale') === 1, [setup, span] = pal ? [0, 100] : [7.5, 92.5];
+      return fxTone(E, img, 7, { 0: [7, pal, q('how'), 0] }, { 0: [(q('maxSignal') - setup) / span, 0, 0, 0] });
+    } },
+  videolimiter: { name: 'Video Limiter', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'clipLevel', label: 'Clip level', type: 'pick', def: 2, opts: [[0, '90%'], [1, '95%'], [2, '100%'], [3, '105%'], [4, '109%']] },
+      { id: 'clipMethod', label: 'Clip method', type: 'pick', def: 2, opts: [[0, 'Luma'], [1, 'Chroma'], [2, 'Smart limit']] },
+      { id: 'compression', label: 'Compression before clipping', type: 'pick', def: 2, opts: [[0, 'None'], [1, '3%'], [2, '5%'], [3, '10%'], [4, '20%']] },
+      { id: 'warn', label: 'Gamut warning', type: 'check', def: false },
+      { id: 'warnColor', label: 'Gamut warning color', type: 'color', def: '#ff0000', show: f => !!f.warn }],
+    run(E, img, q) {
+      const level = [.9, .95, 1, 1.05, 1.09][Math.min(4, q('clipLevel'))], comp = [0, .03, .05, .1, .2][Math.min(4, q('compression'))];
+      return fxTone(E, img, 13, { 0: [13, q('clipMethod'), q('warn'), 0] }, { 0: [level, level * (1 - comp), 0, 0], 1: [...q('warnColor'), 0] });
+    } },
+  psarbitrarymap: { name: 'PS Arbitrary Map', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'phase', label: 'Phase', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'alpha', label: 'Apply phase map to alpha', type: 'check', def: false },
+      { id: 'map', label: 'Map (values 0-255, a comma between each; empty = straight line)', type: 'text', def: '' }],
+    run(E, img, q) {
+      const ph = q('phase'), m = String(q('map') || '').trim();
+      if (!m && !ph) return img;
+      const tb = fxMapTable(fxParseMap(m), ph); if (!tb) return img;
+      return fxTone(E, img, 12, { 0: [12, q('alpha'), tb.length / 3, 0] }, {}, null, E.data(tb));
+    } },
+  levelsic: { name: 'Levels (Individual Controls)', cat: 'Color', kernels: FXT_K, params: [
+      ...[['rgb', 'RGB'], ['red', 'Red'], ['green', 'Green'], ['blue', 'Blue'], ['alpha', 'Alpha']].flatMap(([k, n]) => [
+        { id: k + 'InBlack', label: `${n}: input black`, def: 0, min: 0, max: 255, dec: 0 },
+        { id: k + 'InWhite', label: `${n}: input white`, def: 255, min: 0, max: 255, dec: 0 },
+        { id: k + 'Gamma', label: `${n}: gamma`, def: 1, min: .1, max: 10, dec: 2 },
+        { id: k + 'OutBlack', label: `${n}: output black`, def: 0, min: 0, max: 255, dec: 0 },
+        { id: k + 'OutWhite', label: `${n}: output white`, def: 255, min: 0, max: 255, dec: 0 }]),
+      // Lumina works in 8 bits a channel, so "Off for 32 bpc color" clips (color_fx::levels_clip_on)
+      { id: 'clipBlack', label: 'Clip to output black', type: 'pick', def: 2, opts: [[0, 'Off'], [1, 'On'], [2, 'Off for 32 bpc color']] },
+      { id: 'clipWhite', label: 'Clip to output white', type: 'pick', def: 2, opts: [[0, 'Off'], [1, 'On'], [2, 'Off for 32 bpc color']] }],
+    run(E, img, q) {
+      const lv = ['rgb', 'red', 'green', 'blue', 'alpha'].map(k => [q(k + 'InBlack') / 255, q(k + 'InWhite') / 255, q(k + 'Gamma'), q(k + 'OutBlack') / 255, q(k + 'OutWhite') / 255]);
+      const ident = l => l[0] === 0 && l[1] === 1 && l[2] === 1 && l[3] === 0 && l[4] === 1;
+      if (lv.every(ident)) return img;
+      return fxTone(E, img, 1, { 0: [1, q('clipBlack') !== 0, q('clipWhite') !== 0, 0] }, {}, null, E.data(lv.flatMap(l => [...l, ident(l) ? 1 : 0])));
+    } },
+  cccolorneutralizer: { name: 'CC Color Neutralizer', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'shadowsUn', label: 'Shadows unbalance', type: 'color', def: '#000000' },
+      { id: 'shadowsBal', label: 'Shadows balance', type: 'color', def: '#000000' },
+      { id: 'midsUn', label: 'Midtones unbalance', type: 'color', def: '#808080' },
+      { id: 'midsBal', label: 'Midtones balance', type: 'color', def: '#808080' },
+      { id: 'hisUn', label: 'Highlights unbalance', type: 'color', def: '#ffffff' },
+      { id: 'hisBal', label: 'Highlights balance', type: 'color', def: '#ffffff' },
+      { id: 'pinning', label: 'Pinning %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'darks', label: 'Darks', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'brights', label: 'Brights', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'contrast', label: 'Contrast', def: 0, min: -100, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const f = {};
+      [['shadowsUn', 'shadowsBal'], ['midsUn', 'midsBal'], ['hisUn', 'hisBal']].forEach(([u, b], i) => { const U = q(u), B = q(b); f[i] = [B[0] - U[0], B[1] - U[1], B[2] - U[2], 0]; });
+      f[3] = [q('pinning') / 100, q('blend') / 100, q('contrast') / 100, 0]; f[4] = [q('darks') / 100, q('brights') / 100, 0, 0];
+      return fxTone(E, img, 23, {}, f);
+    } },
+  cckernel: { name: 'CC Kernel', cat: 'Color', kernels: FXT_K, params: [
+      ...['Top left', 'Top', 'Top right', 'Left', 'Center', 'Right', 'Bottom left', 'Bottom', 'Bottom right'].map((n, i) =>
+        ({ id: 'k' + (i + 1), label: n, def: i === 4 ? 1 : 0, min: -10, max: 10, dec: 2 })),
+      { id: 'scale', label: 'Scale', def: 1, min: 0, max: 4, dec: 3 },
+      { id: 'offset', label: 'Offset', def: 0, min: -1, max: 1, dec: 3 },
+      { id: 'absolute', label: 'Absolute value', type: 'check', def: false }],
+    run(E, img, q) {
+      const k = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => q('k' + i)), sc = q('scale'), off = q('offset');
+      if (k.every((v, i) => v === (i === 4 ? 1 : 0)) && sc === 1 && off === 0) return img;
+      return fxTone(E, img, 11, { 0: [11, q('absolute'), 0, 0] }, { 0: k.slice(0, 4), 1: k.slice(4, 8), 2: [k[8], sc, off, 0] });
+    } },
+  // Color Link: colours the layer with one colour sampled from another layer (its own pixels, without masks or effects)
+  // or, with no source layer, from itself
+  colorlink: { name: 'Color Link', cat: 'Color', kernels: [['fx_pixel2', 'fp2_point']], params: [
+      { id: 'source', label: 'Source layer', type: 'pick', def: 0, opts: L => [[0, 'None (this layer)'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'sample', label: 'Sample', type: 'pick', def: 0, opts: LINK_SAMPLES.map((n, i) => [i, n]) },
+      { id: 'clip', label: 'Clip %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'stencil', label: 'Stencil original alpha', type: 'check', def: true },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Blending mode', type: 'pick', def: 0, opts: LINK_MODES.map(([n], i) => [i, n]) }],
+    run(E, img, q) {
+      const M = q('source') ? byId(q('source')) : null, how = q('sample'), op = clamp(q('opacity') / 100, 0, 1), st = q('stencil');
+      let R;
+      if (M && M !== E.L && DRAW[M.kind]) { const [a, b] = liveRange(M); if (E.T >= a && E.T < b) { const c = layerCanvas('link'); paintLayer(M, E.T, c.cx); R = fxGrab(c.cv); } }
+      const [c, sa] = fxSampleColor(R || E.read(img), how, q('clip') / 100);
+      if (how >= 6) return E.run('fx_pixel2', 'fp2_point', fxP({ 0: [4, st, 0, 0] }, { 0: [sa, op, 0, 0] }), img);
+      return E.run('fx_pixel2', 'fp2_point', fxP({ 0: [5, st, (LINK_MODES[q('mode')] || LINK_MODES[0])[1], 0] }, { 0: [c[0] * op, c[1] * op, c[2] * op, op] }), img);
+    } },
+  // Color Stabilizer: the Set button takes the playhead's frame as the reference; at other frames each channel is mapped so
+  // the sample points' colours match the reference's (EffectCraft reads the reference frame itself; Lumina keeps its samples)
+  colorstabilizer: { name: 'Color Stabilizer', cat: 'Color', kernels: FXT_K, params: [
+      { id: 'setref', type: 'btn', text: 'Set to playhead', label: f => f.ref ? `Reference frame: ${(+f.refT).toFixed(2)} s into the layer` : 'Reference frame: not set yet',
+        act(L, f) { f.refT = +(S.time - (L.start || 0)).toFixed(4); delete f.ref; render(); } },
+      { id: 'mode', label: 'Stabilize', type: 'pick', def: 0, opts: [[0, 'Brightness'], [1, 'Levels'], [2, 'Curves']] },
+      { id: 'blackPoint', label: 'Black point', type: 'pt', def: [.25, .75] },
+      { id: 'midPoint', label: 'Mid point', type: 'pt', def: [.5, .5], show: f => +(f.mode ?? 0) === 2 },
+      { id: 'whitePoint', label: 'White point', type: 'pt', def: [.75, .25], show: f => +(f.mode ?? 0) !== 0 },
+      { id: 'sampleSize', label: 'Sample size', def: 5, min: 1, max: 50, dec: 0 }],
+    run(E, img, q) {
+      const f = E.fx; if (f.refT == null) return img;
+      const R = E.read(img, 1e9), r = Math.max(.5, q('sampleSize')) * E.sc;   // half-size of the square, in layer pixels
+      const cur = ['blackPoint', 'midPoint', 'whitePoint'].map(k => fxSampleMean(R, q(k), r));
+      if (Math.abs(E.t - f.refT) < .5 / S.fps) f.ref = cur;   // on the reference frame the samples are the reference
+      if (!f.ref) return img;
+      const maps = fxStabMaps(cur, f.ref, q('mode')), d = [];
+      for (const m of maps) { d.push(m.length); for (let i = 0; i < 5; i++) d.push(...(m[i] || [0, 0])); }
+      return fxTone(E, img, 24, {}, {}, null, E.data(d));
+    } },
+  // ---- Round 10: Lumetri Color (Lumina's shaders/lumina_lumetri.wgsl, a port of EffectCraft's CPU Lumetri in color3.rs).
+  //      Its settings are long, so a Show menu picks the section; the LUT menus list Lumina's looks and any loaded .cube files ----
+  lumetri: { name: 'Lumetri Color', cat: 'Color', kernels: LMT_K, params: LMT_PARAMS,
+    run(E, img, q) {
+      const P = k => q(k) / 100, F = 'lumina_lumetri';
+      const off = k => { const c = q(k), l = (c[0] + c[1] + c[2]) / 3; return c.map(v => v - l); };
+      const hdr = q('hdr'), look = q('look'), zero = v => v.every(x => x === 0);
+      const d = [P('temperature'), P('tint'), 2 ** q('exposure'), P('contrast'), P('highlights'), P('shadows'), P('whites'), P('blacks'), P('saturation'),
+        P('intensity'), P('faded'), P('vibrance'), P('csat'), clamp(.5 + .25 * P('tintBalance'), .05, .95), ...off('shadowTint'), ...off('highlightTint'),
+        ...LMT_TONES.map(([k]) => P(k)), ...off('wheelShadows'), ...off('wheelMids'), ...off('wheelHighs'),
+        hdr ? Math.max(.01, P('hdrWhite')) : 1, hdr ? P('hdrSpecular') : 0, look];
+      while (d.length < 64) d.push(-1);
+      const tab = a => { const o = d.length; for (const v of a) d.push(v); return o; };
+      const lut = id => { const l = id && LUTS[id]; return l ? tab([l.N, ...l.data]) : -1; };
+      d[44] = lut(q('inLut')); d[45] = look === 1 ? lut(q('lookLut')) : -1;
+      LMT_RGB.forEach(([k], i) => { const c = fxCurveFC(q(k)); d[46 + i] = c ? tab([c.xs[0], c.ys[0], c.ms[0], c.xs.at(-1), c.ys.at(-1), c.ms.at(-1), ...c.lut]) : -1; });
+      LMT_HS.forEach(([k, , per], i) => { const c = fxOffsetCurve(q(k), per); d[50 + i] = c ? tab(c) : -1; });
+      const creative = d[9] !== 0 && (look >= 2 || d[45] >= 0 || d[10] !== 0 || d[11] !== 0 || d[12] !== 1 || !zero(d.slice(14, 20)));
+      const grade = d[44] >= 0 || !zero([d[0], d[1], d[3], ...d.slice(4, 8), ...d.slice(20, 41), d[42]]) || d[2] !== 1 || d[8] !== 1 || creative || d.slice(46, 55).some(v => v >= 0);
+      let out = grade ? E.run(F, 'llm_grade', fxP(), img, null, null, E.data(d)) : img;
+      // HSL Secondary: key the graded colour, refine the matte, correct through it
+      const show = q('showMask'), sw = off('secWheel'), sec = [P('secTemp'), P('secTint'), P('secContrast'), P('secSat')];
+      const secOn = show || sec[0] || sec[1] || sec[2] || sec[3] !== 1 || P('secSharpen') || !zero(sw);
+      let mask = null;
+      if (secOn) {
+        mask = E.run(F, 'llm_key', fxP({}, { 0: [q('hueCenter'), q('hueRange'), q('hueSoft'), q('hueOn')], 1: [P('satLow'), P('satHigh'), P('satSoft'), q('satOn')],
+          2: [P('lightLow'), P('lightHigh'), P('lightSoft'), q('lightOn')] }), out);
+        const dn = P('denoise'), bl = P('blur');
+        if (dn > 0) { const s = E.px(dn * 3); mask = E.run(F, 'llm_matte', fxP({}, { 0: [1 + dn * 2, 0, 0, 0] }), fxGauss(E, mask, s, s, true)); }
+        if (bl > 0) { const s = E.px(bl * 10); mask = fxGauss(E, mask, s, s, true); }
+        if (q('invert')) mask = E.run(F, 'llm_matte', fxP({ 0: [1, 0, 0, 0] }, { 0: [1, 0, 0, 0] }), mask);
+      }
+      const vig = q('vigAmount');
+      if (mask || vig) {
+        const [x, y, w, h] = E.rect;
+        out = E.run(F, 'llm_final', fxP({ 0: [!!mask, show, q('maskStyle'), vig !== 0] }, { 0: sec, 1: [...sw, 0], 2: [vig, P('vigMid') * .9, P('vigRound'), P('vigFeather')],
+          3: [x + w / 2, y + h / 2, w / 2, h / 2], 4: [w / Math.max(h, 1e-6), 0, 0, 0] }), out, mask);
+      }
+      const sh = P('sharpen'), ss = show ? 0 : P('secSharpen');
+      if (sh || (ss && mask)) out = E.run(F, 'llm_sharpen', fxP({ 0: [ss && mask ? 1 : 0, 0, 0, 0] }, { 0: [sh, ss, E.px(1), 0] }), out, mask);
+      return out;
     } },
   // ---- C4: anime VFX (Lumina's own shaders, shaders/lumina_vfx.wgsl), each can fire on beats, impacts or bookmarks ----
   rgbsplit: { name: 'RGB Split', cat: 'Anime VFX', kernels: VFX_K('lvx_rgbsplit'), params: [
@@ -3004,6 +3657,71 @@ function fxCurve(pts) {
   };
   return { xs, ys, ms, lut: Array.from({ length: 1025 }, (_, i) => clamp(ev(i / 1024), 0, 1)) };
 }
+// Lumetri's curves are typed as control points "x,y x,y …" (0..1, spaces or ';' between points)
+function fxPoints(str, firstComma) {
+  const pts = [];
+  for (const t of String(str || '').split(/[\s;]+/)) {
+    if (!t) continue;
+    const i = t.indexOf(','); if (i < 0) continue;
+    const xs = t.slice(0, i).trim(), ys = firstComma ? t.slice(i + 1).trim() : t.slice(i + 1).split(',')[0].trim();
+    const x = xs === '' ? NaN : Number(xs), y = ys === '' ? NaN : Number(ys);
+    if (Number.isFinite(x) && Number.isFinite(y)) pts.push([x, y]);
+  }
+  pts.sort((a, b) => a[0] - b[0]);
+  return pts.filter((p, i, a) => !i || Math.abs(p[0] - a[i - 1][0]) >= 1e-6);
+}
+// color2::Curve::parse: a monotone cubic (Fritsch-Carlson) through the points, straight beyond the ends; null when it's
+// the identity. { xs, ys, ms, lut: 1025 values over 0..1 }
+function fxCurveFC(str) {
+  const pts = fxPoints(str, false);
+  if (pts.length < 2 || pts.every(([x, y]) => Math.abs(x - y) < 1e-6)) return null;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), n = xs.length;
+  const d = xs.slice(0, -1).map((x, k) => (ys[k + 1] - ys[k]) / (xs[k + 1] - x)), ms = Array(n).fill(0);
+  ms[0] = d[0]; ms[n - 1] = d[n - 2];
+  for (let k = 1; k < n - 1; k++) ms[k] = d[k - 1] * d[k] <= 0 ? 0 : (d[k - 1] + d[k]) / 2;
+  for (let k = 0; k < n - 1; k++) {
+    if (Math.abs(d[k]) < 1e-12) { ms[k] = 0; ms[k + 1] = 0; continue; }
+    const a = ms[k] / d[k], b = ms[k + 1] / d[k], s = a * a + b * b;
+    if (s > 9) { const t = 3 / Math.sqrt(s); ms[k] = t * a * d[k]; ms[k + 1] = t * b * d[k]; }
+  }
+  const ev = x => {
+    if (x <= xs[0]) return ys[0] + (x - xs[0]) * ms[0];
+    if (x >= xs[n - 1]) return ys[n - 1] + (x - xs[n - 1]) * ms[n - 1];
+    let k = 0; while (k < n - 2 && xs[k + 1] <= x) k++;
+    const h = xs[k + 1] - xs[k], t = (x - xs[k]) / h, t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ys[k] + (t3 - 2 * t2 + t) * h * ms[k] + (-2 * t3 + 3 * t2) * ys[k + 1] + (t3 - t2) * h * ms[k + 1];
+  };
+  return { xs, ys, ms, lut: Array.from({ length: 1025 }, (_, i) => ev(i / 1024)) };
+}
+// color3::OffsetCurve::parse: a hue / saturation curve (y 0.5 = no change) as 513 offsets from 0.5 over 0..1; hue curves
+// wrap round; null when it's flat
+function fxOffsetCurve(str, periodic) {
+  const pts = fxPoints(str, true);
+  if (!pts.length || pts.every(p => Math.abs(p[1] - .5) < 1e-6)) return null;
+  let ext = [];
+  if (periodic) {
+    const w = pts.map(([x, y]) => [x - Math.floor(x), y]).sort((a, b) => a[0] - b[0]);
+    for (let k = -1; k <= 1; k++) for (const [x, y] of w) ext.push([x + k, y]);
+  } else {
+    const [x0, y0] = pts[0], [x1, y1] = pts[pts.length - 1];
+    ext = [[Math.min(x0, 0) - 2, y0], [Math.min(x0, 0) - 1, y0], ...pts, [Math.max(x1, 1) + 1, y1], [Math.max(x1, 1) + 2, y1]];
+  }
+  const n = ext.length, slope = k => (ext[k + 1][1] - ext[k][1]) / Math.max(ext[k + 1][0] - ext[k][0], 1e-6);
+  const m = ext.map((_, k) => {
+    if (k === 0 || k === n - 1) return 0;
+    const a = slope(k - 1), b = slope(k);
+    if (a * b <= 0) return 0;
+    const lim = 3 * Math.min(Math.abs(a), Math.abs(b));
+    return clamp((a + b) / 2, -lim, lim);
+  });
+  const ev = x => {
+    let k = 0; while (k < n && ext[k][0] <= x) k++;
+    k = Math.min(Math.max(k - 1, 0), n - 2);
+    const [xa, ya] = ext[k], [xb, yb] = ext[k + 1], h = Math.max(xb - xa, 1e-6), t = clamp((x - xa) / h, 0, 1), t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ya + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * yb + (t3 - t2) * h * m[k + 1];
+  };
+  return Array.from({ length: 513 }, (_, i) => pts.length === 1 ? pts[0][1] - .5 : ev(i / 512) - .5);
+}
 // misc::unsharp_core: push each colour away from its blurred self (changes below Threshold, in 0-255 steps, are left alone)
 function fxUnsharp(E, img, amount, sigma, thr) {
   return E.run('fx_noise', 'fxn_unsharp', fxP({}, { 0: [amount, thr, 0, 0] }), img, fxGauss(E, img, sigma, sigma, true));
@@ -3047,7 +3765,7 @@ function addFX(L, id) {
   for (const d of D.params) {
     if (!d.type) L.p[fxKey(f, d.id)] = d.def;
     else if (d.type === 'pt') { L.p[fxKey(f, d.id + 'X')] = d.def[0]; L.p[fxKey(f, d.id + 'Y')] = d.def[1]; }
-    else f[d.id] = typeof d.def === 'function' ? d.def(L) : d.def;
+    else if (d.type !== 'btn') f[d.id] = typeof d.def === 'function' ? d.def(L) : d.def;
   }
   (L.fx ||= []).push(f); fxRegister(L); fxWarm(id);
   return f;
@@ -3069,7 +3787,12 @@ function fxPanel(L) {
       if (!d.type) return propRow(L, fxKey(f, d.id));
       if (d.type === 'pt') return propRow(L, fxKey(f, d.id + 'X')) + propRow(L, fxKey(f, d.id + 'Y'));
       const id = `fx-${f.uid}-${d.id}`, v = f[d.id];
-      if (d.type === 'pick') return `<div class="frow"><label for="${id}">${d.label}</label><select id="${id}" data-fxi="${i}" data-fxk="${d.id}" data-num>${selectOpts(d.opts, +v)}</select></div>`;
+      if (d.type === 'pick') return `<div class="frow"><label for="${id}">${d.label}</label><select id="${id}" data-fxi="${i}" data-fxk="${d.id}"${d.str ? '' : ' data-num'}>${selectOpts(typeof d.opts === 'function' ? d.opts(L) : d.opts, d.str ? (v ?? '') : +v)}</select></div>`;
+      if (d.type === 'curve') return `<div class="fxcurve"><div class="fxcurve-head"><span>${esc(d.label)}</span><button data-act="fxcurvereset" data-fx="${i}" data-k="${d.id}">Reset</button></div>
+        <canvas class="curvebox" data-fxi="${i}" data-fxk="${d.id}" title="Drag a point to move it, click to add one, double-click a point to remove it"></canvas>
+        <div class="frow"><label for="${id}">Points</label><input id="${id}" type="text" data-fxi="${i}" data-fxk="${d.id}" value="${esc(curveStr(L, f, d))}" spellcheck="false"></div></div>`;
+      if (d.type === 'text') return `<div class="frow"><label for="${id}">${d.label}</label><input id="${id}" type="text" data-fxi="${i}" data-fxk="${d.id}" value="${esc(v ?? '')}" spellcheck="false"></div>`;
+      if (d.type === 'btn') return `<div class="frow"><label>${esc(typeof d.label === 'function' ? d.label(f) : d.label)}</label><button data-act="fxbtn" data-fx="${i}" data-k="${d.id}">${esc(d.text)}</button></div>`;
       if (d.type === 'check') return `<div class="frow"><label for="${id}">${d.label}</label><label><input id="${id}" type="checkbox" data-fxi="${i}" data-fxk="${d.id}"${v ? ' checked' : ''}> On</label></div>`;
       return `<div class="frow"><label for="${id}">${d.label}</label><input id="${id}" type="color" data-fxi="${i}" data-fxk="${d.id}" value="${v}"></div>`;
     }).join('');
@@ -3811,22 +4534,26 @@ function drawLayerOnly(L, t, idx) {
   r.box = DRAW[L.kind](L, t) || { w: 0, h: 0 };
   ctx.restore();
 }
+// Save as image can ask for a frame with a see-through background (RENDER.alpha), or one layer on its own (RENDER.only,
+// for the layers of a PSD: no background, impacts or whole-video look, which belong to the whole picture)
+let RENDER = {};
 function render(t = S.time) {
   renderT = t; transTok++;
-  const w = W(), h = H(), k = impactAt(t);
+  const only = RENDER.only, w = W(), h = H(), k = only ? { flash: 0, shake: 0, zoom: 0 } : impactAt(t);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.filter = 'none';
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
-  drawCanvasBg(t, w, h);
+  if (RENDER.alpha || only || S.global.bg === 'none') ctx.clearRect(0, 0, w, h);
+  else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h); drawCanvasBg(t, w, h); }
   ctx.save();
   if (k.shake > 0 || k.zoom > 0) {
     ctx.translate(w / 2 + (Math.random() - .5) * 40 * k.shake * h / 1080, h / 2 + (Math.random() - .5) * 40 * k.shake * h / 1080);
     ctx.scale(1 + .08 * k.zoom, 1 + .08 * k.zoom); ctx.translate(-w / 2, -h / 2);
   }
-  for (let i = S.layers.length - 1; i >= 0; i--) if (!isMatteFor(i)) drawLayer(S.layers[i], t, i);
+  for (let i = S.layers.length - 1; i >= 0; i--) if (!isMatteFor(i) && (!only || S.layers[i] === only)) drawLayer(S.layers[i], t, i);
   ctx.restore();
+  if (only) return;
   if (S.global.grade !== 'none') {
-    copyToTmp(); ctx.filter = GRADES[S.global.grade]; ctx.drawImage(tmp, 0, 0); ctx.filter = 'none';
+    copyToTmp(); if (RENDER.alpha || S.global.bg === 'none') ctx.clearRect(0, 0, w, h); ctx.filter = GRADES[S.global.grade]; ctx.drawImage(tmp, 0, 0); ctx.filter = 'none';
   }
   if (S.global.vignette > 0) {
     const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * .35, w / 2, h / 2, Math.hypot(w, h) / 2);
@@ -4331,6 +5058,7 @@ function drawLoadingNote() {
 function drawOverlay() {
   octx.setTransform(1, 0, 0, 1, 0, 0); octx.clearRect(0, 0, ov.width, ov.height);
   drawBookmarkNotes(); drawLoadingNote();
+  if (CROP) { drawCrop(); return; }
   const L = selLayer(), r = L && RT[L.id];
   if (!r || !r.m || S.exporting) return;
   const k = ov.width / W();
@@ -5420,6 +6148,76 @@ $('#inspector').addEventListener('dblclick', e => {
   else { const [u, v] = vcPt(cv, px, py, w); if (u <= .005 || u >= .995 || pts.some(p => Math.abs(p[0] - u) < .005)) return; pts.push([u, v]); }
   const rb = rippleSpans(); vcSet(L, pts); rippleFinish(rb); commit(); refresh();
 });
+// ---- Round 6 leftovers: curve graphs for Curves and Lumetri Color. A curve is stored as text, "x,y x,y …" (0..1).
+// Modes: 'natural' (Curves: a natural spline), 'fc' (Lumetri's RGB curves: a monotone cubic), 'hue' / 'flat' (Lumetri's
+// hue / saturation curves: the middle line is no change, hue curves wrap round)
+const CURVE_INK = { rgb: '#e8e8e8', red: '#ff6464', green: '#5adc6e', blue: '#6496ff', hue: '#ffd25a' };
+const curveTone = d => d.mode === 'natural' || d.mode === 'fc';
+function curveStr(L, f, d) { const v = f[d.id]; return v || (d.fallback ? d.fallback(L, f) : '') || (curveTone(d) ? d.def || '0,0 1,1' : ''); }
+function curvePts(d, str) { const p = fxPoints(str, !curveTone(d)); return p.length || !curveTone(d) ? p : [[0, 0], [1, 1]]; }
+const curveText = pts => pts.map(([x, y]) => `${+x.toFixed(4)},${+y.toFixed(4)}`).join(' ');
+function curveYs(d, str, n = 256) {
+  if (!curveTone(d)) { const o = fxOffsetCurve(str, d.mode === 'hue'); return Array.from({ length: n + 1 }, (_, i) => .5 + (o ? o[Math.round(i * 512 / n)] : 0)); }
+  const pts = curvePts(d, str), c = d.mode === 'natural' ? fxCurve(pts) : fxCurveFC(curveText(pts));
+  return Array.from({ length: n + 1 }, (_, i) => c ? c.lut[Math.round(i * 1024 / n)] : i / n);
+}
+function curveCtx(cv) {
+  const L = selLayer(), f = L?.fx?.[+cv.dataset.fxi], d = f && FX[f.id]?.params.find(x => x.id === cv.dataset.fxk);
+  return d ? { L, f, d } : null;
+}
+function drawCurveBox(cv) {
+  const g = curveCtx(cv); if (!g) return;
+  const { L, f, d } = g, dpr = devicePixelRatio || 1, w = Math.max(60, Math.round(cv.clientWidth * dpr)) || 240, h = w;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const x = cv.getContext('2d'), str = curveStr(L, f, d), ink = CURVE_INK[d.color] || CURVE_INK.rgb, X = u => u * w, Y = v => (1 - v) * h;
+  x.clearRect(0, 0, w, h);
+  if (d.mode === 'hue') { const gr = x.createLinearGradient(0, 0, w, 0); for (let k = 0; k <= 6; k++) gr.addColorStop(k / 6, `hsl(${k * 60},80%,55%)`); x.fillStyle = gr; x.globalAlpha = .35; x.fillRect(0, h - 8 * dpr, w, 8 * dpr); x.globalAlpha = 1; }
+  x.strokeStyle = 'rgba(128,128,128,.25)'; x.lineWidth = dpr;
+  for (let k = 1; k < 4; k++) { x.beginPath(); x.moveTo(X(k / 4), 0); x.lineTo(X(k / 4), h); x.moveTo(0, Y(k / 4)); x.lineTo(w, Y(k / 4)); x.stroke(); }
+  x.setLineDash([4 * dpr, 3 * dpr]); x.beginPath();
+  if (curveTone(d)) { x.moveTo(0, h); x.lineTo(w, 0); } else { x.moveTo(0, Y(.5)); x.lineTo(w, Y(.5)); }
+  x.stroke(); x.setLineDash([]);
+  const ys = curveYs(d, str); x.strokeStyle = ink; x.lineWidth = 2 * dpr; x.beginPath();
+  ys.forEach((v, i) => { const px = X(i / (ys.length - 1)), py = Y(clamp(v, -.05, 1.05)); i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke();
+  x.fillStyle = ink; x.strokeStyle = '#000';
+  for (const [u, v] of curvePts(d, str)) { x.beginPath(); x.rect(X(u) - 4 * dpr, Y(v) - 4 * dpr, 8 * dpr, 8 * dpr); x.fill(); x.stroke(); }
+}
+function drawCurveBoxes() { document.querySelectorAll('#inspector canvas.curvebox').forEach(drawCurveBox); }
+function fxcAt(e, cv) { const r = cv.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp(1 - (e.clientY - r.top) / r.height, 0, 1), r]; }
+function fxcNear(pts, u, v, r) { let bi = -1, bd = 10; pts.forEach(([x, y], i) => { const dd = Math.hypot((x - u) * r.width, (y - v) * r.height); if (dd < bd) { bd = dd; bi = i; } }); return bi; }
+function curveApply(g, pts) {
+  g.f[g.d.id] = curveText(pts.slice().sort((a, b) => a[0] - b[0]));
+  const t = document.querySelector(`#inspector input[type=text][data-fxi="${g.cv.dataset.fxi}"][data-fxk="${g.d.id}"]`); if (t) t.value = g.f[g.d.id];
+  drawCurveBox(g.cv); render();
+}
+let curveDrag = null;
+$('#inspector').addEventListener('pointerdown', e => {
+  const cv = e.target.closest?.('canvas.curvebox'); if (!cv) return;
+  const g = curveCtx(cv); if (!g) return;
+  e.preventDefault();
+  const [u, v, r] = fxcAt(e, cv), pts = curvePts(g.d, curveStr(g.L, g.f, g.d)).map(p => [...p]);
+  let i = fxcNear(pts, u, v, r);
+  if (i < 0) { pts.push([u, v]); i = pts.length - 1; }
+  curveDrag = { ...g, cv, pts, p: pts[i] };
+  try { cv.setPointerCapture(e.pointerId); } catch {}
+  curveApply(curveDrag, pts);
+});
+$('#inspector').addEventListener('pointermove', e => {
+  if (!curveDrag) return;
+  const [u, v] = fxcAt(e, curveDrag.cv); curveDrag.p[0] = u; curveDrag.p[1] = v;
+  // two points can't share a place along the curve
+  if (curveDrag.pts.some(q => q !== curveDrag.p && Math.abs(q[0] - u) < .004)) curveDrag.p[0] = clamp(u + .004, 0, 1);
+  curveApply(curveDrag, curveDrag.pts);
+});
+$('#inspector').addEventListener('pointerup', () => { if (curveDrag) { curveDrag = null; commit(); } });
+$('#inspector').addEventListener('dblclick', e => {
+  const cv = e.target.closest?.('canvas.curvebox'); if (!cv) return;
+  const g = curveCtx(cv); if (!g) return;
+  const [u, v, r] = fxcAt(e, cv), pts = curvePts(g.d, curveStr(g.L, g.f, g.d)).map(p => [...p]), i = fxcNear(pts, u, v, r);
+  if (i < 0 || (curveTone(g.d) && pts.length <= 2)) return;
+  pts.splice(i, 1); curveApply({ ...g, cv }, pts); commit();
+});
+$('#inspector').addEventListener('input', e => { if (e.target.matches?.('input[type=text][data-fxk]')) drawCurveBoxes(); });
 // ---- C14: graph editor. Shapes the move from the picked keyframe to the next one with two bezier handles.
 // Along is time (picked key to next key), up is how far the value has got (0 = this key's value, 1 = the next's).
 function keySeg(L, k) {
@@ -5557,7 +6355,7 @@ function soundPanel(L) {
 function inspector() {
   const L = selLayer(), g = S.global, imp = S.impacts.find(m => m.id === S.sel);
   $('#ecTab').textContent = L && fxAllowed(L) ? `Effect Controls: ${L.name}` : 'Effect Controls';
-  if (RTAB === 'fx') { $('#inspector').innerHTML = ecView(L); return; }
+  if (RTAB === 'fx') { $('#inspector').innerHTML = ecView(L); lockInspector(L); drawCurveBoxes(); return; }
   let h = '';
   const bm = selBookmark();
   if (bm) h = bookmarkPanel(bm);
@@ -5604,15 +6402,16 @@ function inspector() {
     h += `<div class="group"><h3>Arrange</h3>${L.track != null ? `<p class="empty">On a shared track with ${trackOf(L).length - 1} other clip${trackOf(L).length === 2 ? '' : 's'}. Drag it onto another row to move it there.</p>` : '<p class="empty">Drag a clip up or down onto another clip\'s row to put them on one track.</p>'}
       <div class="row"><button data-act="up">Bring forward</button><button data-act="down">Send back</button><button data-act="dup">Duplicate</button><button data-act="del">Delete</button>${L.track != null ? '<button data-act="ownrow" title="Take this clip off the shared track, onto a row of its own">Own track</button>' : ''}</div></div>`;
   }
-  h += `<div class="group"><h3>Whole video</h3>
+  h += `<div class="group"><h3>${isStill() ? 'Whole picture' : 'Whole video'}</h3>
     <div class="frow"><label for="g-grade">Color look</label><select id="g-grade" data-g="grade">${selectOpts(Object.keys(GRADES).map(k => [k, k[0].toUpperCase() + k.slice(1)]), g.grade)}</select></div>
     <div class="frow"><label for="g-vig">Vignette</label><input id="g-vig" type="range" min="0" max=".9" step=".01" value="${g.vignette}" data-g="vignette"></div>
     <div class="frow"><label for="g-lb">Cinema bars</label><input id="g-lb" type="range" min="0" max=".3" step=".01" value="${g.letterbox}" data-g="letterbox"></div></div>` + canvasBgPanel(g) +
-    `<div class="group"><h3>Timeline</h3><p class="empty">How clips move when you drag them on the timeline. Hold Shift while dragging to move freely for that drag.</p>
+    `<div class="group"${isStill() ? ' hidden' : ''}><h3>Timeline</h3><p class="empty">How clips move when you drag them on the timeline. Hold Shift while dragging to move freely for that drag.</p>
     <div class="frow"><label for="tl-step">Drag step</label><select id="tl-step" data-tl="step">${DRAG_STEPS.map(([v, l]) => `<option value="${v}"${TLSET.step === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     <div class="frow"><label for="tl-edge">Snap</label><label><input id="tl-edge" type="checkbox" data-tl="snapEdges"${TLSET.snapEdges ? ' checked' : ''}> To the edges of other clips</label></div>
     <div class="frow"><label for="tl-mark"></label><label><input id="tl-mark" type="checkbox" data-tl="snapMarks"${TLSET.snapMarks ? ' checked' : ''}> To the playhead, beats and bookmarks</label></div></div>`;
   $('#inspector').innerHTML = h;
+  lockInspector(L);
   drawCurveEditor(); drawKGraph();
 }
 const MATTES = [['none', 'None'], ['alpha', 'Inside the layer above'], ['alphaInv', 'Outside the layer above'], ['luma', 'Bright parts of layer above'], ['lumaInv', 'Dark parts of layer above']];
@@ -5934,6 +6733,8 @@ function action(a, b) {
   if (a === 'svgsplit' && L && MEDIA[L.media]?.parts?.length) splitSVG(L);
   if (a === 'svgplay' && L) { seek(L.start); play(); return; }
   if (a === 'fxdel' && L?.fx) delFX(L, +b.dataset.fx);
+  if (a === 'fxcurvereset' && L?.fx) { const f = L.fx[+b.dataset.fx], d = FX[f?.id]?.params.find(x => x.id === b.dataset.k); if (d) f[d.id] = d.mode === 'natural' || d.mode === 'fc' ? '0,0 1,1' : ''; }
+  if (a === 'fxbtn' && L?.fx) { const f = L.fx[+b.dataset.fx]; FX[f?.id]?.params.find(d => d.id === b.dataset.k)?.act?.(L, f); }
   if ((a === 'fxup' || a === 'fxdn') && L?.fx) { const i = +b.dataset.fx, j = a === 'fxup' ? i - 1 : i + 1; if (L.fx[j]) [L.fx[i], L.fx[j]] = [L.fx[j], L.fx[i]]; }
   if (a === 'sel3d') { S.sel = +b.dataset.id; S.selKey = null; refresh(); return; }
   if (a === 'smgo' && L) { pause(); seek(L.start + L.slowmos[+b.dataset.sm].t); return; }
@@ -6185,7 +6986,9 @@ function del() {
   if (S.impacts.some(m => m.id === S.sel)) S.impacts = S.impacts.filter(m => m.id !== S.sel);
   else {
     // every selected clip goes, in one undo step, and with Ripple on the gaps close together
-    const gone = selLayers(); if (!gone.length) return; const rb = rippleSpans();
+    const all = selLayers(), gone = all.filter(L => !L.locked);
+    if (!gone.length) { if (all.length) notice('That layer is locked. Unlock it in the Layers panel first.'); return; }
+    const rb = rippleSpans();
     for (const L of gone) { RT[L.id]?.el?.pause?.(); delete RT[L.id]; }
     S.layers = S.layers.filter(x => !gone.includes(x)); tidyLinks(); rippleFinish(rb);
   }
@@ -6205,7 +7008,8 @@ function toast(msg) {
 function refresh() {
   $('#drop').hidden = S.layers.length > 0;
   $('#btnExport').disabled = !S.layers.length;
-  buildTimeline(); inspector(); projectPanel(); quickBar();
+  syncStill();
+  buildTimeline(); inspector(); projectPanel(); quickBar(); layersPanel();
 }
 
 // ---------- export ----------
@@ -6226,21 +7030,33 @@ const EXPORT_FORMATS = [
   ['vob', 'VOB', '.vob', 'DVD video. Resized to DVD size (720×480, or 720×576 at 25/50 fps).'],
   ['ogv', 'OGV', '.ogv', 'Ogg video, an open-source alternative. Slower to save.']
 ];
-// a radio list of formats in the modal; remembers the last pick under `key`
-function formatPicker({ title, text, go, formats, key, def, onGo }) {
-  let last = def; try { last = localStorage.getItem(key) || def; } catch {}
-  if (!formats.some(f => f[0] === last)) last = def;
+// a radio list of formats in the modal; remembers the last pick under `key`. With `tabs` ([{ id, label, text, formats,
+// def, extra, wire }]), the formats are split into tabs along the top, each with its own text and settings; the open tab
+// is remembered too.
+function formatPicker({ title, text, go, formats, key, def, onGo, extra = '', wire, tabs }) {
+  const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+  tabs ||= [{ id: 'all', text, formats, def, extra, wire }];
+  let tab = tabs.find(t => t.id === ls(key + '.tab', '')) || tabs.find(t => t.formats.some(f => f[0] === ls(key, def))) || tabs[0];
   $('#modal .box').classList.add('wide');
   $('#mTitle').textContent = title; $('#mBarWrap').hidden = true;
-  $('#mText').innerHTML = text +
-    '<div class="fmts">' + formats.map(([id, name, ext, note]) =>
-      `<label class="fmt"><input type="radio" name="fmt" value="${id}"${id === last ? ' checked' : ''}><b>${name}<span>${ext}</span></b><small>${note}</small></label>`).join('') + '</div>';
+  const show = t => {
+    tab = t;
+    let last = ls(key + '.' + t.id, ls(key, t.def ?? t.formats[0][0]));
+    if (!t.formats.some(f => f[0] === last)) last = t.def ?? t.formats[0][0];
+    $('#mText').innerHTML = (tabs.length > 1 ? '<div class="ftabs" role="tablist">' + tabs.map(x => `<button type="button" role="tab" data-ftab="${x.id}" aria-selected="${x === t}"${x === t ? ' class="on"' : ''}>${x.label}<span>${x.formats.length}</span></button>`).join('') + '</div>' : '')
+      + `<p class="ftext">${t.text}</p><div class="fmts">` + t.formats.map(([id, name, ext, note]) =>
+        `<label class="fmt"><input type="radio" name="fmt" value="${id}"${id === last ? ' checked' : ''}><b>${name}<span>${ext}</span></b><small>${note}</small></label>`).join('') + '</div>'
+      + (typeof t.extra === 'function' ? t.extra() : t.extra || '');
+    $('#mText').onchange = $('#mText').oninput = null; t.wire?.();
+    $('#mText').querySelectorAll('[data-ftab]').forEach(b => b.onclick = () => { try { localStorage.setItem(key + '.tab', b.dataset.ftab); } catch {} show(tabs.find(x => x.id === b.dataset.ftab)); });
+  };
+  show(tab);
   $('#mRow').innerHTML = `<button class="primary" id="mGo">${go}</button><button id="mOk">Cancel</button>`;
   $('#modal').hidden = false;
   $('#mOk').onclick = () => { $('#modal').hidden = true; $('#modal .box').classList.remove('wide'); };
   $('#mGo').onclick = () => {
     const fmt = $('#mText input[name=fmt]:checked').value;
-    try { localStorage.setItem(key, fmt); } catch {}
+    try { localStorage.setItem(key, fmt); localStorage.setItem(key + '.' + tab.id, fmt); localStorage.setItem(key + '.tab', tab.id); } catch {}
     $('#modal .box').classList.remove('wide');
     onGo(fmt);
   };
@@ -6253,10 +7069,310 @@ function chooseExport() {
 // Save as: the project file, or any of the video formats (which runs the export)
 function chooseSaveAs() {
   if (!window.lumina) return saveProject(true);
-  formatPicker({ title: 'Save as', go: 'Save', key: 'lumina.saveAsFormat', def: 'lumina',
-    formats: [['lumina', 'Lumina project', '.lumina', 'Keeps every layer, keyframe and effect so you can keep editing later.'], ...EXPORT_FORMATS],
-    text: 'Save the project to keep editing it, or save the finished video. A video is recorded once in real time, then saved in that format.',
-    onGo: fmt => fmt === 'lumina' ? ($('#modal').hidden = true, saveProject(true)) : startExport(fmt) });
+  const tag = (p, list) => list.map(([id, ...rest]) => [p + id, ...rest]);
+  formatPicker({ title: 'Save as', go: 'Save', key: 'lumina.saveAsFormat', def: 'lumina', tabs: [
+    { id: 'project', label: 'Project', def: 'lumina', formats: [['lumina', 'Lumina project', '.lumina', 'Keeps every layer, keyframe and effect so you can keep editing later.']],
+      text: 'Save the project to keep editing it later.' },
+    { id: 'video', label: 'Video', def: 'mp4', formats: EXPORT_FORMATS,
+      text: 'The finished video. Lumina plays your edit once in real time to record it, then saves it in this format.' },
+    { id: 'image', label: 'Image', def: 'img:png', formats: tag('img:', IMAGE_FORMATS),
+      text: `The frame at the playhead (${fmt(S.time)}) as a picture, at the full size of the video (${W()}×${H()}).`, extra: imageOptionsHTML, wire: imageOptionsWire },
+    { id: 'anim', label: 'Moving image', def: 'anim:gif', formats: tag('anim:', ANIM_FORMATS),
+      text: 'A moving picture (GIF, WebP, APNG), or one picture per frame, from part of the edit.', extra: animOptionsHTML, wire: animOptionsWire }],
+    onGo: f => f === 'lumina' ? ($('#modal').hidden = true, saveProject(true))
+      : f.startsWith('img:') ? saveFrameImage(f.slice(4), imageOptionsRead())
+      : f.startsWith('anim:') ? saveAnimation(f.slice(5), animOptionsRead())
+      : startExport(f) });
+}
+// ---------- Save as image (PhotoCraft Round 1): the frame at the playhead, in any image format ----------
+// [id, name, extensions, note, { q: has a quality setting, a: can keep a see-through background }]
+const IMAGE_FORMATS = [
+  ['png', 'PNG', '.png', 'Lossless, keeps transparency. Best for logos, graphics and screenshots.', { a: 1 }],
+  ['jpg', 'JPEG', '.jpg, .jpeg', 'Small files for photos, the web and social media. Lossy, no transparency.', { q: 1 }],
+  ['webp', 'WebP', '.webp', 'Google\'s web format: smaller than JPEG and PNG, keeps transparency. Quality 100 is lossless.', { q: 1, a: 1 }],
+  ['avif', 'AVIF', '.avif', 'Newest web format (AV1): the smallest files for the quality. Slower to save.', { q: 1 }],
+  ['heic', 'HEIC / HEIF', '.heic', 'The iPhone photo format: high quality in small files.', { q: 1 }],
+  ['gif', 'GIF', '.gif', '256 colours, for memes and simple web graphics. See-through parts are on or off.', { a: 1 }],
+  ['tiff', 'TIFF', '.tif, .tiff', 'Lossless, for printing and archiving at full quality.', { a: 1 }],
+  ['psd', 'Photoshop (PSD)', '.psd', 'Every layer stays its own layer, with its name and blend mode, ready to edit in Photoshop.', { a: 1 }],
+  ['bmp', 'BMP', '.bmp', 'Uncompressed Windows bitmap. Big files.', { a: 1 }],
+  ['pdf', 'PDF', '.pdf', 'For sharing and printing. The picture is on one page, 1 pixel = 1 point.', {}],
+  ['svg', 'SVG', '.svg', 'Opens anywhere SVG does (web, Illustrator, Inkscape). Holds the frame as a picture, not as shapes.', { a: 1 }],
+  ['eps', 'EPS', '.eps', 'For print and older design apps. Holds the frame as a picture.', {}],
+  ['ai', 'Illustrator (AI)', '.ai', 'Opens in Illustrator. A PDF-compatible .ai file holding the frame as a picture.', {}],
+  ['ico', 'ICO', '.ico', 'A Windows icon, up to 256×256 pixels.', { a: 1 }],
+  ['tga', 'TGA', '.tga', 'Targa, used by games and 3D apps.', { a: 1 }],
+  ['jp2', 'JPEG 2000', '.jp2', 'Used for archives, medical and cinema images. Quality 100 is lossless.', { q: 1, a: 1 }]
+];
+const IMG_NOTE = 'RAW files (NEF, CR2…) are what a camera\'s sensor records, so they can be opened but never made from an edit.';
+function imageOptionsHTML() {
+  let q = 90, a = false; try { q = +(localStorage.getItem('lumina.imgQuality') || 90); a = localStorage.getItem('lumina.imgAlpha') === '1'; } catch {}
+  if (S.global.bg === 'none') a = true;   // a see-through picture stays see-through
+  return `<div class="imgopts" id="imgOpts">
+    <div class="frow" id="imgQRow"><label for="img-q">Quality</label><input id="img-q" type="range" min="1" max="100" step="1" value="${q}"><span class="iv" id="img-qv">${q}</span></div>
+    <div class="frow" id="imgARow"><label for="img-a">Background</label><label><input id="img-a" type="checkbox"${a ? ' checked' : ''}> See-through (no black background)</label></div>
+    <p class="empty" id="imgNote"></p></div>`;
+}
+// show the quality and background settings only where the chosen format has them
+function imageOptionsWire() {
+  const sync = () => {
+    const id = ($('#mText input[name=fmt]:checked')?.value || '').replace(/^img:/, ''), F = IMAGE_FORMATS.find(f => f[0] === id);
+    $('#imgOpts').hidden = !F; if (!F) return;
+    $('#imgQRow').hidden = !F[4].q; $('#imgARow').hidden = !F[4].a;
+    $('#imgNote').textContent = id === 'psd' ? 'Each visible layer at the playhead becomes a Photoshop layer, plus the finished picture.' : IMG_NOTE;
+  };
+  $('#mText').onchange = sync; $('#img-q').oninput = e => $('#img-qv').textContent = e.target.value; sync();
+}
+function imageOptionsRead() {
+  const quality = +$('#img-q').value, alpha = $('#img-a').checked;
+  try { localStorage.setItem('lumina.imgQuality', quality); localStorage.setItem('lumina.imgAlpha', alpha ? '1' : '0'); } catch {}
+  return { quality, alpha };
+}
+function chooseSaveImage() {
+  if (!S.layers.length) return toast('Add something to the edit first.');
+  if (!window.lumina) return toast('Saving images works in the Lumina desktop app.');
+  formatPicker({ title: isStill() ? 'Save image' : 'Save frame as image', go: 'Save…', formats: IMAGE_FORMATS, key: 'lumina.imageFormat', def: 'png',
+    text: isStill() ? `Saves the picture at its full size (${W()}×${H()}).` : `Saves the frame at the playhead (${fmt(S.time)}), at the full size of the video (${W()}×${H()}). For a moving GIF or one picture per frame, use File › Save animation or picture sequence.`,
+    extra: imageOptionsHTML(), wire: imageOptionsWire, onGo: f => saveFrameImage(f, imageOptionsRead()) });
+}
+// wait (up to 3 s) until every clip on screen has its frame, so the picture isn't caught mid-load
+async function frameReady() {
+  pause(); syncMedia(S.time);
+  for (let i = 0; i < 60 && S.layers.some(L => mediaBusy(L, S.time)); i++) { await new Promise(r => setTimeout(r, 50)); syncMedia(S.time); }
+}
+// the frame as RGBA pixels (with RENDER options), then the editor's own picture back on screen
+function grabFrame(opts = {}) {
+  RENDER = opts; try { render(S.time); return ctx.getImageData(0, 0, W(), H()); } finally { RENDER = {}; render(S.time); }
+}
+const canvasOf = img => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; c.getContext('2d').putImageData(img, 0, 0); return c; };
+const blobBytes = (c, type, q) => new Promise(r => c.toBlob(b => b.arrayBuffer().then(x => r(new Uint8Array(x))), type, q));
+async function saveFrameImage(id, { quality = 90, alpha = false } = {}, filePath) {
+  const F = IMAGE_FORMATS.find(f => f[0] === id); if (!F) return;
+  const a = alpha && !!F[4].a, name = isStill() ? projectName() : `${projectName()} ${fmt(S.time).replace(/:/g, '-')}`;
+  $('#mTitle').textContent = `Saving ${F[1]}…`; $('#mText').textContent = 'Making the picture…'; $('#mRow').innerHTML = ''; $('#modal').hidden = false;
+  try {
+    await frameReady();
+    const img = grabFrame({ alpha: a }), c = canvasOf(img);
+    let data, ready = true;
+    if (id === 'psd') data = makePSD(img, psdLayers(), a);
+    else if (id === 'pdf' || id === 'ai') data = makePDF(await blobBytes(c, 'image/jpeg', .95), c.width, c.height);
+    else if (id === 'eps') data = makeEPS(await blobBytes(c, 'image/jpeg', .95), c.width, c.height);
+    else if (id === 'svg') data = makeSVG(await blobBytes(c, 'image/png'), c.width, c.height);
+    else { data = await blobBytes(c, 'image/png'); ready = false; }
+    $('#mText').textContent = 'Saving…';
+    const p = await lumina.saveImage({ data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), fmt: id, quality, alpha: a, name, filePath, ready });
+    if (!p) { $('#modal').hidden = true; return null; }
+    $('#mTitle').textContent = 'Image saved'; $('#mText').textContent = p;
+    $('#mRow').innerHTML = '<button class="primary" id="mShow">Show in folder</button><button id="mOk">Close</button>';
+    $('#mShow').onclick = () => lumina.showInFolder(p); $('#mOk').onclick = () => $('#modal').hidden = true;
+    return p;
+  } catch (e) {
+    $('#mTitle').textContent = 'Couldn\'t save the image'; $('#mText').textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    $('#mRow').innerHTML = '<button id="mOk">Close</button>'; $('#mOk').onclick = () => $('#modal').hidden = true;
+    return null;
+  }
+}
+// ---------- animated images and image sequences (PhotoCraft Round P2) ----------
+const ANIM_FORMATS = [
+  ['gif', 'GIF (moving)', '.gif', 'The classic moving picture for memes and chats. 256 colours; see-through parts are on or off.', { a: 1, loop: 1 }],
+  ['webp', 'WebP (moving)', '.webp', 'A moving picture with full colour and soft see-through edges, much smaller than a GIF.', { q: 1, a: 1, loop: 1 }],
+  ['apng', 'APNG (moving PNG)', '.png', 'A moving PNG: full colour, see-through, lossless. Big files.', { a: 1, loop: 1 }],
+  ['seq-png', 'PNG sequence', '.png files', 'One PNG per frame (name_0001.png, name_0002.png…) in a folder. For other editors and 3D apps.', { a: 1 }],
+  ['seq-jpg', 'JPEG sequence', '.jpg files', 'One JPEG per frame, in a folder. Small files.', { q: 1 }],
+  ['seq-tiff', 'TIFF sequence', '.tif files', 'One TIFF per frame, lossless, for print and film work.', { a: 1 }],
+  ['seq-webp', 'WebP sequence', '.webp files', 'One WebP per frame.', { q: 1, a: 1 }],
+  ['seq-tga', 'TGA sequence', '.tga files', 'One Targa per frame, used by games and 3D apps.', { a: 1 }],
+  ['seq-bmp', 'BMP sequence', '.bmp files', 'One bitmap per frame. Big files.', {}]
+];
+function animOptionsHTML() {
+  const g = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const total = duration(), bm = selBookmark?.(), ranged = bm && bm.dur > 0;
+  const from = ranged ? bm.t : total <= 15 ? 0 : S.time, to = ranged ? bm.t + bm.dur : total <= 15 ? total : Math.min(total, S.time + 5);
+  const fps = +g('lumina.animFps', 15), size = +g('lumina.animSize', .5), q = +g('lumina.imgQuality', 90), a = g('lumina.imgAlpha', '0') === '1', loop = g('lumina.animLoop', '1') === '1';
+  return `<div class="imgopts" id="imgOpts">
+    <div class="frow"><label for="an-from">From</label><span class="slrow"><input id="an-from" type="number" min="0" max="${total.toFixed(2)}" step=".1" value="${from.toFixed(2)}" style="width:90px"> s &nbsp; to &nbsp;<input id="an-to" type="number" min="0" max="${total.toFixed(2)}" step=".1" value="${to.toFixed(2)}" style="width:90px"> s</span></div>
+    <div class="frow"><label for="an-fps">Frame rate</label><select id="an-fps">${[10, 12, 15, 20, 24, 25, 30, 50, 60].map(v => `<option value="${v}"${v === fps ? ' selected' : ''}>${v} frames a second</option>`).join('')}</select></div>
+    <div class="frow"><label for="an-size">Size</label><select id="an-size">${[1, .75, .5, .33, .25].map(v => `<option value="${v}"${v === size ? ' selected' : ''}>${Math.round(v * 100)}% (${Math.round(W() * v / 2) * 2}×${Math.round(H() * v / 2) * 2})</option>`).join('')}</select></div>
+    <div class="frow" id="imgQRow"><label for="img-q">Quality</label><input id="img-q" type="range" min="1" max="100" step="1" value="${q}"><span class="iv" id="img-qv">${q}</span></div>
+    <div class="frow" id="imgARow"><label for="img-a">Background</label><label><input id="img-a" type="checkbox"${a ? ' checked' : ''}> See-through (no black background)</label></div>
+    <div class="frow" id="anLoopRow"><label for="an-loop">Repeat</label><label><input id="an-loop" type="checkbox"${loop ? ' checked' : ''}> Play over and over</label></div>
+    <p class="empty" id="imgNote"></p></div>`;
+}
+function animOptionsWire() {
+  const sync = () => {
+    const F = ANIM_FORMATS.find(f => f[0] === ($('#mText input[name=fmt]:checked')?.value || '').replace(/^anim:/, '')) || ANIM_FORMATS[0];
+    $('#imgQRow').hidden = !F[4].q; $('#imgARow').hidden = !F[4].a; $('#anLoopRow').hidden = !F[4].loop;
+    const from = +$('#an-from').value, to = +$('#an-to').value, n = Math.max(0, Math.round((to - from) * +$('#an-fps').value));
+    $('#imgNote').textContent = `${n} frame${n === 1 ? '' : 's'} (${Math.max(0, to - from).toFixed(2)} s).${n > 3000 ? ' That\'s too many: make the range shorter or the frame rate lower.' : ''}`;
+  };
+  $('#mText').onchange = $('#mText').oninput = sync;   // (replaces the last dialog's, never piles up)
+  $('#img-q').oninput = e => $('#img-qv').textContent = e.target.value; sync();
+}
+function animOptionsRead() {
+  const o = { from: +$('#an-from').value, to: +$('#an-to').value, fps: +$('#an-fps').value, scale: +$('#an-size').value, quality: +$('#img-q').value, alpha: $('#img-a').checked, loop: $('#an-loop').checked };
+  try { localStorage.setItem('lumina.animFps', o.fps); localStorage.setItem('lumina.animSize', o.scale); localStorage.setItem('lumina.imgQuality', o.quality); localStorage.setItem('lumina.imgAlpha', o.alpha ? '1' : '0'); localStorage.setItem('lumina.animLoop', o.loop ? '1' : '0'); } catch {}
+  return o;
+}
+function chooseSaveAnimation() {
+  if (!S.layers.length) return toast('Add something to the edit first.');
+  if (!window.lumina) return toast('Saving animations works in the Lumina desktop app.');
+  formatPicker({ title: 'Save animation or picture sequence', go: 'Save…', formats: ANIM_FORMATS, key: 'lumina.animFormat', def: 'gif',
+    text: 'Makes a moving picture, or one picture per frame, from part of the edit. (A selected bookmark with a length sets the range.)',
+    extra: animOptionsHTML(), wire: animOptionsWire, onGo: f => saveAnimation(f, animOptionsRead()) });
+}
+// renders every frame of the range (exactly, one at a time), then FFmpeg puts them together
+async function saveAnimation(fmt, { from = 0, to = duration(), fps = 15, scale = .5, quality = 90, alpha = false, loop = true } = {}, target) {
+  const F = ANIM_FORMATS.find(f => f[0] === fmt); if (!F) return null;
+  from = clamp(from, 0, duration()); to = clamp(to, 0, duration());
+  const n = Math.round((to - from) * fps);
+  if (n < 1) { toast('The range is empty: "To" has to be after "From".'); return null; }
+  if (n > 3000) { toast(`That's ${n} frames. Make the range shorter or the frame rate lower (3,000 at most).`); return null; }
+  const a = alpha && !!F[4].a, t0 = S.time, name = projectName();
+  let cancelled = false, id = null;
+  $('#mTitle').textContent = `Making ${F[1]}…`; $('#mText').textContent = `Frame 0 of ${n}`; $('#mBarWrap').hidden = false; $('#mBar').style.width = '0';
+  $('#mRow').innerHTML = '<button id="mCancel">Cancel</button>'; $('#modal').hidden = false;
+  $('#mCancel').onclick = () => { cancelled = true; if (id) lumina.animCancel(id); };
+  try {
+    id = await lumina.animBegin();
+    for (let i = 0; i < n; i++) {
+      if (cancelled) break;
+      seek(from + i / fps); await frameReady();
+      const png = await blobBytes(canvasOf(grabFrame({ alpha: a })), 'image/png');
+      await lumina.animFrame(id, png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength));
+      $('#mText').textContent = `Frame ${i + 1} of ${n}`; $('#mBar').style.width = ((i + 1) / n * 80).toFixed(1) + '%';
+    }
+    if (cancelled) { $('#modal').hidden = true; return null; }
+    $('#mText').textContent = 'Putting the frames together…'; $('#mRow').innerHTML = '';
+    lumina.onAnimProgress(f => { $('#mBar').style.width = (80 + f * 20).toFixed(1) + '%'; });
+    const p = await lumina.animFinish({ id, fmt, fps, scale, quality, alpha: a, loop, name, ...(target ? (fmt.startsWith('seq-') ? { folder: target } : { filePath: target }) : {}) });
+    if (!p) { $('#modal').hidden = true; return null; }
+    $('#mTitle').textContent = fmt.startsWith('seq-') ? `${n} pictures saved` : `${F[1]} saved`; $('#mText').textContent = p; $('#mBarWrap').hidden = true;
+    $('#mRow').innerHTML = '<button class="primary" id="mShow">Show in folder</button><button id="mOk">Close</button>';
+    $('#mShow').onclick = () => lumina.showInFolder(p); $('#mOk').onclick = () => $('#modal').hidden = true;
+    return p;
+  } catch (e) {
+    if (id) lumina.animCancel(id);
+    if (cancelled) { $('#modal').hidden = true; return null; }
+    $('#mTitle').textContent = 'Couldn\'t save it'; $('#mText').textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''); $('#mBarWrap').hidden = true;
+    $('#mRow').innerHTML = '<button id="mOk">Close</button>'; $('#mOk').onclick = () => $('#modal').hidden = true;
+    return null;
+  } finally { seek(t0); syncMedia(t0); }
+}
+// every layer drawn at the playhead, bottom first (the order Photoshop lists them in a file), each rendered on its own
+function psdLayers() {
+  const out = [];
+  for (let i = S.layers.length - 1; i >= 0; i--) {
+    const L = S.layers[i];
+    if (isMatteFor(i) || !isActive(L, S.time)) continue;   // a track matte is part of the layer it cuts out
+    out.push({ name: L.name, blend: L.blend, img: grabFrame({ only: L }) });
+  }
+  return out;
+}
+// ---- the file writers ----
+class Bytes {
+  constructor(n = 1 << 16) { this.b = new Uint8Array(n); this.n = 0; }
+  room(k) { if (this.n + k > this.b.length) { const nb = new Uint8Array(Math.max(this.b.length * 2, this.n + k)); nb.set(this.b.subarray(0, this.n)); this.b = nb; } }
+  u8(v) { this.room(1); this.b[this.n++] = v & 255; return this; }
+  u16(v) { return this.u8(v >> 8).u8(v); }
+  u32(v) { return this.u16(v >>> 16).u16(v & 65535); }
+  bytes(a) { this.room(a.length); this.b.set(a, this.n); this.n += a.length; return this; }
+  str(s) { for (const ch of s) this.u8(ch.charCodeAt(0)); return this; }
+  out() { return this.b.subarray(0, this.n); }
+}
+// PackBits, Photoshop's run-length compression: one row at a time
+function packBits(row, out) {
+  const n = row.length; let i = 0;
+  while (i < n) {
+    let j = i + 1; while (j < n && j - i < 128 && row[j] === row[i]) j++;
+    if (j - i >= 2) { out.u8(257 - (j - i)).u8(row[i]); i = j; continue; }
+    j = i + 1; while (j < n && j - i < 128 && !(j + 1 < n && row[j] === row[j + 1])) j++;
+    out.u8(j - i - 1).bytes(row.subarray(i, j)); i = j;
+  }
+}
+// one channel (0 R, 1 G, 2 B, 3 A) of a box of RGBA pixels, compressed: { counts: bytes per row, data }
+function rleChannel(img, ch, x0, y0, w, h) {
+  const row = new Uint8Array(w), data = new Bytes(w * h / 2 + 64), counts = [];
+  for (let y = 0; y < h; y++) {
+    const base = ((y0 + y) * img.width + x0) * 4 + ch;
+    for (let x = 0; x < w; x++) row[x] = img.data[base + x * 4];
+    const n0 = data.n; packBits(row, data); counts.push(data.n - n0);
+  }
+  return { counts, data: data.out() };
+}
+const PSD_BLEND = { 'source-over': 'norm', multiply: 'mul ', screen: 'scrn', overlay: 'over', darken: 'dark', lighten: 'lite', 'color-dodge': 'div ', 'color-burn': 'idiv',
+  'hard-light': 'hLit', 'soft-light': 'sLit', difference: 'diff', exclusion: 'smud', hue: 'hue ', saturation: 'sat ', color: 'colr', luminosity: 'lum ', lighter: 'lddg' };
+// A Photoshop document (version 1, 8-bit RGB): the layers (each cropped to what it covers) and the finished picture.
+function makePSD(comp, layers, alpha) {
+  const W = comp.width, H = comp.height, f = new Bytes(W * H * 2);
+  f.str('8BPS').u16(1).bytes(new Uint8Array(6)).u16(alpha ? 4 : 3).u32(H).u32(W).u16(8).u16(3);
+  f.u32(0).u32(0);   // no colour table, no image resources
+  // layers: records first, then every layer's channel data
+  const recs = new Bytes(), chans = new Bytes(W * H);
+  for (const Lr of layers) {
+    const d = Lr.img.data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    const empty = x1 < 0, w = empty ? 0 : x1 - x0 + 1, h = empty ? 0 : y1 - y0 + 1;
+    if (empty) { x0 = y0 = 0; }
+    recs.u32(y0).u32(x0).u32(y0 + h).u32(x0 + w).u16(4);
+    const enc = [3, 0, 1, 2].map(ch => empty ? null : rleChannel(Lr.img, ch, x0, y0, w, h));
+    [-1, 0, 1, 2].forEach((id, k) => recs.u16(id & 65535).u32(enc[k] ? 2 + enc[k].counts.length * 2 + enc[k].data.length : 2));
+    recs.str('8BIM').str(PSD_BLEND[Lr.blend] || 'norm').u8(255).u8(0).u8(0).u8(0);
+    // extra data: no mask, no blending ranges, the name (Pascal string, padded to 4) and its Unicode copy ('luni')
+    const ascii = [...Lr.name].map(ch => ch.charCodeAt(0) < 128 ? ch : '?').join('').slice(0, 255), pad = (4 - (1 + ascii.length) % 4) % 4;
+    const uni = new Bytes(); uni.u32(Lr.name.length); for (let k = 0; k < Lr.name.length; k++) uni.u16(Lr.name.charCodeAt(k)); while (uni.n % 4) uni.u8(0);
+    recs.u32(4 + 4 + 1 + ascii.length + pad + 12 + uni.n).u32(0).u32(0).u8(ascii.length).str(ascii).bytes(new Uint8Array(pad));
+    recs.str('8BIM').str('luni').u32(uni.n).bytes(uni.out());
+    for (const e of enc) { if (!e) { chans.u16(0); continue; } chans.u16(1); for (const c of e.counts) chans.u16(c); chans.bytes(e.data); }
+  }
+  let info = 2 + recs.n + chans.n; const infoPad = info % 2;
+  f.u32(4 + info + infoPad + 4).u32(info + infoPad).u16((alpha ? -layers.length : layers.length) & 65535).bytes(recs.out()).bytes(chans.out());
+  if (infoPad) f.u8(0);
+  f.u32(0);   // no global layer mask
+  // the finished picture: RLE, every channel's row counts, then every channel's rows
+  const merged = (alpha ? [0, 1, 2, 3] : [0, 1, 2]).map(ch => rleChannel(comp, ch, 0, 0, W, H));
+  f.u16(1); for (const m of merged) for (const c of m.counts) f.u16(c); for (const m of merged) f.bytes(m.data);
+  return f.out();
+}
+// A one-page PDF with the frame on it (a JPEG), 1 pixel = 1 point. Also the inside of a PDF-compatible .ai file.
+function makePDF(jpg, w, h) {
+  const f = new Bytes(jpg.length + 2048), offs = [];
+  const obj = (n, s, stream) => { offs[n] = f.n; f.str(`${n} 0 obj\n${s}\n`); if (stream) f.str('stream\n').bytes(stream).str('\nendstream\n'); f.str('endobj\n'); };
+  const draw = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q`;
+  f.str('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  obj(4, `<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>`, jpg);
+  obj(5, `<< /Length ${draw.length} >>`, new TextEncoder().encode(draw));
+  obj(6, `<< /Producer (Lumina) /Creator (Lumina) /Title (${projectName().replace(/[()\\]/g, '')}) >>`);
+  const xref = f.n;
+  f.str('xref\n0 7\n0000000000 65535 f \n'); for (let n = 1; n <= 6; n++) f.str(String(offs[n]).padStart(10, '0') + ' 00000 n \n');
+  f.str(`trailer\n<< /Size 7 /Root 1 0 R /Info 6 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return f.out();
+}
+// ASCII85: 4 bytes become 5 printable characters (how PostScript carries binary data)
+function ascii85(b) {
+  let s = '', line = 0;
+  const put = t => { s += t; line += t.length; if (line >= 75) { s += '\n'; line = 0; } };
+  for (let i = 0; i < b.length; i += 4) {
+    const n = Math.min(4, b.length - i), v = (((b[i] << 24) >>> 0) + ((b[i + 1] || 0) << 16) + ((b[i + 2] || 0) << 8) + (b[i + 3] || 0)) >>> 0;
+    if (n === 4 && v === 0) { put('z'); continue; }
+    let x = v, c = ''; for (let k = 0; k < 5; k++) { c = String.fromCharCode(33 + x % 85) + c; x = Math.floor(x / 85); }
+    put(c.slice(0, n + 1));
+  }
+  return s + '~>';
+}
+// Encapsulated PostScript (level 2): the frame as a JPEG, 1 pixel = 1 point
+function makeEPS(jpg, w, h) {
+  return new TextEncoder().encode(`%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 ${w} ${h}\n%%HiResBoundingBox: 0 0 ${w} ${h}\n%%Creator: Lumina\n%%Title: ${projectName()}\n%%LanguageLevel: 2\n%%Pages: 1\n%%EndComments\n`
+    + `save\n/DeviceRGB setcolorspace\n${w} ${h} scale\n<< /ImageType 1 /Width ${w} /Height ${h} /BitsPerComponent 8 /Decode [0 1 0 1 0 1] /ImageMatrix [${w} 0 0 -${h} 0 ${h}]\n`
+    + `/DataSource currentfile /ASCII85Decode filter /DCTDecode filter >> image\n${ascii85(jpg)}\nrestore\nshowpage\n%%EOF\n`);
+}
+const toBase64 = b => { let s = ''; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode(...b.subarray(i, i + 32768)); return btoa(s); };
+function makeSVG(png, w, h) {
+  const uri = 'data:image/png;base64,' + toBase64(png);
+  return new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">\n`
+    + `<title>${esc(projectName())}</title>\n<image width="${w}" height="${h}" href="${uri}" xlink:href="${uri}"/>\n</svg>\n`);
 }
 async function startExport(fmt = 'mp4') {
   const mime = pickMime(); if (!mime) return toast('This browser cannot record video. Use Chrome or Edge.');
@@ -6341,7 +7457,8 @@ function projectJSON() {
     const m = MEDIA[id]; media[id] = { path: m.path || null, type: m.type, name: m.name, duration: m.duration, w: m.w, h: m.h, ...(m.svg ? { svg: true } : {}), ...(m.origPath ? { origPath: m.origPath } : {}) };
   }
   const luts = {};
-  for (const L of S.layers) if (L.lut?.startsWith('u:') && LUTS[L.lut]) { const l = LUTS[L.lut]; luts[L.lut] = { name: l.name, N: l.N, data: Array.from(l.data, v => +v.toFixed(4)) }; }
+  for (const L of S.layers) for (const id of [L.lut, ...(L.fx || []).flatMap(f => [f.inLut, f.lookLut])])
+    if (typeof id === 'string' && id.startsWith('u:') && LUTS[id]) { const l = LUTS[id]; luts[id] = { name: l.name, N: l.N, data: Array.from(l.data, v => +v.toFixed(4)) }; }
   return JSON.stringify({ app: 'Lumina', version: 1, comp: { w: W(), h: H(), fps: S.fps }, uid, time: S.time, layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, media, luts });
 }
 async function saveProject(saveAs = false) {
@@ -6387,11 +7504,11 @@ async function openProject(filePath) {
     if (!m.path) continue;
     MEDIA[id] = { ...m, url: lumina.mediaURL(m.path) };
     if (m.svg || /\.svg$/i.test(m.path)) await reloadSVG(MEDIA[id]);
-    else if (m.type === 'image') MEDIA[id].img = await loadImage(MEDIA[id].url);
+    else if (m.type === 'image') { try { MEDIA[id].img = await loadImage(await openImageURL(m.path)); } catch { MEDIA[id].img = null; } }
   }
   for (const [id, l] of Object.entries(d.luts || {})) LUTS[id] = { name: l.name, N: l.N, data: Float32Array.from(l.data) };
   canvas.width = d.comp.w; canvas.height = d.comp.h; S.fps = d.comp.fps;
-  if ([...$('#res').options].some(o => o.value === `${d.comp.w}x${d.comp.h}`)) $('#res').value = `${d.comp.w}x${d.comp.h}`;
+  syncRes(); CROP = null; cropUI();
   $('#fps').value = String(d.comp.fps);
   S.layers = d.layers.filter(L => !L.media || (MEDIA[L.media] && (MEDIA[L.media].type !== 'image' || MEDIA[L.media].img)));
   S.impacts = d.impacts || []; S.bookmarks = d.bookmarks || []; S.global = d.global; uid = Math.max(uid, d.uid || 0) + 1;
@@ -6456,7 +7573,7 @@ document.addEventListener('click', e => { if (!$('#stickerPop').hidden && !e.tar
 for (const id of ['#btnShape', '#btnAtmo', '#btn3d']) $(id).addEventListener('click', () => { $('#stickerPop').hidden = true; });
 $('#btnPlay').onclick = () => S.playing ? pause() : play();
 $('#btnStart').onclick = () => { pause(); seek(0); };
-$('#btnExport').onclick = chooseExport;
+$('#btnExport').onclick = () => isStill() ? chooseSaveImage() : chooseExport();
 $('#zoom').oninput = e => { S.pps = +e.target.value; buildTimeline(); };
 $('#tl').addEventListener('scroll', rulerFollow, { passive: true });
 // the scroll wheel over the timeline's lanes moves it left and right (a trackpad's sideways swipe too); Shift+wheel
@@ -6478,7 +7595,7 @@ $('#tl').addEventListener('wheel', e => {
   else return;   // over the layer names: the normal up-and-down scroll
   if (drag && tlPtr) tlMove(tlPtr);   // a clip or the playhead being dragged keeps up with the scroll
 }, { passive: false });
-$('#res').onchange = e => { const [w, h] = e.target.value.split('x').map(Number); canvas.width = w; canvas.height = h; fitPreview(); inspector(); };
+$('#res').onchange = e => { const [w, h] = e.target.value.split('x').map(Number); canvas.width = w; canvas.height = h; rebaseSize(); fitPreview(); inspector(); };
 $('#fps').onchange = e => { S.fps = +e.target.value; buildTimeline(); };
 const vp = $('#viewport');
 ['dragenter', 'dragover'].forEach(ev => vp.addEventListener(ev, e => { e.preventDefault(); vp.classList.add('over'); }));
@@ -6488,11 +7605,16 @@ $('#drop').onclick = () => $('#file').click();
 new ResizeObserver(fitPreview).observe(vp);
 document.addEventListener('keydown', e => {
   if (e.target.matches('input[type=text], input[type=number], textarea') || S.exporting) return;
+  if (CROP && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); endCrop(e.key === 'Enter'); return; }
   if (e.key === 'Escape' && (trackMode || picking || wbPick)) { trackMode = null; picking = false; wbPick = false; inspector(); return; }
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (window.lumina && (e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); e.shiftKey ? chooseSaveAs() : saveProject(); return; }
+  if (window.lumina && (e.ctrlKey || e.metaKey) && e.shiftKey && k === 'e') { e.preventDefault(); chooseSaveImage(); return; }
+  if (window.lumina && (e.ctrlKey || e.metaKey) && e.altKey && k === 'e') { e.preventDefault(); chooseSaveAnimation(); return; }
   if (window.lumina && (e.ctrlKey || e.metaKey) && k === 'o') { e.preventDefault(); openProject(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && k === 'n') { e.preventDefault(); newImageBox(); return; }
+  if (isStill() && (e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (k === 'i' || k === 'c')) { e.preventDefault(); k === 'i' ? imageSizeBox() : canvasSizeBox(); return; }
   if (window.lumina && (e.ctrlKey || e.metaKey) && k === 'n') { e.preventDefault(); newProject(); return; }
   if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); action('dup'); return; }
@@ -6501,10 +7623,17 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && k === 'a' && !e.target.matches('textarea, input, select')) { e.preventDefault(); selectAll(); return; }
   if (e.key === 'Escape' && selIds().length > 1) { setMulti([S.sel], S.sel); refresh(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (isStill() && e.code !== 'Space') {
+    // Image mode: the arrows nudge the layer a pixel (Shift: 10), C crops; the timeline's keys do nothing
+    const nd = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
+    if (nd) { e.preventDefault(); nudgeLayer(nd, e.shiftKey ? 10 : 1); return; }
+    if (k === 'c') { startCrop(); return; }
+    if (['s', 'i', 'k', 'b', '[', ']'].includes(k)) return;
+  }
   if (e.code === 'Space') {
     e.preventDefault(); if (e.repeat) return;
     spaceKey = { wasPlaying: S.playing, panned: false }; $('#viewport').classList.add('space');
-    S.playing ? pause() : play();
+    S.playing ? pause() : isStill() ? 0 : play();
   }
   else if (e.key === '.') zoomStep(1);
   else if (e.key === ',') zoomStep(-1);
@@ -6552,12 +7681,14 @@ if (window.lumina) {
     <button data-file="new">New project <span class="hint">Ctrl+N</span></button>
     <button data-file="open">Open… <span class="hint">Ctrl+O</span></button>
     <button data-file="save">Save <span class="hint">Ctrl+S</span></button>
-    <button data-file="saveas">Save as… <span class="hint">Ctrl+Shift+S</span></button></div>`;
+    <button data-file="saveas">Save as… <span class="hint">Ctrl+Shift+S</span></button>
+    <button data-file="image">Save frame as image… <span class="hint">Ctrl+Shift+E</span></button>
+    <button data-file="anim">Save animation or picture sequence… <span class="hint">Ctrl+Alt+E</span></button></div>`;
   $('#btnFile').onclick = e => { e.stopPropagation(); $('#shapePop').hidden = $('#atmoPop').hidden = true; $('#filePop').hidden = !$('#filePop').hidden; };
   $('#filePop').onclick = e => {
     const a = e.target.closest('[data-file]')?.dataset.file; if (!a) return;
     $('#filePop').hidden = true;
-    ({ new: newProject, open: () => openProject(), save: () => saveProject(), saveas: chooseSaveAs })[a]();
+    ({ new: newProject, open: () => openProject(), save: () => saveProject(), saveas: chooseSaveAs, image: chooseSaveImage, anim: chooseSaveAnimation })[a]();
   };
   document.addEventListener('click', () => $('#filePop').hidden = true);
 }
@@ -6568,6 +7699,7 @@ const WORKSPACES = {
   default: { label: 'Default', project: true, preview: true, props: true, propsW: 340, ltab: 'project', rtab: 'props' },
   effects: { label: 'Effects', project: true, preview: false, props: true, propsW: 400, ltab: 'fxp', rtab: 'fx' },
   small: { label: 'Small Screen', project: false, preview: false, props: true, propsW: 320, rtab: 'props' },
+  image: { label: 'Image', project: true, preview: false, props: true, propsW: 330, ltab: 'image', rtab: 'props' },
 };
 function setRightTab(t) {
   RTAB = t; $('#pProps').querySelectorAll('[data-rtab]').forEach(x => x.classList.toggle('on', x.dataset.rtab === t));
@@ -6594,9 +7726,10 @@ const RAIL_ICON = {
   audio: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
   adjust: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
   '3d': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>',
+  image: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/><path d="M10 14l2.5-3 2 2.5 1.5-2 2 2.5"/>',
   convert: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
 };
-const RAIL = [['media', 'Media'], ['text', 'Text'], ['stickers', 'Stickers'], ['effects', 'Effects'], ['trans', 'Transitions'], ['captions', 'Captions'], ['audio', 'Audio'], ['adjust', 'Adjust'], ['3d', '3D'], ['convert', 'Converter']];
+const RAIL = [['media', 'Media'], ['image', 'Image'], ['text', 'Text'], ['stickers', 'Stickers'], ['effects', 'Effects'], ['trans', 'Transitions'], ['captions', 'Captions'], ['audio', 'Audio'], ['adjust', 'Adjust'], ['3d', '3D'], ['convert', 'Converter']];
 const RAIL_TAB = { media: 'project', effects: 'fxp' };   // these two open the panels that were already there
 const railCard = (spec, label, thumb, title = '') => `<button class="rcard" draggable="true" data-radd="${esc(spec)}" title="${esc(title || label)}"><span class="rthumb">${thumb}</span><span class="rlab">${esc(label)}</span></button>`;
 const railHead = (h, sub = '') => `<h4 class="rhead">${h}${sub ? `<span class="hint">${sub}</span>` : ''}</h4>`;
@@ -6657,6 +7790,7 @@ const RAIL_PANELS = {
       + railHead('Background', 'behind clips that don\'t fill the frame') + `<div class="rgrid">${BG_MODES.map(([k, n]) => `<button class="rcard${k === mode ? ' on' : ''}" data-radd="bg:${k}" title="${n}"><span class="rthumb"><span class="rt-bg b-${k}"></span></span><span class="rlab">${n}</span></button>`).join('')}</div>`
       + railHead('Weather and light') + `<div class="rgrid">${atmo(false)}</div>` + railHead('Lighting looks') + `<div class="rgrid">${atmo(true)}</div>`; } },
   convert: { label: 'Converter', html: () => convPanel() },
+  image: { label: 'Image', dyn: true, html: () => imagePanel() },
   '3d': { label: '3D', html: () => railNote('Real 3D objects with light, shadows and materials. Change the material in Properties.')
     + `<div class="rgrid">${Object.entries(SHAPES3D).map(([k, d], i) => railCard('3d:' + k, d[0], `<span class="rt-3d" style="filter:hue-rotate(${i * 37}deg);border-radius:${/cube|box|block|crate|dice/i.test(k + d[0]) ? '18%' : /cone|pyramid|gem/i.test(k + d[0]) ? '50% 50% 8% 8%' : '50%'}"></span>`)).join('')}</div>` },
 };
@@ -6683,6 +7817,7 @@ function railAdd(spec, t = null, onto = null) {
   else if (kind === 'bg') { S.global.bg = arg; commit(); refresh(); }
   else if (kind === 'file') $('#file').click();
   else if (kind === 'tab') setRightTab(arg);
+  else if (kind === 'img') IMG_ACTS[arg]?.();
   else if (kind === 'trans') {
     if (!L || !isVisual(L)) return toast('Pick a video or picture clip first (or drop the transition onto one).');
     if (arg === 'none') delete L.trans; else L.trans = { type: arg, dur: L.trans?.dur || .6 };
@@ -6891,6 +8026,7 @@ $('#welcome').onclick = e => {
 };
 $('#wGo').onclick = () => hideWelcome();
 $('#wOpen').onclick = () => { hideWelcome(false); openProject(); };
+$('#wNewImg').onclick = () => { hideWelcome(false); newImageBox(); };
 $('#wShow').onchange = e => lsSet('lumina.welcome', e.target.checked ? null : 'off');
 $('#wTips').onchange = e => { lsSet('lumina.tipsOff', e.target.checked ? null : '1'); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#welcome').hidden) { e.stopImmediatePropagation(); hideWelcome(); } }, true);
@@ -7025,10 +8161,12 @@ $('#fxpList').onclick = e => {
 };
 let wsName = 'default';
 function applyPanels() {
-  $('#pProject').hidden = !PANELS.project; $('#pPreview').hidden = !PANELS.preview; $('#pProps').hidden = !PANELS.props;
-  const right = PANELS.preview || PANELS.props;
+  // in Image mode there's nothing to play, and the Layers panel goes under Properties
+  const still = isStill(), pre = PANELS.preview && !still, lay = still && !PANELS.layersOff;
+  $('#pProject').hidden = !PANELS.project; $('#pPreview').hidden = !pre; $('#pProps').hidden = !PANELS.props; $('#pLayers').hidden = !lay;
+  const right = pre || PANELS.props || lay;
   $('.rcol').hidden = !right;
-  $('.rcol').style.gridTemplateRows = PANELS.preview && PANELS.props ? 'auto 1fr' : '1fr';
+  $('.rcol').style.gridTemplateRows = [pre && 'auto', PANELS.props && 'minmax(0, 1fr)', lay && 'minmax(170px, .85fr)'].filter(Boolean).join(' ') || '1fr';
   $('main').style.gridTemplateColumns = ['60px', PANELS.project && '250px', '1fr', right && PANELS.propsW + 'px'].filter(Boolean).join(' ');
   $('#wspaces').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.ws === wsName));
   fitPreview();
@@ -7039,6 +8177,7 @@ function useWorkspace(name, tabsToo = true) {
   Object.assign(PANELS, { project: w.project, preview: w.preview, props: w.props, propsW: w.propsW });
   try { localStorage.setItem('lumina.workspace', name); } catch (e) { }
   applyPanels();
+  if (name === 'image' && !isStill()) setStill(true);   // the Image workspace is Image mode
   if (!tabsToo) return;
   if (w.ltab) setLeftTab(w.ltab);
   if (w.rtab) setRightTab(w.rtab);
@@ -7098,7 +8237,13 @@ const MENUS = {
     ['Add impact marker', 'I', addImpact], ['Add color grade layer', '', () => $('#btnGrade').click()], '-',
     [bookmarkAt(S.time) ? 'Remove bookmark at playhead' : 'Add bookmark at playhead', 'B', toggleBookmark],
     ['Previous bookmark', '[', () => jumpBookmark(-1), S.bookmarks.length > 0], ['Next bookmark', ']', () => jumpBookmark(1), S.bookmarks.length > 0], '-',
-    ['Export video…', '', () => $('#btnExport').click(), S.layers.length > 0]],
+    ['Export video…', '', () => $('#btnExport').click(), S.layers.length > 0], ['Save frame as image…', 'Ctrl+Shift+E', chooseSaveImage, S.layers.length > 0], ['Save animation or picture sequence…', 'Ctrl+Alt+E', chooseSaveAnimation, S.layers.length > 0]],
+  Image: () => { const on = isStill(); return [['New image…', 'Ctrl+Alt+N', newImageBox], ['Open a picture as an image…', '', openImageDoc, !!window.lumina],
+    [on ? 'Back to video editing' : 'Edit this frame as a picture', '', () => setStill(!on)], '-',
+    ['Image size…', 'Ctrl+Alt+I', imageSizeBox, on], ['Canvas size…', 'Ctrl+Alt+C', canvasSizeBox, on], ['Crop', 'C', startCrop, on], '-',
+    ['Rotate 90° clockwise', '', () => rotateCanvas(90), on], ['Rotate 90° counter-clockwise', '', () => rotateCanvas(-90), on], ['Rotate 180°', '', () => rotateCanvas(180), on],
+    ['Flip canvas horizontal', '', () => flipCanvas('x'), on], ['Flip canvas vertical', '', () => flipCanvas('y'), on], '-',
+    ['Save image…', 'Ctrl+Shift+E', chooseSaveImage, S.layers.length > 0]]; },
   Layer: () => [['New text', 'T', addText], ['Captions from SRT/VTT…', '', () => $('#file').click()],['New shape…', '', () => openToolbarMenu('#btnShape')], ['New sticker…', '', () => openToolbarMenu('#btnSticker')], ['New 3D shape…', '', () => openToolbarMenu('#btn3d')],
     ['New atmosphere…', '', () => openToolbarMenu('#btnAtmo')], '-',
     ['Keyframe position', 'K', () => keyPosition(), !!selLayer()],
@@ -7113,7 +8258,7 @@ const MENUS = {
     ['Toggle fullscreen', 'F11', toggleFullscreen, true, !!document.fullscreenElement]],
   Window: () => [...Object.entries(WORKSPACES).map(([k, w]) => [`Workspace: ${w.label}`, '', () => useWorkspace(k), true, wsName === k]), '-',
     ['Project', '', () => togglePanel('project'), true, PANELS.project], ['Preview', '', () => togglePanel('preview'), true, PANELS.preview],
-    ['Properties', '', () => togglePanel('props'), true, PANELS.props], '-',
+    ['Properties', '', () => togglePanel('props'), true, PANELS.props], ['Layers', '', () => { PANELS.layersOff = !PANELS.layersOff; applyPanels(); layersPanel(); }, isStill(), isStill() && !PANELS.layersOff], '-',
     ['Effect Controls', '', () => setRightTab('fx'), true, PANELS.props && RTAB === 'fx'],
     ['Effects & Presets', '', () => { if (!PANELS.project) { PANELS.project = true; applyPanels(); } setLeftTab('fxp'); }, true, PANELS.project && LTAB === 'fxp']],
   Help: () => [{ head: 'Lumina ~ An editor for everything.', text: ABOUT }, '-', ['Welcome screen…', '', () => showWelcome()],
@@ -7154,6 +8299,422 @@ function buildMenubar() {
   document.addEventListener('click', () => closeMenubar());
 }
 
+// ---------- Image mode (PhotoCraft Round P3): one still picture with layers, like a photo editor ----------
+// S.global.still makes the project a picture: the timeline and play controls go, the Layers panel shows under
+// Properties, and the Image menu changes the canvas (image size, canvas size, crop, rotate, flip). The layers are
+// ordinary Lumina layers drawn at the playhead, so text, shapes, stickers, effects and colour grades all work on it.
+function isStill() { return !!S.global.still; }
+function setStill(on) {
+  if (!!on === isStill()) { syncStill(); return; }
+  if (on) { S.global.still = true; pause(); } else { delete S.global.still; if (CROP) endCrop(false); }
+  commit(); refresh();
+  notice(on ? 'Image mode: one picture made of layers. Image › Back to video editing brings the timeline back.' : 'Back to video editing.');
+}
+function syncStill() {
+  const on = isStill();
+  $('#compTab').textContent = on ? `Image: ${projectName()} · ${W()}×${H()}` : 'Composition: Main';
+  if (stillShown === on) return;
+  stillShown = on;
+  document.body.classList.toggle('still', on);
+  if (on) pause(); else if (CROP) endCrop(false);
+  $('#btnExport').textContent = on ? 'Save image' : 'Export video';
+  $('#btnExport').title = on ? 'Save the picture as PNG, JPEG, PSD and more (Ctrl+Shift+E)' : '';
+  const d = $('#drop > div');
+  d.firstElementChild.textContent = on ? 'Drop pictures here' : 'Drop your videos, photos and music here';
+  d.lastElementChild.innerHTML = on ? 'Each one becomes a layer. Add text with T, and shapes and stickers from the rail.' : 'Video, images (PNG, JPG, GIF, SVG) and music.<br>Clips line up one after another; everything else lands at the playhead.';
+  if (on && wsName !== 'image') useWorkspace('image');
+  else if (!on && wsName === 'image') useWorkspace('default');
+  else applyPanels();
+}
+
+// ---- the canvas size ----
+const MAX_SIDE = 16384, MAX_AREA = 100e6;
+const sizeOK = (w, h) => w >= 1 && h >= 1 && w <= MAX_SIDE && h <= MAX_SIDE && w * h <= MAX_AREA;
+const SIZE_PROBLEM = `A picture can be up to ${MAX_SIDE} pixels on a side and 100 million pixels in all.`;
+function setCanvasSize(w, h) {
+  w = Math.round(w); h = Math.round(h);
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+  syncRes(); fitPreview();
+}
+// the size menu shows any size: a size that isn't one of its own gets an entry of its own
+function syncRes() {
+  const v = `${W()}x${H()}`, sel = $('#res');
+  let o = [...sel.options].find(x => x.value === v);
+  sel.querySelectorAll('option[data-custom]').forEach(x => { if (x !== o) x.remove(); });
+  if (!o) { o = new Option(`${W()}×${H()}`, v); o.dataset.custom = '1'; sel.add(o); }
+  sel.value = v;
+}
+// picking a size from the menu isn't an undo step of its own, so the last step takes the new size
+function rebaseSize() {
+  syncRes(); const i = undoStack.length - 1; if (i < 0) return;
+  const d = JSON.parse(undoStack[i]); d.size = [W(), H()]; undoStack[i] = JSON.stringify(d);
+}
+function fitCanvasTo(w, h) {
+  const k = Math.min(1, MAX_SIDE / w, MAX_SIDE / h, Math.sqrt(MAX_AREA / (w * h)));
+  setCanvasSize(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+}
+// how big a layer is drawn for the canvas size: pictures and videos fit the frame, everything else follows its height
+function baseFit(L) {
+  const m = (L.kind === 'image' || L.kind === 'video') && MEDIA[L.media];
+  return m && m.w ? fitFor(L, m.w, m.h) : H() / 1080;
+}
+function mapProp(L, p, f) {
+  L.p[p] = f(L.p[p] ?? BASE_P[p]);
+  if (L.keys[p]) L.keys[p] = L.keys[p].map(q => ({ ...q, v: f(q.v) }));
+}
+const wrap180 = v => ((v + 180) % 360 + 360) % 360 - 180;
+// change the canvas to nw×nh and keep every layer where it was on the picture. A layer's new pixel spot is
+// ax[0]·(old x) + ax[1] across and ay[0]·(old y) + ay[1] down; swap: x and y trade places (a quarter turn).
+// k resizes everything (Image size); turn and mirror turn or mirror each layer with the canvas.
+function reframe(nw, nh, { ax = [1, 0], ay = [1, 0], swap = false, k = 1, turn = 0, mirror = '' } = {}) {
+  const ow = W(), oh = H(), f0 = S.layers.map(baseFit), old = { x: ow, y: oh };
+  setCanvasSize(nw, nh);
+  S.layers.forEach((L, i) => {
+    const sk = f0[i] / baseFit(L) * k;
+    const along = (src, a, n) => { const f = v => (a[0] * v * old[src] + a[1]) / n; return [f(L.p[src] ?? BASE_P[src]), L.keys[src]?.map(q => ({ ...q, v: f(q.v) }))]; };
+    const [px, kx] = along(swap ? 'y' : 'x', ax, nw), [py, ky] = along(swap ? 'x' : 'y', ay, nh);
+    L.p.x = px; L.p.y = py;
+    if (kx) L.keys.x = kx; else delete L.keys.x;
+    if (ky) L.keys.y = ky; else delete L.keys.y;
+    mapProp(L, 'scale', v => v * sk);
+    if (turn) { mapProp(L, 'rotation', v => v + turn); L.p.rotation = wrap180(L.p.rotation); }
+    if (mirror && L.kind !== '3d') { mapProp(L, 'rotation', v => -v); mapProp(L, mirror === 'x' ? 'rotY' : 'rotX', v => wrap180(180 - v)); }
+  });
+}
+function rotateCanvas(deg) {
+  if (!isStill()) return;
+  const ow = W(), oh = H();
+  if (deg === 180) reframe(ow, oh, { ax: [-1, ow], ay: [-1, oh], turn: 180 });
+  else if (deg === 90) reframe(oh, ow, { swap: true, ax: [-1, oh], ay: [1, 0], turn: 90 });
+  else reframe(oh, ow, { swap: true, ax: [1, 0], ay: [-1, ow], turn: -90 });
+  commit(); refresh();
+}
+function flipCanvas(axis) {
+  if (!isStill()) return;
+  const ow = W(), oh = H();
+  reframe(ow, oh, axis === 'x' ? { ax: [-1, ow], mirror: 'x' } : { ay: [-1, oh], mirror: 'y' });
+  commit(); refresh();
+}
+function resizeImage(w, h) {
+  if (!isStill() || (w === W() && h === H())) return;
+  reframe(w, h, { ax: [w / W(), 0], ay: [h / H(), 0], k: w / W() }); commit(); refresh();
+}
+function resizeCanvas(w, h, [ax, ay] = [.5, .5]) {
+  if (!isStill()) return;
+  const ow = W(), oh = H(); if (w === ow && h === oh) return;
+  reframe(w, h, { ax: [1, Math.round((w - ow) * ax)], ay: [1, Math.round((h - oh) * ay)] }); commit(); refresh();
+}
+function nudgeLayer([dx, dy], n) {
+  const L = selLayer(); if (!L || L.locked || L.kind === 'audio') return;
+  setProp(L, 'x', val(L, 'x') + dx * n / W()); setProp(L, 'y', val(L, 'y') + dy * n / H());
+  commit(); refresh();
+}
+function setImageBg(mode, col) { const g = S.global; delete g.bgWas; g.bg = mode; if (col) g.bgColor = col; commit(); refresh(); }
+
+// ---- the dialogs: New image, Image size, Canvas size ----
+function imgDialog(title, body, go, onGo) {
+  $('#mTitle').textContent = title; $('#mBarWrap').hidden = true;
+  $('#mText').innerHTML = `<div class="imgdlg" id="imgDlg">${body}</div>`;
+  $('#mRow').innerHTML = `<button class="primary" id="mGo">${go}</button><button id="mCancel">Cancel</button>`;
+  $('#modal').hidden = false;
+  $('#mCancel').onclick = () => $('#modal').hidden = true;
+  $('#mGo').onclick = () => onGo();
+  $('#imgDlg').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); onGo(); } });
+  setTimeout(() => $('#imgDlg input[type=number]')?.select(), 0);
+}
+const IMG_SIZES = [[1920, 1080, 'Full HD'], [3840, 2160, '4K'], [1080, 1080, 'Square post'], [1080, 1350, 'Portrait post'], [1080, 1920, 'Phone screen'],
+  [1280, 720, 'Video thumbnail'], [2480, 3508, 'A4 page at 300 dpi'], [512, 512, 'Icon']];
+const IMG_BGS = [['white', 'White'], ['black', 'Black'], ['none', 'Transparent'], ['color', 'Colour']];
+function newImageBox() {
+  let last = {}; try { last = JSON.parse(localStorage.getItem('lumina.newImage') || '{}'); } catch { }
+  const w0 = last.w || 1920, h0 = last.h || 1080, bg0 = last.bg || 'white', col0 = last.col || '#ffffff';
+  const pre = IMG_SIZES.findIndex(([w, h]) => w === w0 && h === h0);
+  imgDialog('New image', `<p class="ftext">A blank picture to build up from layers: pictures, text, shapes and stickers. Image mode has no timeline; Image › Back to video editing brings it back.</p>
+    <div class="frow"><label for="ni-size">Size</label><select id="ni-size">${IMG_SIZES.map(([w, h, n], i) => `<option value="${i}"${i === pre ? ' selected' : ''}>${n} · ${w}×${h}</option>`).join('')}<option value=""${pre < 0 ? ' selected' : ''}>Custom</option></select></div>
+    <div class="frow"><label for="ni-w">Width (px)</label><input id="ni-w" type="number" min="1" max="${MAX_SIDE}" step="1" value="${w0}"></div>
+    <div class="frow"><label for="ni-h">Height (px)</label><input id="ni-h" type="number" min="1" max="${MAX_SIDE}" step="1" value="${h0}"></div>
+    <div class="frow"><label for="ni-bg">Background</label><select id="ni-bg">${selectOpts(IMG_BGS, bg0)}</select></div>
+    <div class="frow" id="ni-colrow"${bg0 === 'color' ? '' : ' hidden'}><label for="ni-col">Colour</label><input id="ni-col" type="color" value="${col0}"></div>
+    <p class="empty" id="ni-msg"></p>`, 'Create', async () => {
+      const w = Math.round(+$('#ni-w').value), h = Math.round(+$('#ni-h').value), bg = $('#ni-bg').value, col = $('#ni-col').value;
+      if (!sizeOK(w, h)) { $('#ni-msg').textContent = SIZE_PROBLEM; return; }
+      try { localStorage.setItem('lumina.newImage', JSON.stringify({ w, h, bg, col })); } catch { }
+      $('#modal').hidden = true;
+      if (await confirmDiscard()) blankImage(w, h, bg, col);
+    });
+  $('#ni-size').onchange = e => { const s = IMG_SIZES[e.target.value]; if (s) { $('#ni-w').value = s[0]; $('#ni-h').value = s[1]; } };
+  $('#ni-w').oninput = $('#ni-h').oninput = () => { $('#ni-size').value = ''; };
+  $('#ni-bg').onchange = e => { $('#ni-colrow').hidden = e.target.value !== 'color'; };
+}
+// a fresh picture: no layers, Image mode, the given size and background
+function blankImage(w, h, bg = 'white', col = '#ffffff') {
+  pause(); if (CROP) endCrop(false);
+  for (const id in RT) { RT[id].el?.pause?.(); delete RT[id]; }
+  S.layers = []; S.impacts = []; S.bookmarks = []; for (const k in MEDIA) delete MEDIA[k]; KOPEN.clear();
+  S.global = { vignette: 0, grade: 'none', letterbox: 0, still: true, ...(bg === 'none' ? { bg: 'none' } : { bg: 'color', bgColor: bg === 'white' ? '#ffffff' : bg === 'black' ? '#000000' : col }) };
+  setCanvasSize(w, h); S.time = 0; clearMulti(); S.sel = null; S.selKey = null;
+  undoStack.length = 0; redoStack.length = 0; commit();
+  PROJ.path = null; PROJ.dirty = true; markDirty(false);
+  PZ = null; fitPreview(); refresh(); hideWelcome(false);
+}
+// Open a picture as an image: a new picture the size of the file, with the file as its one layer
+function openImageDoc() {
+  const inp = $('#imgdocfile');
+  inp.accept = $('#file').accept.split(',').filter(a => !/^(video|audio)\/|^\.(srt|vtt)$/.test(a)).join(',');
+  inp.click();
+}
+async function openImageAsDoc(f) {
+  if (!(f.type?.startsWith('image') || IMG_EXT.test(f.name))) return toast(`“${f.name}” isn't a picture.`);
+  if (!(await confirmDiscard())) return;
+  blankImage(W(), H(), 'none'); addFiles([f], { asDoc: true });
+}
+$('#imgdocfile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) openImageAsDoc(f); };
+function imageSizeBox() {
+  if (!isStill()) return;
+  const ow = W(), oh = H();
+  imgDialog('Image size', `<p class="ftext">Makes the whole picture bigger or smaller: everything on it is resized with it. Width and height stay in proportion.</p>
+    <div class="frow"><label for="is-w">Width (px)</label><input id="is-w" type="number" min="1" max="${MAX_SIDE}" step="1" value="${ow}"></div>
+    <div class="frow"><label for="is-h">Height (px)</label><input id="is-h" type="number" min="1" max="${MAX_SIDE}" step="1" value="${oh}"></div>
+    <div class="frow"><label for="is-p">Percent</label><input id="is-p" type="number" min="1" max="1000" step="any" value="100"></div>
+    <p class="empty" id="is-msg">Now ${ow}×${oh}.</p>`, 'Resize', () => {
+      const w = Math.round(+$('#is-w').value), h = Math.round(+$('#is-h').value);
+      if (!sizeOK(w, h)) { $('#is-msg').textContent = SIZE_PROBLEM; return; }
+      $('#modal').hidden = true; resizeImage(w, h);
+    });
+  const show = (k, from) => {
+    if (!(k > 0)) return;
+    if (from !== 'w') $('#is-w').value = Math.max(1, Math.round(ow * k));
+    if (from !== 'h') $('#is-h').value = Math.max(1, Math.round(oh * k));
+    if (from !== 'p') $('#is-p').value = +(k * 100).toFixed(2);
+  };
+  $('#is-w').oninput = e => show(+e.target.value / ow, 'w');
+  $('#is-h').oninput = e => show(+e.target.value / oh, 'h');
+  $('#is-p').oninput = e => show(+e.target.value / 100, 'p');
+}
+const ANCHORS = ['top left', 'top', 'top right', 'left', 'middle', 'right', 'bottom left', 'bottom', 'bottom right'];
+let anchorAt = [.5, .5];
+function canvasSizeBox() {
+  if (!isStill()) return;
+  const ow = W(), oh = H(); anchorAt = [.5, .5];
+  imgDialog('Canvas size', `<p class="ftext">Adds space around the picture, or cuts it away, without resizing anything on it. New space shows the background.</p>
+    <div class="frow"><label for="cs-w">Width (px)</label><input id="cs-w" type="number" min="1" max="${MAX_SIDE}" step="1" value="${ow}"></div>
+    <div class="frow"><label for="cs-h">Height (px)</label><input id="cs-h" type="number" min="1" max="${MAX_SIDE}" step="1" value="${oh}"></div>
+    <div class="frow"><label>Keep it at</label><div class="anchor" id="cs-anchor">${[0, .5, 1].flatMap((y, j) => [0, .5, 1].map((x, i) => `<button data-ax="${x}" data-ay="${y}"${x === .5 && y === .5 ? ' class="on"' : ''} title="Keep the picture at the ${ANCHORS[j * 3 + i]}" aria-label="${ANCHORS[j * 3 + i]}">●</button>`)).join('')}</div></div>
+    <p class="empty" id="cs-msg">Now ${ow}×${oh}.</p>`, 'Change', () => {
+      const w = Math.round(+$('#cs-w').value), h = Math.round(+$('#cs-h').value);
+      if (!sizeOK(w, h)) { $('#cs-msg').textContent = SIZE_PROBLEM; return; }
+      $('#modal').hidden = true; resizeCanvas(w, h, anchorAt);
+    });
+  $('#cs-anchor').onclick = e => {
+    const b = e.target.closest('[data-ax]'); if (!b) return;
+    anchorAt = [+b.dataset.ax, +b.dataset.ay]; $('#cs-anchor').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  };
+}
+
+// ---- crop: a box on the preview; drag its edges or corners, drag inside to move it, or draw a new one; Enter crops ----
+function startCrop() {
+  if (!isStill()) return toast('Crop works in Image mode: Image › Edit this frame as a picture.');
+  if (CROP) return;
+  CROP = { x: 0, y: 0, w: W(), h: H() }; cropUI();
+  notice('Drag the edges or corners of the box (or draw a new one), then press Enter to crop. Esc cancels.');
+}
+function cropUI() {
+  $('#cropBar').hidden = !CROP; ov.style.cursor = CROP ? 'crosshair' : '';
+  if (CROP) $('#cropSize').textContent = `${Math.round(CROP.w)}×${Math.round(CROP.h)}`;
+}
+function endCrop(apply) {
+  const c = CROP; CROP = null; cropDrag = null; cropUI();
+  if (apply && c) {
+    const x = Math.round(c.x), y = Math.round(c.y), w = Math.max(1, Math.round(c.x + c.w) - x), h = Math.max(1, Math.round(c.y + c.h) - y);
+    if (x || y || w !== W() || h !== H()) { reframe(w, h, { ax: [1, -x], ay: [1, -y] }); commit(); notice(`Cropped to ${w}×${h}.`); }
+  }
+  refresh();
+}
+function drawCrop() {
+  const k = ov.width / W(), c = CROP, x = c.x * k, y = c.y * k, w = c.w * k, h = c.h * k, d = 5 * (devicePixelRatio || 1);
+  octx.fillStyle = 'rgba(0,0,0,.55)'; octx.beginPath(); octx.rect(0, 0, ov.width, ov.height); octx.rect(x, y, w, h); octx.fill('evenodd');
+  octx.strokeStyle = 'rgba(255,255,255,.45)'; octx.lineWidth = 1; octx.beginPath();
+  for (const f of [1 / 3, 2 / 3]) { octx.moveTo(x + w * f, y); octx.lineTo(x + w * f, y + h); octx.moveTo(x, y + h * f); octx.lineTo(x + w, y + h * f); }
+  octx.stroke();
+  octx.strokeStyle = '#fff'; octx.lineWidth = 2; octx.strokeRect(x, y, w, h);
+  octx.fillStyle = '#fff';
+  for (const [hx, hy] of [[0, 0], [.5, 0], [1, 0], [0, .5], [1, .5], [0, 1], [.5, 1], [1, 1]]) octx.fillRect(x + w * hx - d, y + h * hy - d, d * 2, d * 2);
+}
+ov.addEventListener('pointerdown', e => {
+  if (!CROP || e.button !== 0) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  const pt = compPoint(e), c = CROP, tol = 10 * W() / ov.getBoundingClientRect().width;
+  const inY = pt.y > c.y - tol && pt.y < c.y + c.h + tol, inX = pt.x > c.x - tol && pt.x < c.x + c.w + tol;
+  let mode = '';
+  if (inY) { if (Math.abs(pt.x - c.x) < tol) mode += 'l'; else if (Math.abs(pt.x - c.x - c.w) < tol) mode += 'r'; }
+  if (inX) { if (Math.abs(pt.y - c.y) < tol) mode += 't'; else if (Math.abs(pt.y - c.y - c.h) < tol) mode += 'b'; }
+  if (!mode) mode = pt.x > c.x && pt.x < c.x + c.w && pt.y > c.y && pt.y < c.y + c.h ? 'move' : 'new';
+  cropDrag = { mode, pt, c0: { ...c } };
+  try { ov.setPointerCapture(e.pointerId); } catch { }
+}, true);
+ov.addEventListener('pointermove', e => { if (cropDrag) { e.stopImmediatePropagation(); cropMove(compPoint(e)); } }, true);
+ov.addEventListener('pointerup', e => { if (cropDrag) { e.stopImmediatePropagation(); cropDrag = null; } }, true);
+function cropMove(pt) {
+  const { mode, c0 } = cropDrag, dx = pt.x - cropDrag.pt.x, dy = pt.y - cropDrag.pt.y, cw = W(), ch = H();
+  let x0 = c0.x, y0 = c0.y, x1 = c0.x + c0.w, y1 = c0.y + c0.h;
+  if (mode === 'move') { const mx = clamp(dx, -x0, cw - x1), my = clamp(dy, -y0, ch - y1); x0 += mx; x1 += mx; y0 += my; y1 += my; }
+  else if (mode === 'new') { x0 = cropDrag.pt.x; y0 = cropDrag.pt.y; x1 = pt.x; y1 = pt.y; }
+  else {
+    if (mode.includes('l')) x0 += dx; if (mode.includes('r')) x1 += dx;
+    if (mode.includes('t')) y0 += dy; if (mode.includes('b')) y1 += dy;
+  }
+  const ax = clamp(Math.min(x0, x1), 0, cw), bx = clamp(Math.max(x0, x1), 0, cw), ay = clamp(Math.min(y0, y1), 0, ch), by = clamp(Math.max(y0, y1), 0, ch);
+  CROP = { x: ax, y: ay, w: Math.max(1, bx - ax), h: Math.max(1, by - ay) }; cropUI();
+}
+$('#cropOk').onclick = () => endCrop(true);
+$('#cropNo').onclick = () => endCrop(false);
+
+// ---- a locked layer can't be moved on the preview, changed in Properties or deleted ----
+function lockInspector(L) {
+  if (!L?.locked) return;
+  const ins = $('#inspector');
+  ins.querySelectorAll('input, select, textarea, button').forEach(x => { if (!x.closest('.group')?.querySelector('[data-g], [data-tl]')) x.disabled = true; });
+  ins.insertAdjacentHTML('afterbegin', `<p class="empty lockednote">“${esc(L.name)}” is locked, so it can't be moved or changed. <button data-unlock>Unlock</button></p>`);
+}
+$('#inspector').addEventListener('click', e => { if (e.target.closest('[data-unlock]')) { const L = selLayer(); if (L) { delete L.locked; commit(); refresh(); } } });
+
+// ---- the Layers panel: top layer first, each with its eye, lock, picture and opacity; drag to change the order ----
+const LYR_SVG = {
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+};
+const lyrSvg = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LYR_SVG[k]}</svg>`;
+const BLANK_PX = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+const BG_NAME = { none: 'Transparent', color: '', black: 'Black', gradient: 'Gradient', blur: 'Blurred picture' };
+function layersPanel() {
+  if ($('#pLayers').hidden) return;
+  const L = selLayer(), sel = new Set(selIds()), g = S.global, bgOn = g.bg !== 'none';
+  $('#lyrList').innerHTML = S.layers.map(x => `<div class="lyr${sel.has(x.id) ? ' sel' : ''}${x.visible ? '' : ' off'}" data-lid="${x.id}" draggable="true" title="${esc(x.name)}${x.locked ? ' (locked)' : ''}">
+      <button class="lyr-b" data-lyr="eye" aria-pressed="${!!x.visible}" title="${x.visible ? 'Hide' : 'Show'} this layer">${lyrSvg(x.visible ? 'eye' : 'eyeOff')}</button>
+      <button class="lyr-b" data-lyr="lock" aria-pressed="${!!x.locked}" title="${x.locked ? 'Unlock' : 'Lock'} this layer">${lyrSvg(x.locked ? 'lock' : 'unlock')}</button>
+      <img class="lyr-th checker" alt="" src="${LTH[x.id]?.url || BLANK_PX}"><span class="lyr-nm">${esc(x.name)}</span><span class="lyr-op">${x.kind === 'audio' ? 'sound' : Math.round(val(x, 'opacity') * 100) + '%'}</span></div>`).join('')
+    + `<div class="lyr bgrow${bgOn ? '' : ' off'}" data-bgrow title="What shows where no layer covers the picture">
+      <button class="lyr-b" data-lyr="bgeye" aria-pressed="${bgOn}" title="${bgOn ? 'Make the background see-through' : 'Show the background again'}">${lyrSvg(bgOn ? 'eye' : 'eyeOff')}</button><span></span>
+      <input type="color" class="lyr-th" data-lyr="bgcol" value="${g.bg === 'color' ? g.bgColor || '#202020' : g.bg === 'none' ? g.bgColor || '#ffffff' : '#000000'}" title="Background colour"><span class="lyr-nm">Background</span><span class="lyr-op">${BG_NAME[g.bg || 'black'] ?? ''}</span></div>`;
+  const ok = L && L.kind !== 'audio', v = ok ? Math.round(val(L, 'opacity') * 100) : 100;
+  $('#lyrOp').disabled = $('#lyrOpN').disabled = !ok || !!L.locked;
+  $('#lyrOp').value = v; if (document.activeElement !== $('#lyrOpN')) $('#lyrOpN').value = v;
+  scheduleThumbs();
+}
+function placeLayer(L, before) {   // move L to just above the layer that is now at index `before` (index 0 is drawn on top)
+  const i = S.layers.indexOf(L); if (i < 0) return;
+  if (before > i) before--;
+  before = clamp(before, 0, S.layers.length - 1); if (before === i) return;
+  S.layers.splice(i, 1); S.layers.splice(before, 0, L); commit(); refresh();
+}
+function setOpacity(v, done) {
+  const L = selLayer(); if (!L || L.locked || L.kind === 'audio') return;
+  v = clamp(Math.round(+v || 0), 0, 100); setProp(L, 'opacity', v / 100);
+  $('#lyrOp').value = v; $('#lyrOpN').value = v;
+  const o = $(`#lyrList [data-lid="${L.id}"] .lyr-op`); if (o) o.textContent = v + '%';
+  if (done) { commit(); refresh(); }
+}
+$('#lyrOp').oninput = e => setOpacity(e.target.value);
+$('#lyrOp').onchange = e => setOpacity(e.target.value, true);
+$('#lyrOpN').onchange = e => setOpacity(e.target.value, true);
+$('#lyrList').onclick = e => {
+  const b = e.target.closest('[data-lyr]'), row = e.target.closest('[data-lid]'), g = S.global;
+  if (b?.dataset.lyr === 'bgeye') {
+    if (g.bg === 'none') { g.bg = g.bgWas || 'color'; g.bgColor ||= '#ffffff'; delete g.bgWas; } else { g.bgWas = g.bg || 'black'; g.bg = 'none'; }
+    commit(); refresh(); return;
+  }
+  const L = row && byId(+row.dataset.lid); if (!L) return;
+  if (b?.dataset.lyr === 'eye') { L.visible = !L.visible; commit(); refresh(); return; }
+  if (b?.dataset.lyr === 'lock') { if (L.locked) delete L.locked; else L.locked = true; commit(); refresh(); return; }
+  if (e.target.closest('input')) return;
+  clearMulti(); S.sel = L.id; S.selKey = null; refresh();
+};
+$('#lyrList').addEventListener('input', e => { if (e.target.matches('[data-lyr=bgcol]')) { S.global.bg = 'color'; S.global.bgColor = e.target.value; delete S.global.bgWas; } });
+$('#lyrList').addEventListener('change', e => { if (e.target.matches('[data-lyr=bgcol]')) { S.global.bg = 'color'; S.global.bgColor = e.target.value; delete S.global.bgWas; commit(); refresh(); } });
+// double-click a name to rename the layer
+$('#lyrList').ondblclick = e => {
+  const nm = e.target.closest('.lyr-nm'), row = nm?.closest('[data-lid]'), L = row && byId(+row.dataset.lid); if (!L) return;
+  nm.innerHTML = `<input type="text" value="${esc(L.name)}" aria-label="Layer name">`;
+  const inp = nm.firstChild; inp.focus(); inp.select();
+  let done = false;
+  const fin = keep => { if (done) return; done = true; const v = inp.value.trim(); if (keep && v && v !== L.name) { L.name = v; commit(); } refresh(); };
+  inp.onkeydown = ev => { ev.stopPropagation(); if (ev.key === 'Enter') fin(true); else if (ev.key === 'Escape') fin(false); };
+  inp.onblur = () => fin(true);
+};
+let lyrDrag = null;
+const lyrMarks = () => $('#lyrList').querySelectorAll('.dropabove, .dropbelow').forEach(x => x.classList.remove('dropabove', 'dropbelow'));
+const lyrBelow = (row, e) => { const r = row.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+$('#lyrList').addEventListener('dragstart', e => {
+  const row = e.target.closest('[data-lid]'); if (!row) return;
+  lyrDrag = +row.dataset.lid; e.dataTransfer.setData('application/x-lumina-layer', String(lyrDrag)); e.dataTransfer.effectAllowed = 'move';
+});
+$('#lyrList').addEventListener('dragover', e => {
+  const row = lyrDrag != null && e.target.closest('.lyr'); if (!row) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'move'; lyrMarks();
+  row.classList.add(row.hasAttribute('data-bgrow') || !lyrBelow(row, e) ? 'dropabove' : 'dropbelow');
+});
+$('#lyrList').addEventListener('drop', e => {
+  const row = lyrDrag != null && e.target.closest('.lyr'), L = byId(lyrDrag); lyrDrag = null; lyrMarks();
+  if (!row || !L) return;
+  e.preventDefault();
+  const T = row.hasAttribute('data-bgrow') ? null : byId(+row.dataset.lid);
+  placeLayer(L, T ? S.layers.indexOf(T) + (lyrBelow(row, e) ? 1 : 0) : S.layers.length);
+});
+$('#lyrList').addEventListener('dragend', () => { lyrDrag = null; lyrMarks(); });
+$('#pLayers .lyr-foot').onclick = e => {
+  const a = e.target.closest('[data-lyrf]')?.dataset.lyrf, L = selLayer(); if (!a) return;
+  if (!L) return notice('Pick a layer first.');
+  const i = S.layers.indexOf(L);
+  if (a === 'up') placeLayer(L, i - 1); else if (a === 'down') placeLayer(L, i + 2);
+  else if (a === 'dup') action('dup'); else if (a === 'del') del();
+};
+// the little pictures: each layer drawn on its own (a moment after the last change), shrunk to fit the row
+let thT = 0;
+function scheduleThumbs() { clearTimeout(thT); thT = setTimeout(makeThumbs, 150); }
+function makeThumbs() {
+  if ($('#pLayers').hidden || S.exporting || S.playing || RENDER.only || RENDER.alpha) return;
+  const k = Math.min(96 / W(), 64 / H()), cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(W() * k)); cv.height = Math.max(1, Math.round(H() * k));
+  const cx = cv.getContext('2d');
+  let drew = false;
+  for (const L of S.layers) {
+    if (L.kind === 'audio') continue;
+    const el = RT[L.id]?.el, sig = [JSON.stringify(L), W(), H(), S.time, el ? el.complete ?? el.readyState : ''].join('|');
+    if (LTH[L.id]?.sig === sig) continue;
+    const vis = L.visible; L.visible = true; RENDER = { only: L };
+    try { render(S.time); cx.clearRect(0, 0, cv.width, cv.height); cx.drawImage(canvas, 0, 0, cv.width, cv.height); LTH[L.id] = { sig, url: cv.toDataURL() }; drew = true; }
+    catch (e) { } finally { RENDER = {}; L.visible = vis; }
+  }
+  if (drew) render(S.time);
+  for (const img of $('#lyrList').querySelectorAll('[data-lid] img')) { const t = LTH[img.closest('[data-lid]').dataset.lid]; if (t && img.src !== t.url) img.src = t.url; }
+}
+
+// ---- the Image tab on the rail ----
+const bgIs = k => { const g = S.global, c = (g.bgColor || '').toLowerCase(); return k === 'none' ? g.bg === 'none' : k === 'black' ? (g.bg || 'black') === 'black' || (g.bg === 'color' && c === '#000000') : g.bg === 'color' && c === '#ffffff'; };
+function imagePanel() {
+  const card = (a, label, ico, tip) => railCard('img:' + a, label, `<span class="rt-ico">${ico}</span>`, tip);
+  if (!isStill()) return railHead('Image mode', 'one picture, like a photo editor')
+    + railNote('No timeline: one picture made of layers. Pictures, text, shapes, stickers, effects and colour grades all work on it. Save it as PNG, JPEG, PSD and more.')
+    + `<div class="rrow"><button class="primary" data-radd="img:new">New image…</button></div>`
+    + (window.lumina ? `<div class="rrow"><button data-radd="img:open">Open a picture…</button></div>` : '')
+    + `<div class="rrow"><button data-radd="img:here" title="Keeps this project's layers. Image › Back to video editing brings the timeline back.">Edit this frame as a picture</button></div>`;
+  return railHead('Canvas', `${W()}×${H()} pixels`)
+    + `<div class="rgrid r2">${card('size', 'Image size…', '⤢', 'Resize the whole picture (Ctrl+Alt+I)')}${card('canvas', 'Canvas size…', '⬚', 'Add or cut away space around the picture (Ctrl+Alt+C)')}${card('crop', 'Crop', '✂', 'Drag a box on the picture, then press Enter (C)')}</div>`
+    + railHead('Rotate and flip') + `<div class="rgrid r2">${card('rotl', 'Rotate left', '↺', 'Turn the picture 90° counter-clockwise')}${card('rotr', 'Rotate right', '↻', 'Turn the picture 90° clockwise')}${card('rot180', 'Rotate 180°', '⟲', 'Turn the picture upside down')}${card('flipx', 'Flip across', '⇆', 'Mirror the picture left to right')}${card('flipy', 'Flip up-down', '⇅', 'Mirror the picture top to bottom')}</div>`
+    + railHead('Background') + `<div class="rgrid r2">${[['white', 'White', '#ffffff'], ['black', 'Black', '#000000'], ['none', 'Transparent', '']].map(([k, n, c]) => `<button class="rcard${bgIs(k) ? ' on' : ''}" data-radd="img:bg-${k}" title="${n} background"><span class="rthumb"><span class="rt-sw${c ? '' : ' checker'}"${c ? ` style="background:${c}"` : ''}></span></span><span class="rlab">${n}</span></button>`).join('')}</div>`
+    + railNote('Add pictures with Import or by dropping them in, text with T, and shapes and stickers from Stickers. Each one is a layer in the Layers panel.')
+    + `<div class="rrow"><button data-radd="img:new">New image…</button><button data-radd="img:back">Back to video editing</button></div>`;
+}
+const IMG_ACTS = {
+  new: newImageBox, open: openImageDoc, here: () => setStill(true), back: () => setStill(false),
+  size: imageSizeBox, canvas: canvasSizeBox, crop: startCrop,
+  rotl: () => rotateCanvas(-90), rotr: () => rotateCanvas(90), rot180: () => rotateCanvas(180), flipx: () => flipCanvas('x'), flipy: () => flipCanvas('y'),
+  'bg-white': () => setImageBg('color', '#ffffff'), 'bg-black': () => setImageBg('color', '#000000'), 'bg-none': () => setImageBg('none'),
+};
+
 // Project panel: the composition and every imported media file
 const mediaSize = m => m.type === 'audio' || m.type === 'video' ? (m.duration ? fmt(m.duration).slice(0, 5) : '') : m.w ? `${m.w}×${m.h}` : '';
 function projectPanel() {
@@ -7167,7 +8728,7 @@ function projectPanel() {
   const n = Object.keys(MEDIA).length; $('#projCount').textContent = n ? `${n} item${n > 1 ? 's' : ''}` : '';
   const m = selMedia != null && MEDIA[selMedia];
   $('#projInfo').innerHTML = m ? `<b>${esc(m.name)}</b>${m.type[0].toUpperCase() + m.type.slice(1)}${mediaSize(m) ? ' · ' + mediaSize(m) : ''}${m.w && m.type !== 'image' ? ` · ${m.w}×${m.h}` : ''}`
-    : `<b>Main</b>Composition · ${W()}×${H()} · ${S.fps} fps · ${fmt(duration())}`;
+    : isStill() ? `<b>${esc(projectName())}</b>Image · ${W()}×${H()} pixels` : `<b>Main</b>Composition · ${W()}×${H()} · ${S.fps} fps · ${fmt(duration())}`;
   $('#vsize').textContent = `${W()}×${H()}`;
   if (LTAB === 'fxp') fxPresets();   // the selected layer decides whether effects can be added
   if (RAIL_PANELS[LTAB]?.dyn) railPanel();   // so do the Transitions, Captions, Audio and Adjust panels
@@ -7188,7 +8749,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Home') { e.preventDefault(); pause(); seek(0); } else if (e.key === 'End') { e.preventDefault(); pause(); seek(duration()); }
 });
 buildMenubar();
-try { const w = localStorage.getItem('lumina.workspace'); if (WORKSPACES[w]) wsName = w; } catch (e) { }
+try { const w = localStorage.getItem('lumina.workspace'); if (WORKSPACES[w] && w !== 'image') wsName = w; } catch (e) { }   // Image mode belongs to a project, not to start-up
 useWorkspace(wsName, false);
 fitPreview(); commit(); updateTitle(); refresh(); loop();
 startIntro();

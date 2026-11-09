@@ -100,8 +100,8 @@
     chooseExport();
     step('picker', { options: document.querySelectorAll('#mText input[name=fmt]').length, checked: $('#mText input[name=fmt]:checked')?.value });
     $('#mOk').click();
-    // Save as: project plus every video format; a video pick starts the export
-    chooseSaveAs();
+    // Save as: its Video tab lists every video format; a video pick starts the export
+    chooseSaveAs(); $('#mText [data-ftab="video"]')?.click();
     const sa = { options: document.querySelectorAll('#mText input[name=fmt]').length, checked: $('#mText input[name=fmt]:checked')?.value };
     $('#mText input[value=mkv]').checked = true; $('#mGo').click();
     await new Promise(r => setTimeout(r, 500));

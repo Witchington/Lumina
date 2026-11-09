@@ -21,3 +21,7 @@ selftest.png
 .claude/speed/pasted/
 .claude/timeline/*.webm
 .claude/timeline/*.mp4
+
+# image test output (PhotoCraft Round 1), written on each run
+.claude/image/out/
+.claude/photo/out/

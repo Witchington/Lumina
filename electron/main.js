@@ -270,6 +270,236 @@ ipcMain.handle('export:convert', async (e, { data, name, fmt, src, duration, w, 
   return target;
 });
 
+// ---------- Save as image (PhotoCraft Round 1): one frame as any image format ----------
+// The editor sends the frame as a PNG (or, for PSD / PDF / EPS / AI / SVG, the finished file it made itself).
+// FFmpeg turns the PNG into the other formats; HEIC is FFmpeg's HEVC picture in a HEIF file Lumina writes (heifFile).
+// HD colours (BT.709 primaries and matrix, sRGB curve, video range): written into AVIF and HEIC so viewers read them right
+const TAG709 = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'iec61966-2-1', '-color_range', 'tv'];
+const IMAGE = {
+  png:  { name: 'PNG image', ext: ['png'] },
+  jpg:  { name: 'JPEG image', ext: ['jpg', 'jpeg'], args: q => ['-c:v', 'mjpeg', '-q:v', String(Math.round(Math.min(31, Math.max(2, 31 - q * .29)))), '-pix_fmt', 'yuvj444p', '-f', 'image2'] },
+  webp: { name: 'WebP image', ext: ['webp'], args: (q, a) => ['-c:v', 'libwebp', ...(q >= 100 ? ['-lossless', '1'] : ['-quality', String(q)]), '-pix_fmt', a ? 'yuva420p' : 'yuv420p', '-f', 'webp'] },
+  avif: { name: 'AVIF image', ext: ['avif'], args: q => ['-c:v', 'libaom-av1', '-still-picture', '1', '-crf', String(Math.round(Math.min(63, Math.max(0, (100 - q) * .6 + 8)))), '-b:v', '0', '-cpu-used', '6', '-pix_fmt', 'yuv444p', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2:out_color_matrix=bt709:out_range=tv', ...TAG709, '-frames:v', '1', '-f', 'avif'] },
+  gif:  { name: 'GIF image', ext: ['gif'], args: (q, a) => ['-vf', `split[s0][s1];[s0]palettegen=max_colors=256:reserve_transparent=${a ? 1 : 0}[p];[s1][p]paletteuse=dither=sierra2_4a`, '-f', 'gif'] },
+  tiff: { name: 'TIFF image', ext: ['tif', 'tiff'], args: (q, a) => ['-c:v', 'tiff', '-compression_algo', 'deflate', '-pix_fmt', a ? 'rgba' : 'rgb24', '-f', 'image2'] },
+  bmp:  { name: 'Bitmap image', ext: ['bmp'], args: (q, a) => ['-c:v', 'bmp', '-pix_fmt', a ? 'bgra' : 'bgr24', '-f', 'image2'] },
+  ico:  { name: 'Windows icon', ext: ['ico'], args: () => ['-vf', 'scale=256:256:force_original_aspect_ratio=decrease', '-c:v', 'png', '-pix_fmt', 'rgba', '-f', 'ico'] },
+  tga:  { name: 'Targa image', ext: ['tga'], args: (q, a) => ['-c:v', 'targa', '-pix_fmt', a ? 'bgra' : 'bgr24', '-f', 'image2'] },
+  jp2:  { name: 'JPEG 2000 image', ext: ['jp2'], args: (q, a) => ['-c:v', 'libopenjpeg', '-pix_fmt', a ? 'rgba' : 'rgb24', ...(q >= 100 ? [] : ['-compression_level', String(Math.round((100 - q) * 2 + 5))]), '-f', 'image2'] },
+  heic: { name: 'HEIC image', ext: ['heic', 'heif'] },
+  psd:  { name: 'Photoshop document', ext: ['psd'] },
+  pdf:  { name: 'PDF document', ext: ['pdf'] },
+  ai:   { name: 'Illustrator file (PDF-compatible)', ext: ['ai'] },
+  eps:  { name: 'EPS file', ext: ['eps'] },
+  svg:  { name: 'SVG image', ext: ['svg'] }
+};
+ipcMain.handle('image:save', async (e, { data, fmt, quality = 90, alpha = false, name, filePath, ready }) => {
+  const F = IMAGE[fmt]; if (!F) throw new Error('Unknown image format ' + fmt);
+  let target = filePath;
+  if (!target) {
+    const r = await dialog.showSaveDialog(win, { title: 'Save image', defaultPath: path.join(app.getPath('pictures'), `${name}.${F.ext[0]}`),
+      filters: [{ name: `${F.name} (${F.ext.map(x => '.' + x).join(', ')})`, extensions: F.ext }] });
+    if (r.canceled || !r.filePath) return null;
+    target = r.filePath;
+  }
+  if (!F.ext.includes(path.extname(target).slice(1).toLowerCase())) target += '.' + F.ext[0];
+  // already the finished file (PNG straight from the canvas, or one Lumina wrote itself)
+  if (ready || fmt === 'png') { fs.writeFileSync(target, Buffer.from(data)); return target; }
+  const tmp = path.join(app.getPath('temp'), `lumina-image-${Date.now()}`), png = tmp + '.png';
+  fs.writeFileSync(png, Buffer.from(data));
+  try {
+    if (fmt === 'heic') {
+      // HEVC picture (FFmpeg's x265), then the HEIF file around it
+      const hevc = tmp + '.hevc', crf = String(Math.round(Math.min(51, Math.max(0, (100 - quality) * .4 + 12))));
+      await runFFmpeg(['-hide_banner', '-y', '-i', png, '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2:out_color_matrix=bt709:out_range=tv,format=yuv420p', '-c:v', 'libx265', '-crf', crf, '-preset', 'medium', ...TAG709,
+        '-x265-params', 'log-level=error:keyint=1:repeat-headers=1:colorprim=bt709:transfer=iec61966-2-1:colormatrix=bt709:range=limited', '-frames:v', '1', '-f', 'hevc', hevc], 0, () => {});
+      fs.writeFileSync(target, heifFile(fs.readFileSync(hevc)));
+      fs.rmSync(hevc, { force: true });
+    } else {
+      const out = tmp + '.' + F.ext[0];
+      await runFFmpeg(['-hide_banner', '-y', '-i', png, ...F.args(quality, alpha), '-frames:v', '1', out], 0, () => {});
+      fs.copyFileSync(out, target); fs.rmSync(out, { force: true });
+    }
+  } finally { fs.rmSync(png, { force: true }); }
+  return target;
+});
+// ---------- animated images and image sequences (PhotoCraft Round P2) ----------
+// The editor renders each frame of a time range as a PNG into a temp folder (anim:frame); anim:finish then has FFmpeg make
+// one moving picture (GIF, WebP, APNG) or a folder of numbered pictures from them.
+const animJobs = {};
+const ANIM = {
+  gif:  { name: 'Animated GIF', ext: 'gif', args: (q, a, loop, vf) => ['-vf', `${vf}split[s0][s1];[s0]palettegen=stats_mode=diff:reserve_transparent=${a ? 1 : 0}[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, '-loop', loop ? '0' : '-1', '-f', 'gif'] },
+  webp: { name: 'Animated WebP', ext: 'webp', args: (q, a, loop, vf) => [...(vf ? ['-vf', vf.slice(0, -1)] : []), '-c:v', 'libwebp_anim', ...(q >= 100 ? ['-lossless', '1'] : ['-quality', String(q)]), '-pix_fmt', a ? 'yuva420p' : 'yuv420p', '-loop', loop ? '0' : '1', '-f', 'webp'] },
+  apng: { name: 'Animated PNG', ext: 'png', args: (q, a, loop, vf) => [...(vf ? ['-vf', vf.slice(0, -1)] : []), '-c:v', 'apng', '-pix_fmt', a ? 'rgba' : 'rgb24', '-plays', loop ? '0' : '1', '-f', 'apng'] }
+};
+const SEQ = { png: 'png', jpg: 'jpg', tiff: 'tif', webp: 'webp', tga: 'tga', bmp: 'bmp' };
+ipcMain.handle('anim:begin', () => {
+  const id = String(Date.now()), dir = path.join(app.getPath('temp'), 'lumina-anim-' + id);
+  fs.mkdirSync(dir, { recursive: true }); animJobs[id] = { dir, n: 0 }; return id;
+});
+ipcMain.handle('anim:frame', (e, { id, data }) => {
+  const J = animJobs[id]; if (!J) throw new Error('No animation is being made.');
+  fs.writeFileSync(path.join(J.dir, String(J.n++).padStart(6, '0') + '.png'), Buffer.from(data)); return J.n;
+});
+ipcMain.handle('anim:cancel', (e, id) => { const J = animJobs[id]; if (J) { if (J.proc) killTree(J.proc); fs.rmSync(J.dir, { recursive: true, force: true }); delete animJobs[id]; } return true; });
+ipcMain.handle('anim:finish', async (e, { id, fmt, fps, scale = 1, quality = 90, alpha = false, loop = true, name, filePath, folder }) => {
+  const J = animJobs[id]; if (!J || !J.n) throw new Error('No frames were made.');
+  const vf = scale !== 1 ? `scale=trunc(iw*${scale}/2)*2:trunc(ih*${scale}/2)*2,` : '';
+  const input = ['-hide_banner', '-y', '-framerate', String(fps), '-i', path.join(J.dir, '%06d.png')];
+  const run = args => new Promise((resolve, reject) => {
+    const p = J.proc = require('child_process').spawn(FFMPEG, [...input, ...args], { windowsHide: true }); let err = '';
+    p.stdout.on('data', d => { const m = /frame=(\d+)/.exec(String(d)); if (m && !e.sender.isDestroyed()) e.sender.send('anim:progress', Math.min(1, +m[1] / J.n)); });
+    p.stderr.on('data', d => { err = (err + d).slice(-4000); });
+    p.on('error', reject); p.on('close', code => code === 0 ? resolve() : reject(new Error(err.trim().split('\n').slice(-2).join('\n') || 'FFmpeg stopped with code ' + code)));
+  });
+  try {
+    if (ANIM[fmt]) {
+      const A = ANIM[fmt]; let target = filePath;
+      if (!target) {
+        const r = await dialog.showSaveDialog(win, { title: 'Save ' + A.name, defaultPath: path.join(app.getPath('pictures'), `${name}.${A.ext}`), filters: [{ name: `${A.name} (.${A.ext})`, extensions: [A.ext] }] });
+        if (r.canceled || !r.filePath) return null; target = r.filePath;
+      }
+      if (path.extname(target).slice(1).toLowerCase() !== A.ext) target += '.' + A.ext;
+      const tmp = path.join(J.dir, 'out.' + A.ext);
+      await run([...A.args(quality, alpha, loop, vf), '-progress', 'pipe:1', '-nostats', tmp]);
+      fs.copyFileSync(tmp, target);
+      return target;
+    }
+    const kind = fmt.replace(/^seq-/, ''), ext = SEQ[kind]; if (!ext) throw new Error('Unknown format ' + fmt);
+    let dest = folder;
+    if (!dest) {
+      const r = await dialog.showOpenDialog(win, { title: 'Save the pictures into this folder', defaultPath: app.getPath('pictures'), properties: ['openDirectory', 'createDirectory'] });
+      if (r.canceled || !r.filePaths[0]) return null; dest = r.filePaths[0];
+    }
+    fs.mkdirSync(dest, { recursive: true });
+    // one picture per frame: <name>_0001.<ext>, <name>_0002.<ext>…
+    const stem = String(name).replace(/[\\/:*?"<>|]/g, '').trim() || 'Lumina';
+    const per = IMAGE[kind]?.args ? IMAGE[kind].args(quality, alpha).filter((x, i, a) => x !== '-f' && a[i - 1] !== '-f') : ['-c:v', 'png', '-pix_fmt', alpha ? 'rgba' : 'rgb24'];
+    const vfi = per.indexOf('-vf'); if (vf) { if (vfi >= 0) per[vfi + 1] = vf + per[vfi + 1]; else per.unshift('-vf', vf.slice(0, -1)); }
+    await run([...per, '-start_number', '1', '-progress', 'pipe:1', '-nostats', '-f', 'image2', path.join(dest, `${stem}_%04d.${ext}`)]);
+    return dest;
+  } finally { fs.rmSync(J.dir, { recursive: true, force: true }); delete animJobs[id]; }
+});
+
+// ---------- opening every image format (PhotoCraft Round P2) ----------
+// Chromium shows PNG, JPEG, GIF, WebP, BMP, AVIF, ICO and SVG itself. Anything else is turned into a PNG once (kept in
+// Lumina's image cache, keyed by the file's path, size and date): first by FFmpeg (TIFF, PSD, TGA, JPEG 2000, EXR, HDR,
+// DDS, QOI…), then on Windows by Windows' own image decoders (HEIC, and camera RAW once the Raw Image Extension is installed).
+const IMG_CACHE = path.join(app.getPath('userData'), 'image-cache');
+const RAW_EXT = /\.(dng|nef|nrw|cr2|cr3|crw|arw|srf|sr2|orf|rw2|raf|srw|pef|raw|rwl|3fr|erf|kdc|mrw|mef|mos|iiq|x3f)$/i;
+// Windows' decoders, through PowerShell and WinRT: the picture (EXIF turn applied, colours made sRGB) as BGRA bytes
+const WIC_SCRIPT = `$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null=[Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime]
+$null=[Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime]
+$m=[System.WindowsRuntimeSystemExtensions].GetMethods()|?{$_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1'}|select -First 1
+function A($o,[Type]$t){$x=$m.MakeGenericMethod($t).Invoke($null,@($o));$x.Wait(-1)|Out-Null;$x.Result}
+$f=A ([Windows.Storage.StorageFile]::GetFileFromPathAsync($env:LUMINA_IN)) ([Windows.Storage.StorageFile])
+$s=A ($f.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$d=A ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($s)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$p=A ($d.GetPixelDataAsync([Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,[Windows.Graphics.Imaging.BitmapAlphaMode]::Straight,(New-Object Windows.Graphics.Imaging.BitmapTransform),[Windows.Graphics.Imaging.ExifOrientationMode]::RespectExifOrientation,[Windows.Graphics.Imaging.ColorManagementMode]::ColorManageToSRgb)) ([Windows.Graphics.Imaging.PixelDataProvider])
+[IO.File]::WriteAllBytes($env:LUMINA_OUT,$p.DetachPixelData())
+"$($d.OrientedPixelWidth) $($d.OrientedPixelHeight) $($d.DecoderInformation.FriendlyName)"`;
+async function windowsDecode(file, png) {
+  const raw = png + '.bgra';
+  // (sent encoded, so its quotes and lines arrive exactly; no script file is written)
+  const r = await runText('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WIC_SCRIPT, 'utf16le').toString('base64')],
+    { ...process.env, LUMINA_IN: file, LUMINA_OUT: raw });
+  try {
+    const m = /^(\d+) (\d+) (.*)$/m.exec(r.out);
+    if (r.code !== 0 || !m) throw new Error((r.err.split('\n').find(l => /Exception|error/i.test(l)) || r.err || 'Windows could not read it').trim());
+    await runFFmpeg(['-hide_banner', '-y', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s', `${m[1]}x${m[2]}`, '-i', raw, '-frames:v', '1', '-c:v', 'png', png], 0, () => {});
+    return m[3];
+  } finally { fs.rmSync(raw, { force: true }); }
+}
+ipcMain.handle('image:open', async (e, file) => {
+  const st = fs.statSync(file);
+  fs.mkdirSync(IMG_CACHE, { recursive: true });
+  const png = path.join(IMG_CACHE, require('crypto').createHash('sha1').update(`${file}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 20) + '.png');
+  if (fs.existsSync(png)) return { png, cached: true };
+  // camera RAW: Windows reads it far better than FFmpeg (which only knows a little DNG)
+  if (!RAW_EXT.test(file)) {
+    try { await runFFmpeg(['-hide_banner', '-y', '-i', file, '-frames:v', '1', '-c:v', 'png', '-pix_fmt', 'rgba', png], 0, () => {}); return { png, by: 'FFmpeg' }; }
+    catch { fs.rmSync(png, { force: true }); }
+  }
+  if (process.platform === 'win32') {
+    try { return { png, by: await windowsDecode(file, png) }; }
+    catch (err) {
+      fs.rmSync(png, { force: true });
+      // "component not found" (WINCODEC_ERR_COMPONENTNOTFOUND): Windows has no decoder for this kind of file
+      const noCodec = /88982F50|component.*not.*found|no imaging component/i.test(err.message);
+      if (RAW_EXT.test(file)) throw new Error(noCodec ? 'Windows can\'t read camera RAW files yet. Installing Microsoft\'s free "Raw Image Extension" (Microsoft Store) lets Windows and Lumina open RAW photos.'
+        : 'Lumina couldn\'t read this camera RAW file. It may be damaged, or from a camera newer than Windows\' RAW support (updating the "Raw Image Extension" can help).');
+      if (/\.(heic|heif)$/i.test(file) && noCodec) throw new Error('Windows can\'t read HEIC files yet. Installing Microsoft\'s "HEIF Image Extensions" (Microsoft Store) lets Windows and Lumina open them.');
+      throw new Error('Lumina couldn\'t read this picture: ' + err.message);
+    }
+  }
+  throw new Error('Lumina couldn\'t read this picture.');
+});
+
+// any image FFmpeg can read, as a PNG (the self-test checks saved images with it; Image mode will open files with it)
+ipcMain.handle('image:toPNG', async (e, file) => {
+  const out = path.join(app.getPath('temp'), `lumina-decode-${Date.now()}.png`);
+  try { await runFFmpeg(['-hide_banner', '-y', '-i', file, '-frames:v', '1', '-f', 'image2', '-c:v', 'png', out], 0, () => {}); return fs.readFileSync(out); }
+  finally { fs.rmSync(out, { force: true }); }
+});
+
+// A HEIF (.heic) file holding one HEVC picture. Layout (ISO/IEC 23008-12): ftyp; meta { hdlr 'pict', pitm, iloc, iinf
+// { infe 'hvc1' }, iprp { ipco { hvcC, ispe }, ipma } }; mdat with the picture's NAL units, each with a 4-byte length.
+function heifFile(annexB) {
+  // split the Annex B stream at its start codes
+  const nals = [];
+  for (let i = 0, start = -1; i <= annexB.length; i++) {
+    const sc = i + 3 <= annexB.length && annexB[i] === 0 && annexB[i + 1] === 0 && (annexB[i + 2] === 1 || (annexB[i + 2] === 0 && annexB[i + 3] === 1));
+    if (sc || i === annexB.length) {
+      if (start >= 0) { let end = i; while (end > start && annexB[end - 1] === 0) end--; nals.push(annexB.subarray(start, end)); }
+      if (sc) { i += annexB[i + 2] === 1 ? 2 : 3; start = i + 1; }
+    }
+  }
+  const type = n => (n[0] >> 1) & 63;
+  const vps = nals.find(n => type(n) === 32), sps = nals.find(n => type(n) === 33), pps = nals.find(n => type(n) === 34);
+  const pic = nals.filter(n => type(n) < 32);   // the picture's slices
+  if (!vps || !sps || !pps || !pic.length) throw new Error('FFmpeg made no HEVC picture.');
+  // the SPS without emulation-prevention bytes, read bit by bit
+  const raw = []; for (let i = 2; i < sps.length; i++) { if (i >= 4 && sps[i] === 3 && sps[i - 1] === 0 && sps[i - 2] === 0) continue; raw.push(sps[i]); }
+  let bit = 0;
+  const u = n => { let v = 0; for (let k = 0; k < n; k++) { v = v * 2 + ((raw[bit >> 3] >> (7 - (bit & 7))) & 1); bit++; } return v; };
+  const ue = () => { let z = 0; while (!u(1)) z++; return (2 ** z - 1) + u(z); };
+  u(4); const maxSub = u(3); u(1);   // sps_video_parameter_set_id, max_sub_layers_minus1, temporal_id_nesting
+  const ptlStart = bit;              // general profile_tier_level: 12 bytes
+  bit += 96;
+  const subPresent = []; for (let k = 0; k < maxSub; k++) { subPresent.push([u(1), u(1)]); }
+  if (maxSub > 0) for (let k = maxSub; k < 8; k++) u(2);
+  for (const [p, l] of subPresent) { if (p) bit += 88; if (l) bit += 8; }
+  ue();                              // sps_seq_parameter_set_id
+  const chroma = ue(); if (chroma === 3) u(1);
+  let width = ue(), height = ue();
+  // conformance window: the encoder pads to whole blocks; the picture's real size is without the padding
+  if (u(1)) { const sw = chroma === 1 || chroma === 2 ? 2 : 1, sh = chroma === 1 ? 2 : 1, l = ue(), r = ue(), t = ue(), b = ue(); width -= sw * (l + r); height -= sh * (t + b); }
+  const depthL = ue() + 8, depthC = ue() + 8;
+  const ptl = Buffer.from(raw.slice(ptlStart >> 3, (ptlStart >> 3) + 12));
+  // boxes
+  const u32 = v => { const b = Buffer.alloc(4); b.writeUInt32BE(v); return b; }, u16 = v => { const b = Buffer.alloc(2); b.writeUInt16BE(v); return b; };
+  const box = (t, ...parts) => { const body = Buffer.concat(parts); return Buffer.concat([u32(8 + body.length), Buffer.from(t, 'latin1'), body]); };
+  const full = (t, v, f, ...parts) => box(t, Buffer.from([v, f >> 16 & 255, f >> 8 & 255, f & 255]), ...parts);
+  const arr = (t, n) => Buffer.concat([Buffer.from([0x80 | t]), u16(1), u16(n.length), n]);
+  const hvcC = box('hvcC', Buffer.from([1]), ptl, Buffer.from([0xf0, 0x00, 0xfc, 0xfc | chroma, 0xf8 | (depthL - 8), 0xf8 | (depthC - 8), 0, 0, ((maxSub + 1) << 3) | 0x04 | 0x03, 3]),   // ...frame rate 0; layers, nested, 4-byte lengths; 3 arrays
+    arr(32, vps), arr(33, sps), arr(34, pps));
+  const ispe = full('ispe', 0, 0, u32(width), u32(height));
+  const colr = box('colr', Buffer.from('nclx', 'latin1'), u16(1), u16(13), u16(1), Buffer.from([0]));   // BT.709, sRGB curve, BT.709 matrix, video range
+  const data = Buffer.concat(pic.flatMap(n => [u32(n.length), n]));
+  const ftyp = box('ftyp', Buffer.from('heic', 'latin1'), u32(0), Buffer.from('mif1heic', 'latin1'));
+  const meta = off => full('meta', 0, 0,
+    full('hdlr', 0, 0, u32(0), Buffer.from('pict', 'latin1'), Buffer.alloc(12), Buffer.from('Lumina\0', 'latin1')),
+    full('pitm', 0, 0, u16(1)),
+    full('iloc', 0, 0, Buffer.from([0x44, 0x00]), u16(1), u16(1), u16(0), u16(1), u32(off), u32(data.length)),
+    full('iinf', 0, 0, u16(1), full('infe', 2, 0, u16(1), u16(0), Buffer.from('hvc1', 'latin1'), Buffer.from('Image\0', 'latin1'))),
+    box('iprp', box('ipco', hvcC, ispe, colr), full('ipma', 0, 0, u32(1), u16(1), Buffer.from([3, 0x81, 0x02, 0x03]))));
+  // the picture's place in the file is known once meta's size is (meta's size doesn't depend on the number)
+  const off = ftyp.length + meta(0).length + 8;
+  return Buffer.concat([ftyp, meta(off), box('mdat', data)]);
+}
+
 // ---------- smooth editing copies ----------
 // Why a video is slow to jump around in: a video only stores a full picture now and then (a "keyframe"); every other
 // frame is a change from the one before. Jumping to a frame means decoding from the keyframe before it. Movies and

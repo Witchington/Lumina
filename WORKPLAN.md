@@ -34,11 +34,11 @@ At 6–10 effects a round that's roughly 30 more rounds.
 
 | Round | Theme | Effects |
 |---|---|---|
-| 7 | Colour I | Vibrance, Color Balance, Black & White, Tritone, Channel Mixer, Selective Color, Colorama |
-| 8 | Colour II | Exposure, Photo Filter, Shadow/Highlight, Change Color, Change to Color, Leave Color, Color Balance (HLS), Gamma/Pedestal/Gain, CC Toner, CC Color Offset |
-| 9 | Colour III (auto & broadcast) | Auto Color, Auto Contrast, Auto Levels, Equalize, Broadcast Colors, Video Limiter, Arbitrary Map, Levels (Individual), CC Color Neutralizer, CC Kernel, Color Link, Color Stabilizer |
-| 10 | Lumetri Color | The all-in-one grading panel: basic, creative, curves, colour wheels, HSL secondary, vignette |
-| — | Finish Round 6 leftovers | Hue/Sat per-colour ranges, per-channel Levels, a draggable Curves graph |
+| 7 ✅ | Colour I | Vibrance, Color Balance, Black & White, Tritone, Channel Mixer, Selective Color, Colorama |
+| 8 ✅ | Colour II | Exposure, Photo Filter, Shadow/Highlight, Change Color, Change to Color, Leave Color, Color Balance (HLS), Gamma/Pedestal/Gain, CC Toner, CC Color Offset |
+| 9 ✅ | Colour III (auto & broadcast) | Auto Color, Auto Contrast, Auto Levels, Equalize, Broadcast Colors, Video Limiter, Arbitrary Map, Levels (Individual), CC Color Neutralizer, CC Kernel, Color Link, Color Stabilizer |
+| 10 ✅ | Lumetri Color | The all-in-one grading panel: basic, creative, curves, colour wheels, HSL secondary, vignette |
+| — ✅ | Finish Round 6 leftovers | Hue/Sat per-colour ranges, per-channel Levels, a draggable Curves graph (also for Lumetri's curves) |
 | 11 | Keying I | Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key |
 | 12 | Keying II + mattes | Keylight, Spill Suppressor, Advanced Spill, Key Cleaner, Unmult, Screen, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard/Soft Matte |
 | 13 | Blur & Sharpen rest | Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross/Radial/Radial Fast/Vector Blur, Reduce Flicker, Camera-Shake Deblur |

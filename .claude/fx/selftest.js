@@ -301,6 +301,46 @@
     }
     step('round6speed', r6speed);
 
+    // ---- Round 6 leftovers. Hue/Saturation's colour ranges: Reds hue +120 turns the red patch green and leaves the green
+    // patch; Reds saturation -100 greys red (130); the Channel Control menu shows that range's settings
+    {
+      const R6 = { RED: 800, GRN: 1120, GRY: 1760, BLK: 160, WHT: 480, Y: 270 }, cl = (a, b, t) => a.every((v, k) => Math.abs(v - b[k]) <= t);
+      f = await only('huesat'); set(f, 'redsHue', 120); draw(); const rgRed = px(R6.RED, R6.Y), rgGreen = px(R6.GRN, R6.Y); set(f, 'redsHue', 0);
+      set(f, 'redsSat', -100); draw(); const rgGrey = px(R6.RED, R6.Y), rgGreen2 = px(R6.GRN, R6.Y); set(f, 'redsSat', 0);
+      S.sel = L.id; setRightTab('fx'); f.channel = 1; refresh(); const rgRows = !!document.querySelector('#inspector [data-p$="_redsHue"], #inspector [id$="_redsHue"]') || $('#inspector').textContent.includes('Red hue');
+      f.channel = 0; refresh();
+      step('huesatRanges', { redsHue120: rgRed.join(), green: rgGreen.join(), redsSat0: rgGrey.join(), green2: rgGreen2.join(), panelShowsReds: rgRows,
+        works: cl(rgRed, [40, 220, 40], 2) && cl(rgGreen, P0(R6.GRN, R6.Y), 1) && cl(rgGrey, [130, 130, 130], 1) && cl(rgGreen2, P0(R6.GRN, R6.Y), 1) && rgRows });
+
+      // Levels' channels: Green Input White 204 lifts grey's green to 160; Red Output Black 128 makes black (128, 0, 0);
+      // Alpha Output White 128 makes white half see-through (128); with the RGB controls too, the channel works on their result
+      f = await only('levels'); set(f, 'greenInWhite', 204); draw(); const lcGreen = px(R6.GRY, R6.Y); set(f, 'greenInWhite', 255);
+      set(f, 'redOutBlack', 128); draw(); const lcRed = px(R6.BLK, R6.Y); set(f, 'redOutBlack', 0);
+      set(f, 'alphaOutWhite', 128); draw(); const lcAlpha = px(R6.WHT, R6.Y); set(f, 'alphaOutWhite', 255);
+      set(f, 'gamma', 2); set(f, 'redOutWhite', 128); draw(); const lcBoth = px(R6.GRY, R6.Y); set(f, 'gamma', 1); set(f, 'redOutWhite', 255);
+      draw(); const lcZero = diff(plain, frame()).max;
+      step('levelsChannels', { greenWhite204: lcGreen.join(), redOutBlack128: lcRed.join(), alphaHalf: lcAlpha.join(), gamma2ThenRedHalf: lcBoth.join(), backToZero: lcZero,
+        works: cl(lcGreen, [128, 160, 128], 1) && cl(lcRed, [128, 0, 0], 1) && cl(lcAlpha, [128, 128, 128], 1) && cl(lcBoth, [91, 181, 181], 1) && lcZero === 0 });
+
+      // Curves' graph: typing points works ("0,0 0.5,0.75 1,1" lifts grey to 192); the Red graph alone lowers red;
+      // dragging the middle of the RGB graph up adds a point and lifts grey; double-clicking it takes it away again;
+      // an older project's slider still counts until the graph is used
+      f = await only('curves'); f.cRGB = '0,0 0.5,0.75 1,1'; draw(); const cgType = px(R6.GRY, R6.Y); f.cRGB = '';
+      f.cRed = '0,0 0.5,0.25 1,1'; draw(); const cgRed = px(R6.GRY, R6.Y); f.cRed = '';
+      set(f, 'rgb128', 180); draw(); const cgOld = px(R6.GRY, R6.Y)[0]; set(f, 'rgb128', 128);
+      S.sel = L.id; setRightTab('fx'); f.chan = 0; refresh();
+      const cv = $('#inspector canvas.curvebox'), r = cv?.getBoundingClientRect(), at = (u, v) => ({ clientX: r.left + u * r.width, clientY: r.top + (1 - v) * r.height, pointerId: 1, bubbles: true });
+      let cgDrag = null, cgAfterDbl = null, cgPts = null, cgDblPts = null;
+      if (cv) {
+        cv.dispatchEvent(new PointerEvent('pointerdown', at(.5, .5))); cv.dispatchEvent(new PointerEvent('pointermove', at(.5, .75))); cv.dispatchEvent(new PointerEvent('pointerup', at(.5, .75)));
+        cgPts = f.cRGB; draw(); cgDrag = px(R6.GRY, R6.Y);
+        cv.dispatchEvent(new MouseEvent('dblclick', at(.5, .75))); cgDblPts = f.cRGB; draw(); cgAfterDbl = px(R6.GRY, R6.Y);
+      }
+      const cgText = $('#inspector input[type=text][data-fxk=cRGB]')?.value;
+      step('curvesGraph', { typed: cgType.join(), redGraph: cgRed.join(), oldSlider: cgOld, graph: !!cv, afterDrag: cgPts, dragGrey: cgDrag?.join(), afterDblclick: cgDblPts, dblGrey: cgAfterDbl?.join(), textField: cgText,
+        works: cl(cgType, [192, 192, 192], 1) && cl(cgRed, [64, 128, 128], 1) && cgOld > 170 && !!cv && cgDrag && cgDrag[0] > 180 && cgAfterDbl && cl(cgAfterDbl, [128, 128, 128], 1) && cgText === cgDblPts });
+    }
+
     // ---- Round 7: colour I. Patches at y 270: black 160, white 480, red 800, green 1120, blue 1440, grey 1760
     const RED = 800, GRN = 1120, GRY = 1760, BLK = 160, WHT = 480, Y = 270;
     // Vibrance: zero changes nothing; -100 saturation makes red grey; +100 vibrance makes red purer and leaves grey grey
@@ -367,6 +407,259 @@
       const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r7speed[id] = +((performance.now() - t0) / 10).toFixed(1);
     }
     step('round7speed', r7speed);
+
+    // ---- Round 8: colour II (fx_tone's fxt_point; Exposure in the base kernels). Same patches at y 270; BLU 1440
+    const BLU = 1440;
+    const t8k = FXG.pipes['fx_tone:fxt_point'];
+    // Exposure +1 on grey 128: linear light 0.2195 × 2 back to 0.688 (175); bypassing linear light doubles it to white;
+    // Individual channels moves just one
+    f = await only('exposure'); draw(); const exZero = diff(plain, frame()).max;
+    if (!FXG.pipes['kernels:pointwise']?.pipe) step('exposureKernel', { err: FXG.pipes['kernels:pointwise']?.err });
+    set(f, 'masterExposure', 1); draw(); const exGrey = px(GRY, Y); f.bypass = true; draw(); const exBypass = px(GRY, Y); f.bypass = false;
+    f.channels = 1; set(f, 'redExposure', 1); draw(); const exRed = px(GRY, Y); f.channels = 0;
+    step('exposure', { zero: exZero, grey: exGrey.join(), bypass: exBypass.join(), redOnly: exRed.join(),
+      works: exZero === 0 && closeTo(exGrey, [175, 175, 175], 2) && closeTo(exBypass, [255, 255, 255], 1) && closeTo(exRed, [175, 128, 128], 2) });
+
+    // Photo Filter: Density 0 changes nothing; Warming (85) at 25% warms grey to (140, 126, 111) keeping its brightness,
+    // (126, 114, 100) without Preserve luminosity; Custom uses the Color setting
+    f = await only('photofilter'); set(f, 'density', 0); draw(); const pfZero = diff(plain, frame()).max; set(f, 'density', 25);
+    if (t8k?.err || (!t8k?.pipe && !FXG.pipes['fx_tone:fxt_point']?.pipe)) { const m = FXG.mods.fx_tone; step('fxtKernel', { err: FXG.pipes['fx_tone:fxt_point']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }
+    draw(); const pfWarm = px(GRY, Y); f.preserve = false; draw(); const pfFlat = px(GRY, Y); f.preserve = true;
+    f.filter = PHOTO_FILTERS.length - 1; f.color = '#0000ff'; set(f, 'density', 100); f.preserve = false; draw(); const pfBlue = px(WHT, Y);
+    step('photofilter', { zero: pfZero, warmGrey: pfWarm.join(), noPreserve: pfFlat.join(), customBlueOnWhite: pfBlue.join(),
+      works: pfZero === 0 && closeTo(pfWarm, [140, 126, 111], 3) && closeTo(pfFlat, [126, 114, 100], 3) && closeTo(pfBlue, [0, 0, 255], 1) });
+
+    // Shadow/Highlight: Shadow 100 lifts the dark end of the ramp and leaves white; Highlight 100 halves the white patch's
+    // middle (128); Auto Amounts (on by default) lifts the shadows a little
+    f = await only('shadowhighlight'); f.auto = false; set(f, 'shadowAmount', 0); set(f, 'highlightAmount', 0); draw(); const shNone = diff(plain, frame()).max;
+    const dark = () => lum(px(200, 810));
+    set(f, 'shadowAmount', 100); draw(); const shLift = [Math.round(lum(P0(200, 810))), Math.round(dark())], shWhite = px(WHT, Y);
+    set(f, 'shadowAmount', 0); set(f, 'highlightAmount', 100); draw(); const shHi = px(WHT, Y);
+    f.auto = true; draw(); const shAuto = Math.round(dark()), mean = +fxLumaMean((() => { const c = document.createElement('canvas'); c.width = 1920; c.height = 1080; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(plain), 1920, 1080), 0, 0); return c; })()).toFixed(3);
+    step('shadowhighlight', { zero: shNone, darkBeforeAfter: shLift, whiteKept: shWhite.join(), highlightWhite: shHi.join(), autoDark: shAuto, cardMean: mean,
+      works: shNone === 0 && shLift[1] > shLift[0] + 15 && closeTo(shWhite, [255, 255, 255], 1) && closeTo(shHi, [128, 128, 128], 4) && shAuto > shLift[0] + 2 });
+
+    // Change Color (match by hue): Hue +120° turns the red patch green and leaves the green patch; the mask view shows white
+    // where it matches, black elsewhere
+    f = await only('changecolor'); draw(); const ccZero = diff(plain, frame()).max;
+    set(f, 'hue', 120); draw(); const ccRed = px(RED, Y), ccGreen = px(GRN, Y);
+    f.view = 1; draw(); const ccMaskRed = px(RED, Y), ccMaskGreen = px(GRN, Y); f.view = 0;
+    step('changecolor', { zero: ccZero, red: ccRed.join(), green: ccGreen.join(), maskRed: ccMaskRed.join(), maskGreen: ccMaskGreen.join(),
+      works: ccZero === 0 && closeTo(ccRed, [40, 220, 40], 2) && closeTo(ccGreen, P0(GRN, Y), 1) && closeTo(ccMaskRed, [255, 255, 255], 1) && closeTo(ccMaskGreen, [0, 0, 0], 1) });
+
+    // Change to Color: red → blue's hue turns the red patch (40, 40, 220); green stays; the correction matte is white on red
+    f = await only('changetocolor'); draw(); const ctRed = px(RED, Y), ctGreen = px(GRN, Y);
+    f.viewMatte = true; draw(); const ctMatte = [px(RED, Y).join(), px(GRN, Y).join()]; f.viewMatte = false;
+    step('changetocolor', { red: ctRed.join(), green: ctGreen.join(), matte: ctMatte,
+      works: closeTo(ctRed, [40, 40, 220], 2) && closeTo(ctGreen, P0(GRN, Y), 1) && ctMatte[0] === '255,255,255' && ctMatte[1] === '0,0,0' });
+
+    // Leave Color (by hue): Amount 0 changes nothing; at 100 the red stays and the green goes grey (156)
+    f = await only('leavecolor'); draw(); const lcZero = diff(plain, frame()).max;
+    set(f, 'amount', 100); f.match = 1; draw(); const lcRed = px(RED, Y), lcGreen = px(GRN, Y);
+    step('leavecolor', { zero: lcZero, red: lcRed.join(), green: lcGreen.join(),
+      works: lcZero === 0 && closeTo(lcRed, P0(RED, Y), 1) && closeTo(lcGreen, [156, 156, 156], 2) });
+
+    // Color Balance (HLS): hue 120 turns red green; lightness -100 is black; saturation -100 makes red grey (130)
+    f = await only('colorbalancehls'); draw(); const hlZero = diff(plain, frame()).max;
+    set(f, 'hue', 120); draw(); const hlHue = px(RED, Y); set(f, 'hue', 0);
+    set(f, 'lightness', -100); draw(); const hlDark = px(RED, Y); set(f, 'lightness', 0);
+    set(f, 'saturation', -100); draw(); const hlGrey = px(RED, Y);
+    step('colorbalancehls', { zero: hlZero, hue120: hlHue.join(), lightnessDown: hlDark.join(), saturationDown: hlGrey.join(),
+      works: hlZero === 0 && closeTo(hlHue, [40, 220, 40], 2) && closeTo(hlDark, [0, 0, 0], 1) && closeTo(hlGrey, [130, 130, 130], 1) });
+
+    // Gamma/Pedestal/Gain: red gain 0.5 on white (128, 255, 255); green pedestal 0.2 on black (0, 51, 0); red gamma 2 on grey (64)
+    f = await only('gammapedestalgain'); draw(); const gpZero = diff(plain, frame()).max;
+    set(f, 'redGain', .5); draw(); const gpGain = px(WHT, Y); set(f, 'redGain', 1);
+    set(f, 'greenPedestal', .2); draw(); const gpPed = px(BLK, Y); set(f, 'greenPedestal', 0);
+    set(f, 'redGamma', 2); draw(); const gpGam = px(GRY, Y);
+    step('gammapedestalgain', { zero: gpZero, redGainWhite: gpGain.join(), greenPedestalBlack: gpPed.join(), redGammaGrey: gpGam.join(),
+      works: gpZero === 0 && closeTo(gpGain, [128, 255, 255], 1) && closeTo(gpPed, [0, 51, 0], 1) && closeTo(gpGam, [64, 128, 128], 1) });
+
+    // CC Toner (Tritone): black → Shadows, white → Highlights, grey → Midtones (140, 110, 71); Blend 100 is the original
+    f = await only('cctoner'); draw(); const toBlack = px(BLK, Y), toWhite = px(WHT, Y), toGrey = px(GRY, Y);
+    f.tones = 0; draw(); const toDuo = px(GRY, Y); f.tones = 1;
+    set(f, 'blend', 100); draw(); const toOrig = diff(plain, frame()).max;
+    step('cctoner', { black: toBlack.join(), white: toWhite.join(), grey: toGrey.join(), duotoneGrey: toDuo.join(), blend100: toOrig,
+      works: closeTo(toBlack, [0, 0, 0], 1) && closeTo(toWhite, [255, 255, 255], 1) && closeTo(toGrey, [140, 111, 72], 2) && closeTo(toDuo, [128, 128, 128], 2) && toOrig === 0 });
+
+    // CC Color Offset: red phase 90° adds a quarter: grey 128 → 192; white overflows: Wrap 64, Solarize 191, Polarize 0 (off when it overflows by less than half)
+    f = await only('cccoloroffset'); draw(); const coZero = diff(plain, frame()).max;
+    set(f, 'redPhase', 90); draw(); const coGrey = px(GRY, Y), coWrap = px(WHT, Y)[0];
+    f.overflow = 1; draw(); const coSol = px(WHT, Y)[0]; f.overflow = 2; draw(); const coPol = px(WHT, Y)[0]; f.overflow = 0;
+    step('cccoloroffset', { zero: coZero, grey: coGrey.join(), whiteRed: { wrap: coWrap, solarize: coSol, polarize: coPol },
+      works: coZero === 0 && closeTo(coGrey, [192, 128, 128], 1) && Math.abs(coWrap - 64) <= 1 && Math.abs(coSol - 191) <= 1 && coPol === 0 });
+
+    const r8speed = {};
+    for (const [id, vals, opts] of [['exposure', { masterExposure: .5 }], ['photofilter', {}], ['shadowhighlight', {}], ['changecolor', { hue: 60 }], ['changetocolor', {}], ['leavecolor', { amount: 80 }],
+      ['colorbalancehls', { hue: 30 }], ['gammapedestalgain', { redGain: .8 }], ['cctoner', {}], ['cccoloroffset', { greenPhase: 60 }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r8speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round8speed', r8speed);
+
+    // ---- Round 9: colour III, auto & broadcast (the auto effects read the picture back from the graphics card)
+    const rgbOf = c => c.join();
+    // Auto Levels / Contrast / Color after a Levels that squeezes the card into 64..192: each reads the squeezed picture as
+    // it reaches it and stretches it back (black 0, white 255, grey 128); Blend 100 leaves the squeezed picture
+    const squeeze = async id => { while (L.fx?.length) delFX(L, 0); const lv = await add('levels'); set(lv, 'outBlack', 64); set(lv, 'outWhite', 192); return add(id); };
+    const autoR = {};
+    for (const id of ['autolevels', 'autocontrast', 'autocolor']) {
+      f = await squeeze(id); if (id === 'autocolor') f.snap = false;
+      draw(); const o = { black: px(BLK, Y), white: px(WHT, Y), grey: px(GRY, Y) };
+      if (id === 'autocolor') { f.snap = true; draw(); o.snapBlack = px(BLK, Y); o.snapWhite = px(WHT, Y); }
+      set(f, 'blend', 100); draw(); o.blend100 = px(BLK, Y);
+      autoR[id] = { black: rgbOf(o.black), white: rgbOf(o.white), grey: rgbOf(o.grey), blend100: rgbOf(o.blend100), ...(o.snapBlack ? { snapBlack: rgbOf(o.snapBlack), snapWhite: rgbOf(o.snapWhite) } : {}),
+        works: closeTo(o.black, [0, 0, 0], 2) && closeTo(o.white, [255, 255, 255], 2) && closeTo(o.grey, [128, 128, 128], 2) && closeTo(o.blend100, [64, 64, 64], 1)
+          && (!o.snapBlack || (closeTo(o.snapBlack, [0, 0, 0], 2) && closeTo(o.snapWhite, [255, 255, 255], 2))) };
+    }
+    if (!FXG.pipes['fx_tone:fxt_point']?.pipe) step('fxtKernel9', { err: FXG.pipes['fx_tone:fxt_point']?.err });
+    step('autocorrect', autoR);
+
+    // Equalize: Amount 0 changes nothing; RGB spreads the card (black is lifted by its share of the picture, white stays)
+    f = await only('equalize'); set(f, 'amount', 0); draw(); const eqZero = diff(plain, frame()).max; set(f, 'amount', 100);
+    draw(); const eqBlack = px(BLK, Y), eqWhite = px(WHT, Y);
+    f.style = 1; draw(); const eqBright = px(BLK, Y); f.style = 0;
+    step('equalize', { zero: eqZero, black: rgbOf(eqBlack), white: rgbOf(eqWhite), brightnessBlack: rgbOf(eqBright),
+      works: eqZero === 0 && eqBlack[0] > 10 && closeTo(eqWhite, [255, 255, 255], 1) && eqBright[0] > 10 });
+
+    // Broadcast Colors: at 110 IRE the card is safe; at 90 IRE white is cut to 227 and red stays; Key Out Unsafe takes
+    // white away, Key Out Safe takes red away
+    f = await only('broadcast'); draw(); const bcSafe = diff(plain, frame()).max;
+    set(f, 'maxSignal', 90); draw(); const bcWhite = px(WHT, Y), bcRed = px(RED, Y);
+    f.how = 2; draw(); const bcKeyUnsafe = px(WHT, Y); f.how = 3; draw(); const bcKeySafe = px(RED, Y); f.how = 0;
+    step('broadcast', { safeAt110: bcSafe, whiteAt90: rgbOf(bcWhite), redAt90: rgbOf(bcRed), keyOutUnsafeWhite: rgbOf(bcKeyUnsafe), keyOutSafeRed: rgbOf(bcKeySafe),
+      works: bcSafe === 0 && closeTo(bcWhite, [227, 227, 227], 1) && closeTo(bcRed, P0(RED, Y), 1) && rgbOf(bcKeyUnsafe) === '0,0,0' && rgbOf(bcKeySafe) === '0,0,0' });
+
+    // Video Limiter (Smart Limit, 100%, 5% compression): white eases to 250, grey stays; Luma at 90% gives 229;
+    // Gamut Warning paints the changed pixels red
+    f = await only('videolimiter'); draw(); const vlWhite = px(WHT, Y), vlGrey = px(GRY, Y);
+    f.clipLevel = 0; f.clipMethod = 0; draw(); const vl90 = px(WHT, Y);
+    f.warn = true; draw(); const vlWarn = px(WHT, Y), vlWarnGrey = px(GRY, Y);
+    step('videolimiter', { white: rgbOf(vlWhite), grey: rgbOf(vlGrey), lumaAt90: rgbOf(vl90), warning: rgbOf(vlWarn), warningGrey: rgbOf(vlWarnGrey),
+      works: closeTo(vlWhite, [250, 250, 250], 1) && closeTo(vlGrey, P0(GRY, Y), 1) && closeTo(vl90, [229, 229, 229], 1) && rgbOf(vlWarn) === '255,0,0' && closeTo(vlWarnGrey, P0(GRY, Y), 1) });
+
+    // PS Arbitrary Map: an empty map and phase 0 change nothing; the map "255, 0" inverts (grey 127, white 0);
+    // phase 64 on the straight map moves grey up to 192 and wraps white round to 63
+    f = await only('psarbitrarymap'); draw(); const amZero = diff(plain, frame()).max;
+    f.map = '255, 0'; draw(); const amInvGrey = px(GRY, Y), amInvWhite = px(WHT, Y); f.map = '';
+    set(f, 'phase', 64); draw(); const amPhGrey = px(GRY, Y), amPhWhite = px(WHT, Y);
+    S.sel = L.id; setRightTab('fx'); refresh(); const amField = !!$('#inspector input[type=text][data-fxk=map]');
+    step('psarbitrarymap', { zero: amZero, invertGrey: rgbOf(amInvGrey), invertWhite: rgbOf(amInvWhite), phase64Grey: rgbOf(amPhGrey), phase64White: rgbOf(amPhWhite), mapField: amField,
+      works: amZero === 0 && closeTo(amInvGrey, [127, 127, 127], 1) && closeTo(amInvWhite, [0, 0, 0], 1) && closeTo(amPhGrey, [192, 192, 192], 1) && closeTo(amPhWhite, [63, 63, 63], 1) && amField });
+
+    // Levels (Individual Controls): Green Input White 204 lifts grey's green to 160; RGB gamma 2 lifts grey to 181;
+    // Alpha Output White 128 makes the layer half see-through (white over black: 128)
+    f = await only('levelsic'); draw(); const liZero = diff(plain, frame()).max;
+    set(f, 'greenInWhite', 204); draw(); const liGreen = px(GRY, Y); set(f, 'greenInWhite', 255);
+    set(f, 'rgbGamma', 2); draw(); const liGamma = px(GRY, Y); set(f, 'rgbGamma', 1);
+    set(f, 'alphaOutWhite', 128); draw(); const liAlpha = px(WHT, Y);
+    step('levelsic', { zero: liZero, greenWhite204: rgbOf(liGreen), gamma2: rgbOf(liGamma), alphaHalf: rgbOf(liAlpha),
+      works: liZero === 0 && closeTo(liGreen, [128, 160, 128], 1) && closeTo(liGamma, [181, 181, 181], 1) && closeTo(liAlpha, [128, 128, 128], 1) });
+
+    // CC Color Neutralizer: as it starts nothing changes; Midtones Unbalance (153, 128, 102) → grey takes the cast out of grey
+    f = await only('cccolorneutralizer'); draw(); const cnZero = diff(plain, frame()).max;
+    f.midsUn = '#998066'; draw(); const cnGrey = px(GRY, Y), cnWhite = px(WHT, Y);
+    step('cccolorneutralizer', { zero: cnZero, grey: rgbOf(cnGrey), white: rgbOf(cnWhite),
+      works: cnZero === 0 && closeTo(cnGrey, [103, 128, 154], 2) && closeTo(cnWhite, [255, 255, 255], 1) });
+
+    // CC Kernel: Scale 0.5 halves grey (64); Offset 0.2 lifts black to 51; an edge kernel leaves flat areas black
+    f = await only('cckernel'); draw(); const ckZero = diff(plain, frame()).max;
+    set(f, 'scale', .5); draw(); const ckHalf = px(GRY, Y); set(f, 'scale', 1);
+    set(f, 'offset', .2); draw(); const ckOff = px(BLK, Y); set(f, 'offset', 0);
+    for (let i = 1; i <= 9; i++) set(f, 'k' + i, i === 5 ? 8 : -1); draw(); const ckEdgeFlat = px(WHT, Y);
+    step('cckernel', { zero: ckZero, scaleHalfGrey: rgbOf(ckHalf), offsetBlack: rgbOf(ckOff), edgeFlatWhite: rgbOf(ckEdgeFlat),
+      works: ckZero === 0 && closeTo(ckHalf, [64, 64, 64], 1) && closeTo(ckOff, [51, 51, 51], 1) && closeTo(ckEdgeFlat, [0, 0, 0], 1) });
+
+    // Color Link: with no source layer the card becomes its own average colour; Brightest makes it white; a hidden blue
+    // ellipse as the source layer makes it (51, 102, 204); at 50% opacity black becomes half of that
+    f = await only('colorlink');
+    { const pp = FXG.pipes['fx_pixel2:fp2_point']; if (!pp?.pipe) { const m = FXG.mods.fx_pixel2; step('fp2Kernel', { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); } }
+    draw(); const clA = px(BLK, Y), clB = px(WHT, Y);
+    const avg = [0, 1, 2].map(k => { let s = 0; for (let i = k; i < plain.length; i += 4) s += plain[i]; return s / (plain.length / 4); });
+    f.sample = 2; draw(); const clBright = px(BLK, Y); f.sample = 0;
+    addShape('ellipse'); const M = selLayer(); Object.assign(M, { fill: '#3366cc', visible: false, start: 0, dur: 6 });
+    f.source = M.id; draw(); const clSrc = px(BLK, Y);
+    set(f, 'opacity', 50); draw(); const clHalf = px(BLK, Y); set(f, 'opacity', 100);
+    S.sel = L.id; setRightTab('fx'); refresh(); const clListed = [...document.querySelectorAll('#inspector select[data-fxk=source] option')].map(o => +o.value).includes(M.id);
+    S.layers = S.layers.filter(x => x !== M); f.source = 0;
+    step('colorlink', { ownAverage: [rgbOf(clA), rgbOf(clB)], expected: avg.map(Math.round).join(), brightest: rgbOf(clBright), fromBlueLayer: rgbOf(clSrc), half: rgbOf(clHalf), sourceListed: clListed,
+      works: rgbOf(clA) === rgbOf(clB) && closeTo(clA, avg, 3) && closeTo(clBright, [255, 255, 255], 1) && closeTo(clSrc, [51, 102, 204], 1) && closeTo(clHalf, [26, 51, 102], 2) && clListed });
+
+    // Color Stabilizer: with no reference frame nothing changes; the panel button takes the playhead's frame (its black,
+    // grey and white samples); on this still card later frames stay the same; with a brighter reference (black 0.2)
+    // Brightness lifts black to 51 and grey to 179, and Levels to 0.1-0.9 maps black 26, grey 128, white 230
+    f = await only('colorstabilizer');
+    set(f, 'blackPointX', 160 / 1920); set(f, 'blackPointY', .25); set(f, 'midPointX', 1760 / 1920); set(f, 'midPointY', .25); set(f, 'whitePointX', 480 / 1920); set(f, 'whitePointY', .25);
+    draw(2); const csNone = diff(plain, frame()).max;
+    S.sel = L.id; setRightTab('fx'); refresh(); draw(1); $('#inspector [data-act=fxbtn]').click();
+    const csRef = f.ref?.map(c => c.map(v => Math.round(v * 255)).join()), csRefT = f.refT;
+    draw(2); const csSame = diff(plain, frame()).max;
+    f.ref = [[.2, .2, .2], [.5, .5, .5], [1, 1, 1]]; draw(2); const csBlack = px(BLK, Y), csGrey = px(GRY, Y);
+    f.mode = 1; f.ref = [[.1, .1, .1], [.5, .5, .5], [.9, .9, .9]]; draw(2); const csLvB = px(BLK, Y), csLvG = px(GRY, Y), csLvW = px(WHT, Y);
+    step('colorstabilizer', { noReference: csNone, reference: csRef, refTime: csRefT, laterFrame: csSame, brightness: [rgbOf(csBlack), rgbOf(csGrey)], levels: [rgbOf(csLvB), rgbOf(csLvG), rgbOf(csLvW)],
+      works: csNone === 0 && csRef?.join('|') === '0,0,0|128,128,128|255,255,255' && csRefT === 1 && csSame === 0 && closeTo(csBlack, [51, 51, 51], 1) && closeTo(csGrey, [179, 179, 179], 1)
+        && closeTo(csLvB, [26, 26, 26], 1) && closeTo(csLvG, [128, 128, 128], 1) && closeTo(csLvW, [230, 230, 230], 1) });
+    seek(1);
+
+    const r9speed = {};
+    for (const [id, vals, opts] of [['autolevels', {}], ['autocontrast', {}], ['autocolor', {}], ['equalize', {}], ['broadcast', { maxSignal: 95 }], ['videolimiter', {}], ['psarbitrarymap', { phase: 40 }],
+      ['levelsic', { rgbGamma: 1.4 }], ['cccolorneutralizer', {}, { midsUn: '#998066' }], ['cckernel', { scale: .8 }], ['colorlink', {}], ['colorstabilizer', {}, { refT: 0, ref: [[.1, .1, .1], [.5, .5, .5], [.9, .9, .9]] }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r9speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round9speed', r9speed);
+
+    // ---- Round 10: Lumetri Color (Lumina's lumina_lumetri.wgsl). Values worked out from EffectCraft's color3.rs maths
+    f = await only('lumetri');
+    { const pp = FXG.pipes['lumina_lumetri:llm_grade']; if (!pp?.pipe) { const m = FXG.mods.lumina_lumetri; step('llmKernel', { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); } }
+    const lm = {};
+    const reset = () => { while (L.fx?.length) delFX(L, 0); f = addFX(L, 'lumetri'); };
+    draw(); lm.zero = diff(plain, frame()).max;
+    // Basic: Exposure -1 halves grey (64); Temperature 100 warms grey to (160, 128, 96); Saturation 0 makes red grey (78);
+    // Whites 100 lifts grey to 141, and with High Dynamic Range at HDR White 200 only to 134
+    set(f, 'exposure', -1); draw(); lm.exposure = px(GRY, Y); set(f, 'exposure', 0);
+    set(f, 'temperature', 100); draw(); lm.warm = px(GRY, Y); set(f, 'temperature', 0);
+    set(f, 'saturation', 0); draw(); lm.sat0 = px(RED, Y); set(f, 'saturation', 100);
+    set(f, 'whites', 100); draw(); lm.whites = px(GRY, Y); f.hdr = true; set(f, 'hdrWhite', 200); draw(); lm.whitesHdr = px(GRY, Y); f.hdr = false; set(f, 'whites', 0);
+    // Input LUT: a LUT that inverts turns grey to 127; Creative's Custom look through the same LUT does too; Monochrome greys red
+    LUTS['u:lmtest'] = { name: 'Invert test', N: 17, data: makeLut((r, g, b) => [1 - r, 1 - g, 1 - b]) };
+    f.inLut = 'u:lmtest'; draw(); lm.inLut = px(GRY, Y); f.inLut = '';
+    f.look = 1; f.lookLut = 'u:lmtest'; draw(); lm.lookLut = px(GRY, Y); f.look = 7; draw(); lm.mono = px(RED, Y); f.look = 0;
+    const saved = JSON.parse(projectJSON()).luts || {}; lm.lutSaved = !!saved['u:lmtest'];
+    // Curves: RGB Midtones 100 lifts grey to 192; the RGB curve "0,0 0.5,0.75 1,1" too; a red curve "0,0 0.5,0.25 1,1" lowers only red
+    set(f, 'curveRGBMidtones', 100); draw(); lm.toneMid = px(GRY, Y); set(f, 'curveRGBMidtones', 0);
+    f.rgbMaster = '0,0 0.5,0.75 1,1'; draw(); lm.rgbCurve = px(GRY, Y); f.rgbMaster = '0,0 1,1';
+    f.rgbRed = '0,0 0.5,0.25 1,1'; draw(); lm.redCurve = px(GRY, Y); f.rgbRed = '0,0 1,1';
+    // Hue vs Sat with reds at 0 makes red grey and leaves green; Hue vs Hue with reds at 0.6667 turns red to yellow
+    f.hueVsSat = '0,0 0.2,0.5 0.8,0.5'; draw(); lm.hueSatRed = px(RED, Y); lm.hueSatGreen = px(GRN, Y); f.hueVsSat = '';
+    f.hueVsHue = '0,0.6667 0.2,0.5 0.8,0.5'; draw(); lm.hueHueRed = px(RED, Y); f.hueVsHue = '';
+    // Color wheels: a pink midtones wheel moves grey to (170, 107, 107)
+    f.wheelMids = '#ff8080'; draw(); lm.wheel = px(GRY, Y); f.wheelMids = '#808080';
+    // HSL Secondary keyed on reds (range 30°): Saturation 0 greys red, leaves green; White/Black mask shows red white, green black
+    set(f, 'hueRange', 30); set(f, 'secSat', 0); draw(); lm.secRed = px(RED, Y); lm.secGreen = px(GRN, Y);
+    f.showMask = true; f.maskStyle = 2; draw(); lm.maskRed = px(RED, Y); lm.maskGreen = px(GRN, Y); f.showMask = false; set(f, 'secSat', 100); set(f, 'hueRange', 180);
+    // Vignette -5 blackens the corner and leaves the middle; Sharpen 100 brightens grey right beside the blue edge (and darkens the blue side), flat grey stays
+    set(f, 'vigAmount', -5); draw(); lm.vigCorner = px(1915, 1075); lm.vigMid = closeTo(px(960, 270), P0(960, 270), 0); set(f, 'vigAmount', 0);
+    set(f, 'sharpen', 100); draw(); lm.sharpEdge = px(1601, Y); lm.sharpBlueSide = px(1599, Y); lm.sharpFlat = px(GRY, Y); set(f, 'sharpen', 0);
+    // the panel: the Show menu picks a section
+    S.sel = L.id; setRightTab('fx'); refresh(); lm.basicRows = document.querySelectorAll('#inspector .fxi .frow').length;
+    f.section = 2; refresh(); lm.curveGraphs = document.querySelectorAll('#inspector .fxi canvas.curvebox').length; f.curveSel = 5; refresh(); lm.hueGraph = !!$('#inspector canvas.curvebox[data-fxk=hueVsHue]'); f.section = 0; f.curveSel = 0; refresh();
+    const sc = c => c.join();
+    step('lumetri', Object.assign(Object.fromEntries(Object.entries(lm).map(([k, v]) => [k, Array.isArray(v) ? sc(v) : v])), {
+      works: lm.zero === 0 && closeTo(lm.exposure, [64, 64, 64], 1) && closeTo(lm.warm, [160, 128, 96], 1) && closeTo(lm.sat0, [78, 78, 78], 1)
+        && closeTo(lm.whites, [141, 141, 141], 1) && closeTo(lm.whitesHdr, [134, 134, 134], 1) && closeTo(lm.inLut, [127, 127, 127], 1) && closeTo(lm.lookLut, [127, 127, 127], 1)
+        && closeTo(lm.mono, [78, 78, 78], 1) && lm.lutSaved && closeTo(lm.toneMid, [192, 192, 192], 1) && closeTo(lm.rgbCurve, [192, 192, 192], 1) && closeTo(lm.redCurve, [64, 128, 128], 1)
+        && closeTo(lm.hueSatRed, [78, 78, 78], 1) && closeTo(lm.hueSatGreen, P0(GRN, Y), 1) && closeTo(lm.hueHueRed, [220, 220, 40], 2) && closeTo(lm.wheel, [170, 107, 107], 1)
+        && closeTo(lm.secRed, [78, 78, 78], 1) && closeTo(lm.secGreen, P0(GRN, Y), 1) && sc(lm.maskRed) === '255,255,255' && sc(lm.maskGreen) === '0,0,0'
+        && sc(lm.vigCorner) === '0,0,0' && lm.vigMid && lm.sharpEdge[0] > 132 && lm.sharpBlueSide[2] < 200 && closeTo(lm.sharpFlat, [128, 128, 128], 1) && lm.curveGraphs === 1 && lm.hueGraph }));
+    delete LUTS['u:lmtest'];
+    const r10speed = {};
+    for (const [id, opts, extra] of [['basic', { exposure: .5, contrast: 30, saturation: 120 }], ['curves', {}, { rgbMaster: '0,0 0.4,0.5 1,1', hueVsSat: '0,0.7 0.5,0.5' }],
+      ['secondary', { hueRange: 40, secSat: 50, denoise: 30 }], ['everything', { exposure: .3, vigAmount: -1, sharpen: 40, hueRange: 40, secSat: 50 }, { look: 2, rgbMaster: '0,0 0.4,0.5 1,1', wheelMids: '#a08070' }]]) {
+      reset(); for (const k in opts) set(f, k, opts[k]); Object.assign(f, extra || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r10speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round10speed', r10speed);
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
@@ -461,6 +754,12 @@
       ['gradientramp', { blend: 40 }], ['fourcolor', {}], ['grid', {}],
       ['huesat', { hue: 150, saturation: 40 }], ['levels', { inBlack: 40, inWhite: 200, gamma: 1.4 }], ['curves', { rgb64: 40, rgb192: 220, b64: 100, r192: 230 }], ['tint', {}],
       ['vibrance', { vibrance: 100 }], ['colorbalance', { shadowBlue: 60, hiRed: 40 }], ['blackwhite', {}], ['tritone', {}], ['colorama', {}], ['channelmixer', { rr: 0, rb: 100, bb: 0, br: 100 }], ['selectivecolor', { redsCyan: 100, greensYellow: -100 }],
+      ['exposure', { masterExposure: 1 }], ['photofilter', { density: 60 }], ['shadowhighlight', {}, { auto: false }], ['changecolor', { hue: 120 }], ['changetocolor', {}], ['leavecolor', { amount: 100 }, { match: 1 }],
+      ['colorbalancehls', { hue: 90 }], ['gammapedestalgain', { redGain: .5, bluePedestal: .2 }], ['cctoner', {}], ['cccoloroffset', { redPhase: 90, bluePhase: 200 }],
+      ['autocolor', {}], ['equalize', {}], ['broadcast', { maxSignal: 90 }, { how: 2 }], ['videolimiter', {}, { clipLevel: 0, warn: true }], ['psarbitrarymap', { phase: 100 }],
+      ['levelsic', { redGamma: 2, blueInWhite: 180 }], ['cccolorneutralizer', {}, { midsUn: '#998066' }], ['cckernel', { k1: -1, k2: -1, k3: -1, k4: -1, k5: 8, k6: -1, k7: -1, k8: -1, k9: -1 }, { absolute: true }],
+      ['colorlink', { opacity: 50 }, { mode: 2 }],
+      ['lumetri', { exposure: .3, contrast: 25, vigAmount: -2 }, { look: 5, rgbMaster: '0,0 0.3,0.22 0.7,0.8 1,1', wheelHighs: '#ffe0c0', wheelShadows: '#6080a0' }],
       ['rgbsplit', { amount: 30 }, { trigger: 0 }], ['edgeglow', { radius: 20 }, { trigger: 0 }], ['flash', { amount: 55 }, { trigger: 0, color: '#9fdcff' }], ['vhs', {}, { trigger: 0 }], ['shake', { amount: 40, rotation: 4 }, { trigger: 0 }]];
     const T = S.layers[0];
     const strip = document.createElement('canvas'); strip.width = 4 * 480; strip.height = Math.ceil(shots.length / 4) * 270; const sx = strip.getContext('2d');

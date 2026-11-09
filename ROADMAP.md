@@ -7,7 +7,30 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: EffectCraft Round 8 (Colour II)
+## ▶ Start here next: EffectCraft Round 11 (Keying I)
+**Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
+Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
+Rounds 8, 9, 10 (Lumetri Color) and the Round 6 leftovers are done. Round 11 is next, Keying I: Color Key, Linear Color
+Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key. Linear Color Key is already
+in `fx_color`'s `fxc_point` (Round 7's family; host code in EffectCraft's `crates/gpu/src/fx_color.rs`); look for the rest
+in `fx_key.wgsl` and `crates/gpu/src/fx_key.rs`, and check `context.rs` for which files it compiles with. Effects that need
+the picture measured can use `E.read(img)` (Round 9), which reads it back from the graphics card mid-stack.
+- **The user's goal now includes Premiere Pro:** everything After Effects *and* Premiere Pro have, and every effect they
+  offer ("screen effects"). EffectCraft covers After Effects' effects. Premiere Pro's own extras (its video effects and
+  transitions list, Lumetri scopes, Essential Sound/Graphics, multicam, auto reframe, proxies, nested sequences…) need a
+  list of their own: write it once EffectCraft's rounds are further along, or sooner if the user asks.
+- **PhotoCraft Round P4 (Painting) is on hold** (the user, 2026-11-08: "save round 4 for later"). Don't start it until the
+  user asks; pick up from the P4 notes below.
+
+**The user started PhotoCraft on 2026-11-08** ("we finished CapCut… could we start working on PhotoCraft… to get Lumina to have
+some Photoshop features and be able to save media as images"). EffectCraft resumed at Round 8 the same day (see above).
+PhotoCraft is a Rust app (egui + wgpu) with only 2 WGSL shaders, so like EffectCraft it is rebuilt in Lumina feature by feature,
+with PhotoCraft (https://github.com/storytold/photocraft, MIT or Apache-2.0, commit 3ef886c on 2026-11-08) as the reference.
+Its own estimate: ~45% of Photoshop, 2,300–4,100 h to full parity, so Lumina takes the parts people use most. The rounds are in
+"PhotoCraft rounds" below. **Rounds P1 (Save as image), P2 (moving pictures, sequences, opening every image
+format) and P3 (Image mode basics) are done**; P4 (Painting) is saved for later, to pick up when the user asks. P4 builds on Image mode: a paint layer is a new layer
+kind holding its own pixels, at the canvas size, listed in the Layers panel like the rest.
+
 The CapCut phase (C1–C14), the beginner layout (B1–B4) and C15 Friends test release are all done (2026-11-07).
 The Converter tab (links → MP3/MP4 via yt-dlp) was added the same day, then the timeline scrolling fix, layer mute
 and impact copy/paste; see "Where things stand".
@@ -26,8 +49,12 @@ and the Linux AppImage (`Lumina-<version>-Linux-x86_64.AppImage`) on GitHub's ma
 a real Linux PC. Speed test step 24 holds the version in `VER`: change it with each version bump.
 **The workflow is turned off (2026-11-07, the user: "we will update it when i say").** Don't push to GitHub or make a release until the
 user says so; then `gh workflow enable "Build and release" -R Witchington/Lumina` before tagging.
-**Not on GitHub yet:** the licence files and the friend's timeline fixes (see "Where things stand"). The friend needs a new
-version to get the fixes: bump the version (package.json + speed test `VER`), then release when the user says.
+**0.9.2 released (2026-11-07, the user asked):** the repo is now **public**. Commit 68499d0 + tag v0.9.2 hold the licence
+files, the friend's timeline fixes and the impact parts; GitHub built `Lumina-Setup-0.9.2.exe` and
+`Lumina-0.9.2-Linux-x86_64.AppImage` (Latest release). The workflow was turned on for the tag and **off again** right after,
+as the user asked. Only real changes are committed; test output (selftest media, pasted pictures, the timeline test's
+videos) is left out or ignored. Next release: bump package.json + speed test `VER`, rebuild, all nine suites, commit,
+enable the workflow, push the tag, check the assets, disable the workflow.
 The beginner layout, for reference:
 - **B1 Tool rail (done):** icon tabs down the left (Media, Text, Stickers, Effects, Transitions, Captions, Audio, Adjust), each
   opening a browsable panel with previews to click or drag in, like CapCut. Leave room for an Image tab (PhotoCraft).
@@ -43,10 +70,9 @@ The beginner layout, for reference:
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 8 (Colour II)**: Exposure, Photo Filter, Shadow/Highlight, Change Color,
-Change to Color, Leave Color, Color Balance (HLS), Gamma/Pedestal/Gain, CC Toner, CC Color Offset.
-(Tip for then: Exposure is already in the `kernels` pointwise shader, mode 5. Check which other `.wgsl` files a
-shader file calls into; Round 7's `fx_color` needed `fx_lut` compiled alongside it.)
+EffectCraft carries on at **Round 11 (Keying I)**.
+(Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
+module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
 Every EffectCraft round follows the same steps:
 1. Port the effects.
@@ -54,26 +80,43 @@ Every EffectCraft round follows the same steps:
 3. Run a speed check.
 4. Update `effects.png`.
 5. Rebuild.
-6. Run all nine suites.
+6. Run all eleven suites.
 
 ---
 
 ## Order (set by the user 2026-11-07)
-Goal: **Lumina is After Effects, Photoshop and CapCut all in one.**
+Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one** (Premiere Pro added by the user 2026-11-08).
 
 0. **CapCut phase: done (C1–C15, finished 2026-11-07).** Beat sync, bookmarks, velocity curves, anime VFX, ripple editing,
    multi-select, mask shapes, canvas background, captions, stickers, separate audio, clipboard and keyframe tools, preview
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–7 are done; Round 8 (Colour II) is next.** About 248 effects are left, in Rounds 8–31+.
-   - Round 8: Exposure, Photo Filter, Shadow/Highlight, Change Color, Change to Color, Leave Color, and more
+   **Where we left off: Rounds 1–10 and the Round 6 leftovers are done; Round 11 (Keying I) is next.** About 225 effects
+   are left, in Rounds 11–31+.
+   - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
      They go in just before the effects that need a second layer or other frames (from Round 16, Displacement Map, onward).
-2. **Start and finish PhotoCraft** (https://github.com/storytold/photocraft) as Lumina's **Image mode**, the Photoshop side:
-   paint layers and brushes, selections, adjustment layers, layer styles, crop/resize and PNG/JPG export.
-   Its detailed roadmap gets built when we reach this step.
+2. **Start and finish PhotoCraft** (https://github.com/storytold/photocraft) as Lumina's **Image mode**, the Photoshop side.
+   **Started 2026-11-08 at the user's request, before EffectCraft was finished** (EffectCraft resumes at Round 8 when the user says).
+
+### PhotoCraft rounds (written 2026-11-08)
+| Round | Theme | What |
+|---|---|---|
+| P1 ✅ | Save as image | The frame at the playhead in 16 formats: PNG, JPEG, WebP, AVIF, HEIC, GIF, TIFF, layered PSD, BMP, PDF, SVG, EPS, AI, ICO, TGA, JPEG 2000. Quality and see-through background settings. |
+| P2 ✅ | Animated images, sequences, opening images | Animated GIF / WebP / APNG from a range; PNG/JPEG sequences; import TIFF, PSD (flattened), TGA, HEIC, AVIF, JP2, BMP and others through FFmpeg (`image:toPNG` is already there). RAW needs a decoder FFmpeg doesn't have: decide then. |
+| P3 ✅ | Image mode basics | An **Image** workspace and rail tab; a still-picture document (canvas size, no timeline); Layers panel with thumbnails, opacity, lock and eye; crop, canvas size, image size, rotate/flip. |
+| P4 ⏸ (saved for later) | Painting | Paint layers; brush (size, hardness, opacity, flow, spacing), eraser, pencil; colour picker, swatches, eyedropper; fill and gradient tools. |
+| P5 | Selections | Rectangle/ellipse marquee, lasso, polygon lasso, magic wand, select all/none/inverse, feather, grow; copy/cut/paste to a new layer; delete or fill a selection. |
+| P6 | Adjustment layers | Brightness/Contrast, Levels, Curves, Hue/Saturation, Color Balance, Black & White, Photo Filter, Invert, Posterize, Threshold, Gradient Map, Vibrance, Exposure (reuse Lumina's grading and EffectCraft colour effects). |
+| P7 | Layer styles | Drop shadow, inner shadow, outer/inner glow, bevel and emboss, stroke, colour/gradient/pattern overlay. |
+| P8 | Masks and groups | Painted layer masks, clipping masks, layer groups, smart objects (lite). |
+| P9 | Retouching | Clone stamp, healing and spot healing, patch, content-aware fill (Lumina's inpaint shader), red-eye. |
+| P10 | Transform | Free transform, perspective, distort, warp, liquify. |
+| P11 | Type and vectors | Photoshop-style text options, shape tools, pen paths; true vector SVG/PDF export of shapes and text. |
+| P12 | Opening layered files | PSD with layers (PhotoCraft's `crates/psd` as the guide), OpenRaster; Camera Raw-lite. |
+| P13 | Filters | Blur gallery, Smart Sharpen / Unsharp Mask, noise, distort, mostly from EffectCraft effects. |
 
 After those two (only when the user says so): Claude's own features, fixes and tweaks — motion blur, pen-tool masks with
 feather animated over time, the on-hold list below, and fixes spotted along the way.
@@ -114,7 +157,150 @@ Sources:
 
 ---
 
-## Where things stand (updated 2026-11-07)
+## Where things stand (updated 2026-11-08)
+- **EffectCraft's Round 6 leftovers done (2026-11-08):**
+  - **Hue/Saturation** has a Channel Control menu: Master or one of Reds, Yellows, Greens, Cyans, Blues, Magentas, each with
+    its own hue / saturation / lightness and range start / end / falloffs (`HS_RANGES`). Ranges with a change run in
+    `fx_tone`'s op 14 (`hue_saturation` in EffectCraft's `fx_tone.rs`); Master and Colorize alone stay on the pointwise kernel.
+  - **Levels** has a Channel menu (RGB, Red, Green, Blue, Alpha) with each channel's five controls; any channel's change
+    runs in op 15 (`levels`), RGB first, then the channel, both clipping (Lumina is 8 bits).
+  - **Curve graphs** (setting type `curve`, stored as text "x,y x,y …", 0..1): drag a point, click to add one, double-click
+    to remove it, Reset, and the points as text underneath. Curves now has a Channel menu and a graph per channel (a natural
+    spline, as before); its old sliders are hidden but still read (`curvesOld`) for projects saved before the graph.
+    Lumetri's RGB and hue / saturation curves use the same graph (one at a time, picked with its Curve menu); hue curves
+    show a hue strip and wrap round. Code: `drawCurveBox`, `curveApply`, pointer handlers on `#inspector`.
+  - Tests (`.claude\fx`, steps `huesatRanges`, `levelsChannels`, `curvesGraph`): Reds hue +120 turns red green and leaves
+    green; Green Input White 204 → grey's green 160; dragging the middle of the RGB graph up lifts grey to 192 and a
+    double-click puts it back to 128.
+- **EffectCraft Round 10 done (2026-11-08): Lumetri Color**, in Effects & Presets › Color: Basic Correction (Input LUT,
+  white balance, High Dynamic Range with HDR White / Specular, tone, saturation), Creative (six looks or a LUT, intensity,
+  faded film, sharpen, vibrance, saturation, shadow / highlight tints), Curves (tone sliders, RGB / Red / Green / Blue
+  curves, the five hue / saturation curves), Color Wheels, HSL Secondary (hue / saturation / lightness key, show mask,
+  invert, denoise, blur, correction) and Vignette. A Show menu picks which section's settings are listed.
+  - It runs on Lumina's own `shaders/lumina_lumetri.wgsl` (family `lumina_lumetri`, names `llm_`): EffectCraft's GPU kernel
+    (`fx_color`'s `fxc_lumetri`) leaves out the RGB and hue curves, HSL Secondary and HDR, so the whole CPU Lumetri in
+    `color3.rs` is ported instead. Passes: `llm_grade` (everything up to the wheels), `llm_key` → blur (`fxGauss`) →
+    `llm_matte` for the HSL matte, `llm_final` (secondary correction, show mask, vignette), `llm_sharpen`.
+  - Curves are typed as control points ("0,0 0.5,0.75 1,1"); `fxCurveFC` ports `color2::Curve` (Fritsch-Carlson) and
+    `fxOffsetCurve` ports `OffsetCurve`. The LUT menus list Lumina's looks and loaded .cube files (`LUTS`); a pick with
+    `str: true` stores text. Saving a project keeps the user LUTs Lumetri uses.
+  - Differences: Sharpen blurs with a true Gaussian (sigma 1 px at 1080p) worked out in the kernel; the vignette uses the
+    layer's on-screen box. Not done: a curve graph to drag (see "Start here next").
+  - Tests (`.claude\fx`, step `lumetri`): Exposure -1 → 64; Temperature 100 → (160, 128, 96); Whites 100 → 141, with HDR
+    White 200 → 134; an inverting LUT → 127; RGB curve "0,0 0.5,0.75 1,1" → 192; Hue vs Hue turns red yellow; a pink
+    midtones wheel → (170, 107, 107); HSL Secondary on reds greys red only; Vignette -5 blackens the corner. About 6.5–7 ms a
+    1080p frame. `effects.png` has a Lumetri tile.
+- **EffectCraft Round 9 done (2026-11-08):** Auto Levels, Auto Contrast, Auto Color, Equalize, Broadcast Colors, Video
+  Limiter, PS Arbitrary Map, Levels (Individual Controls), CC Color Neutralizer, CC Kernel, Color Link and Color Stabilizer,
+  in Effects & Presets › Color. 66 GPU effects now.
+  - All run on `fx_tone.wgsl`'s `fxt_point` (ops 1, 7, 11, 12, 13, 16, 17, 23, 24), packed as in EffectCraft's
+    `crates/gpu/src/fx_tone.rs`, except Color Link, which uses `fx_pixel2.wgsl`'s `fp2_point` (ops 4 and 5; new shader family
+    `fx_pixel2`, compiled with `fx_stylize` as EffectCraft does). `fxTone()` now takes a data table too.
+  - **Reading the picture back mid-stack:** `E.read(img, max)` in `fxApply` draws an image onto the effects canvas, sends the
+    work so far, and copies it (8 bits, at most 640 px by default). The auto effects (histograms, `fxHist`/`fxClip`/`fxAuto`),
+    Equalize (`fxEqualize`), Color Link (`fxSampleColor`) and Color Stabilizer (`fxSampleMean` at full size) measure that, so
+    they see the picture as it reaches them, after earlier effects. Shadow/Highlight's Auto Amounts now does the same.
+  - PS Arbitrary Map's map is typed as numbers (0-255, commas between); `fxMapTable` ports `arbitrary_map_table` (f32 bit
+    search). Color Link's Source Layer menu lists the other layers (a pick's `opts` can now be a function of the layer); the
+    source is painted without its effects or masks. Color Stabilizer has a "Set to playhead" button (new `btn` setting
+    type, `data-act=fxbtn`): that frame's samples become the reference (`f.refT`, `f.ref`), re-measured whenever the
+    playhead is on that frame. New `text` setting type for the map.
+  - Not done: Temporal Smoothing and Scene Detect on the auto effects (need other frames). Levels (Individual) sliders run
+    0-255 like Lumina's Levels, not EffectCraft's -1..2.
+  - Tests (`.claude\fx`): Auto Levels/Contrast/Color after a Levels that squeezes the card into 64..192 stretch it back
+    (0 / 128 / 255); Broadcast Colors at 90 IRE cuts white to 227; Video Limiter eases white to 250 (229 at 90% Luma);
+    PS Arbitrary Map "255, 0" inverts, phase 64 moves grey to 192; Color Link from a hidden blue ellipse gives (51, 102, 204);
+    Color Stabilizer with a brighter reference lifts black to 51. 4.3–16 ms a 1080p frame (the read-back ones cost most).
+    `effects.png` has nine new tiles.
+- **EffectCraft Round 8 done (2026-11-08):** Exposure, Photo Filter, Shadow/Highlight, Change Color, Change to Color, Leave
+  Color, Color Balance (HLS), Gamma/Pedestal/Gain, CC Toner and CC Color Offset, in Effects & Presets › Color. 54 GPU effects now.
+  - All but Exposure run on EffectCraft's `fx_tone.wgsl` `fxt_point` (new shader family `fx_tone`; `fxTone()` helper, `FXT_K`),
+    packed as in EffectCraft's `crates/gpu/src/fx_tone.rs`. Exposure is the base `kernels` pointwise op 5 (per-channel gain,
+    offset, gamma in f[0..2], u[0].y = bypass linear light). Settings, defaults and the Photo Filter list follow EffectCraft's
+    specs (`color_fx.rs`, `color2.rs`, `color3.rs`).
+  - Shadow/Highlight: luminance plane (op 19) → blurred bases (`fxGauss`, edges repeated, radius `E.px(r)/2`) → op 21 pack →
+    op 20. Auto Amounts measures the layer's alpha-weighted luminance mean on the CPU from a 320 px copy of the layer canvas
+    (`fxLumaMean`, `E.lumaMean()`). Not done: Black/White Clip (needs the adjusted frame read back), Temporal Smoothing and
+    Scene Detect (need other frames).
+  - Tests (`.claude\fx`): each effect checked on the colour card against values worked out from EffectCraft's maths
+    (e.g. Exposure +1 on grey 128 → 175; Warming 85 at 25% → 140,126,111; CC Toner grey → 140,111,72; CC Color Offset Polarize
+    sends a channel that overflows by less than half to 0, as EffectCraft's shader does). About 4.6–5.7 ms a 1080p frame.
+    `effects.png` has the ten new tiles.
+- **PhotoCraft Round P3, Image mode basics (2026-11-08):** a project can be one still picture (`S.global.still`, saved with
+  the project and part of undo). How to get there: Image › New image… (Ctrl+Alt+N; size presets or custom up to 16384 px a
+  side and 100 million pixels, background white/black/transparent/colour), Image › Open a picture as an image… (the canvas
+  takes the file's size; any format Lumina opens), Image › Edit this frame as a picture (keeps the layers), the **Image**
+  workspace button, the **Image** rail tab, or New image… on the welcome screen. Image › Back to video editing undoes it.
+  - In Image mode: the timeline, play controls, Split/Impact/Ripple, size and fps menus are hidden (`body.still`,
+    `.vid-only`); the big button is **Save image** (the Save frame as image dialog, "Saves the picture at its full size");
+    Space doesn't play (Space+drag still pans); arrows nudge the layer 1 px (Shift 10); C crops. New layers start at 0
+    and text gets no entrance animation (`insertLayer`). The comp tab reads `Image: <name> · W×H`.
+  - **Layers panel** (`#pLayers`, under Properties in Image mode; Window › Layers hides it): top layer first, each row has
+    an eye, a lock, a little picture (each layer drawn alone with `RENDER.only`, 150 ms after a change, cached by a
+    signature in `LTH`), name (double-click to rename), opacity %. Opacity slider + box at the top. Drag rows to reorder;
+    Up/Down/Duplicate/Delete at the bottom. A **Background** row: eye makes it see-through (`S.global.bg = 'none'`, with
+    `bgWas` to switch back), colour box changes it. The preview shows a checkerboard behind see-through parts, and Save
+    image turns See-through on for a transparent picture.
+  - **Lock** (`L.locked`): can't be picked on the preview (hitTest already skipped it), Properties and Effect Controls are
+    greyed with an Unlock button (`lockInspector`; the Whole picture settings stay usable), Delete refuses it, nudges skip it.
+  - **Canvas tools** (Image menu, rail tab, shortcuts): Image size… (Ctrl+Alt+I, in proportion, px or %), Canvas size…
+    (Ctrl+Alt+C, 3×3 anchor), Crop (C: a box on the preview with handles and thirds; drag edges/corners, drag inside to
+    move, outside to draw a new one; Enter or the Crop button in the bottom bar, Esc cancels), Rotate 90° either way, 180°,
+    Flip across / up-down. All go through `reframe()`: it maps every layer's position (and its x/y keyframes; a quarter
+    turn swaps them) to the new canvas and corrects its scale for how the layer's base size follows the canvas
+    (`baseFit`: pictures/videos fit the frame, everything else follows the height / 1080), so things stay the same size in
+    pixels. Rotation turns layers too; flips mirror them through `rotY`/`rotX` (180 − v) and negate rotation (3D layers
+    only move). Pixel amounts like blur still follow the canvas height.
+  - The size menu (`#res`) shows any size (`syncRes` adds a custom entry) and undo now keeps the canvas size (`snapshot`
+    has `size`; `rebaseSize` keeps the menu's own changes out of undo, as before).
+  - Tests: new suite `.claude\photo` (13 steps: new image, layers added, every canvas tool checked by where four colours and
+    an orange disc land and the disc's width, undo, crop by mouse, Layers panel eye/opacity/lock/order/drag/rename/thumbs,
+    keys, see-through background + saved PNG, Image menu, save and reopen, back to video and the workspace button, open a
+    picture as an image, too-big size). Output in its `out\` folder (gitignored).
+  - Not done (later rounds): paint layers, selections, adjustment layers, layer groups, non-proportional Image size, crop
+    to a fixed ratio, rotating the crop box.
+- **Save as tabs (2026-11-08, the user: "its all cluttered together… maybe adding like a video and image tab"):** Save as now
+  has four tabs along the top: **Project** (1), **Video** (10), **Image** (16, quality and see-through settings),
+  **Moving image** (9: GIF/WebP/APNG and the picture sequences, with the range/frame rate/size settings), each with its own
+  text, showing only its formats. `formatPicker` takes `tabs: [{ id, label, text, formats, def, extra, wire }]`; the open
+  tab and each tab's last pick are remembered (`lumina.saveAsFormat.tab`, `.video`, `.image`…). Values keep their prefixes
+  (`img:`, `anim:`). The single-list dialogs (Export video, Save frame as image, Save animation) are unchanged.
+  Tests: `.claude\image` (tabs, counts, settings per tab, remembered tab, Image/Moving image saves routed right);
+  the main suite now clicks the Video tab before picking MKV.
+- **PhotoCraft Round P2 (2026-11-08):**
+  - **Moving pictures and sequences:** File › Save animation or picture sequence… (Ctrl+Alt+E), also in Composition.
+    GIF (palettegen diff + bayer, loops or plays once), WebP (libwebp_anim, soft see-through), APNG; or one picture per
+    frame in a folder (PNG, JPEG, TIFF, WebP, TGA, BMP: `<name>_0001.ext`…). Settings: From/To (a selected bookmark with a
+    length fills them), frame rate 10–60, size 100–25%, quality, see-through, repeat; frame count shown, 3,000 at most.
+    `saveAnimation` renders each frame exactly (seek, `frameReady`, `grabFrame`) and streams PNGs to main
+    (`anim:begin/frame/finish/cancel`), where FFmpeg puts them together. Dialog listeners are now `onchange` (they used to pile
+    up across dialogs and throw).
+  - **Opening every image format:** `IMG_EXT` takes TIFF, PSD/PSB (flattened), TGA, HEIC/HEIF, JPEG 2000, EXR, HDR, DDS,
+    QOI, PCX, PNM family, SGI, XWD and camera RAW (DNG, NEF, CR2, CR3, ARW, ORF, RW2, RAF…). `NATIVE_IMG` ones load as
+    they are; the rest go through main `image:open` → a PNG in `%APPDATA%\Lumina\image-cache` (keyed by path, size, date):
+    FFmpeg first, then Windows' own decoders through PowerShell/WinRT (`WIC_SCRIPT`, sent as -EncodedCommand, no script
+    file; EXIF turn applied, colours to sRGB). RAW always goes to Windows. Clear messages when Windows lacks the RAW or HEIF
+    extension (error 0x88982F50) or the file is bad. Projects keep the original path; reopening reads the cache.
+    This PC has the Raw Image Extension, HEIF, HEVC, AV1 and WebP extensions; **no real camera RAW was tested** (there's no
+    sample), only the bad-file message.
+  - Tests in `.claude\image`: moving GIF/WebP/APNG read frame by frame (Chromium's ImageDecoder) against the editor's own
+    frames, loop/once, see-through WebP, numbered sequences, the dialog; TIFF/PSD/TGA/JP2/HEIC/ICO opened as clips with the
+    right colours, the cache, a project with a TIFF reopened, a broken RAW.
+- **PhotoCraft Round P1, Save as image (2026-11-08):** File › Save frame as image… (Ctrl+Shift+E), Composition menu, and
+  Save as (image formats listed after the video ones). The frame at the playhead at full comp size, in 16 formats, with a
+  Quality slider (JPEG, WebP, AVIF, HEIC, JPEG 2000) and a see-through background switch (PNG, WebP, GIF, TIFF, PSD, BMP,
+  SVG, ICO, TGA, JPEG 2000). `render()` takes `RENDER.alpha` (no black/canvas background) and `RENDER.only` (one layer, no
+  impacts or whole-video look) via `grabFrame`. FFmpeg (main.js `image:save`, table `IMAGE`) makes JPEG, WebP, AVIF, GIF
+  (palettegen), TIFF, BMP, ICO (≤256), TGA and JPEG 2000 from a PNG. Lumina writes the rest itself: **PSD** (`makePSD`: one
+  layer per visible layer at the playhead, bottom first, named, cropped, blend mode mapped, PackBits; plus the finished
+  picture), **PDF** and **AI** (one page, a JPEG, 1 px = 1 pt; the .ai is the PDF bytes, which Illustrator opens),
+  **EPS** (level 2, ASCII85 + DCT), **SVG** (the PNG inside an <image>), **HEIC** (`heifFile`: FFmpeg's x265 picture in a
+  HEIF file: ftyp, meta with hdlr/pitm/iloc/iinf/iprp {hvcC, ispe, colr nclx}, mdat). AVIF and HEIC are tagged BT.709 +
+  sRGB curve; without that Windows' HEIF decoder shifted colours (213,55,36 for 200,40,40); with it, within 2.
+  Checked: Windows' own decoder (WinRT BitmapDecoder, "Microsoft HEIF Decoder") opens Lumina's HEIC and AVIF.
+  RAW can't be made (camera sensor data); the dialog says so. `image:toPNG` decodes any image FFmpeg reads (for P2).
+  New suite `.claude\image` (expected false: none): every format saved and read back (Chromium, FFmpeg, or taken apart),
+  PSD layers parsed, see-through backgrounds, the screen restored after saving.
 - **Impact parts (2026-11-07, the user's request):** an impact's Strength drove flash, shake and zoom together. Now each has
   its own slider (Flash, Screen shake, Zoom punch, 0–1.5, number shown beside it) plus Length. Impacts store `flash`,
   `shake`, `zoom`; older ones with one `strength` keep it (`impAmt`) until a slider is moved, then split into the three.
@@ -493,8 +679,10 @@ Linux build: merged and built by GitHub since 0.9.1 (the user asked for it 2026-
 
 ## Reminders for Claude
 - Do one feature at a time, test it, and ask before changing anything on the system.
-- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all nine suites.
-- The nine suites and their expected `false` results (`beat` and `speed` were added 2026-11-06, `timeline` 2026-11-07; all three expect none):
+- After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all eleven suites.
+- The eleven suites and their expected `false` results (`beat` and `speed` were added 2026-11-06, `timeline` 2026-11-07, `image` and `photo` 2026-11-08; all five expect none):
+  - `photo`: none
+  - `image`: none
   - `timeline`: none
   - `beat`: none
   - `speed`: none

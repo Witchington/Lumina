@@ -762,7 +762,7 @@
       card.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt0, bubbles: true })); const rlDragStart = dt0.getData('application/x-lumina-add') === 'shape:arrow' && card.draggable;
       useWorkspace('default'); openRail('media');
       step('railTools', { rlNames, rlHidden, rlMedia, rlFx, counts, rlTab, rlCounts, rlText, rlShape, rlEmoji, rlFlagCards, rlFlag, rlBlur, rl3d, rlAtmo, rlBg, rlTransNeed, rlTrans, rlTransOff, rlCapNote, rlAudNote, rlDropPv, rlDropTl, rlDropTrans, rlDragStart,
-        works: rlNames === 'Media|Text|Stickers|Effects|Transitions|Captions|Audio|Adjust|3D|Converter' && rlHidden && rlMedia && rlFx && rlTab && rlCounts && rlText && rlShape && rlEmoji && rlFlagCards && rlFlag && rlBlur && rl3d && rlAtmo && rlBg
+        works: rlNames === 'Media|Image|Text|Stickers|Effects|Transitions|Captions|Audio|Adjust|3D|Converter' && rlHidden && rlMedia && rlFx && rlTab && rlCounts && rlText && rlShape && rlEmoji && rlFlagCards && rlFlag && rlBlur && rl3d && rlAtmo && rlBg
           && rlTransNeed && rlTrans && rlTransOff && rlCapNote && rlAudNote && rlDropPv && rlDropTl && rlDropTrans && rlDragStart });
     }
 
