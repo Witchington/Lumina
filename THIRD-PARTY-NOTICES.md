@@ -10,7 +10,7 @@ places given (they ship inside the app too).
 |---|---|---|---|---|
 | **FFmpeg** 6.0 | Reads, converts and exports video and audio | **GPL-3.0** | see "FFmpeg" below | `node_modules/ffmpeg-static/ffmpeg.exe.LICENSE` (Windows), `node_modules/ffmpeg-static/ffmpeg.LICENSE` (Linux) |
 | ffmpeg-static 5.2.0 | Supplies the FFmpeg program | GPL-3.0-or-later | https://github.com/eugeneware/ffmpeg-static | `node_modules/ffmpeg-static/LICENSE` |
-| **EffectCraft** shaders (commit 3768ff4) | The graphics-card effects (and the maths ported into `shaders/lumina_lumetri.wgsl`) | MIT (dual MIT / Apache-2.0; Lumina uses MIT) | https://github.com/storytold/effectcraft | `vendor/effectcraft/LICENSE-MIT`, `NOTICE` |
+| **EffectCraft** shaders (commit 3768ff4) | The graphics-card effects (and the maths ported into `shaders/lumina_lumetri.wgsl` and `shaders/lumina_key.wgsl`) | MIT (dual MIT / Apache-2.0; Lumina uses MIT) | https://github.com/storytold/effectcraft | `vendor/effectcraft/LICENSE-MIT`, `NOTICE` |
 | Transformers.js 4.3.2 | Auto captions (speech to text) | Apache-2.0 | https://github.com/huggingface/transformers.js | `vendor/transformers/LICENSE-transformers` |
 | ONNX Runtime Web 1.31.0-dev | Runs the caption model | MIT, Microsoft | https://github.com/microsoft/onnxruntime | `vendor/transformers/README.md` |
 | three.js 0.186.1 | 3D | MIT | https://github.com/mrdoob/three.js | `node_modules/three/LICENSE` |

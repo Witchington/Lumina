@@ -2300,8 +2300,10 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   fx_tone: ['fx_tone'],               // Round 8 on: tonal and colour corrections (fxt_point)
   fx_pixel2: ['fx_stylize', 'fx_pixel2'],   // Round 9 on: EffectCraft's pixel ports (Color Link's fp2_point; it uses fx_stylize's noise, as EffectCraft builds it)
   lumina_vfx: ['lumina_vfx'],         // Lumina's own anime VFX (C4), in shaders/ rather than EffectCraft's folder
-  lumina_lumetri: ['lumina_lumetri'] };   // Round 10: Lumetri Color, ported from EffectCraft's CPU maths (shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl' };
+  lumina_lumetri: ['lumina_lumetri'],   // Round 10: Lumetri Color, ported from EffectCraft's CPU maths (shaders/)
+  fx_key: ['fx_distort', 'fx_key'],   // Round 11 on: keying and mattes (fxk_point; EffectCraft builds it with fx_distort)
+  lumina_key: ['lumina_key'] };       // Round 11: Inner/Outer Key's steps (shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2393,7 +2395,7 @@ function fxApply(L, t, lc) {
     dev.queue.submit([enc.finish()]);
   };
   const E = {
-    w, h, sc,
+    w, h, sc, m, bw, bh,                          // the layer's matrix (layer box centred on 0 → frame) and its box size
     rot: Math.atan2(m.b, m.a),                    // the layer's on-screen rotation (radians)
     t: t - (L.start || 0),                        // seconds into the layer, for effects that move on their own
     T: t,                                         // the timeline time (beat and impact triggers use it)
@@ -2433,7 +2435,9 @@ function fxApply(L, t, lc) {
       blit(img); enc = dev.createCommandEncoder();
       const R = fxGrab(FXG.cv, max); R.max = max; c.set(img, R); return R;
     },
-    lumaMean(img) { return fxLumaOf(this.read(img, 320)); },   // its average brightness, 0..1 (Shadow/Highlight's Auto Amounts)
+    lumaMean(img) { return fxLumaOf(this.read(img, 320)); },
+    // a frame-sized 2D canvas (another layer, a matte drawn on the CPU) as a working image
+    upload(cv) { const x = tex(); dev.queue.copyExternalImageToTexture({ source: cv }, { texture: x, premultipliedAlpha: true }, [w, h]); return x; },   // its average brightness, 0..1 (Shadow/Highlight's Auto Amounts)
     clear(src) { return this.run('kernels', 'fill', fxP({}, { 0: [0, 0, 0, 0] }), src); }
   };
   const src = tex();
@@ -2520,6 +2524,45 @@ const FXC_K = [['fx_color', 'fxc_point']];
 function fxColor(E, img, op, u, f) { u = { ...u }; u[0] = [op, ...(u[0] || []).slice(1)]; while (u[0].length < 4) u[0].push(0); return E.run('fx_color', 'fxc_point', fxP(u, f), img); }
 // Round 8's colour effects share fx_tone's fxt_point; u[0].x picks the operation (layouts in EffectCraft's crates/gpu/src/fx_tone.rs)
 const FXT_K = [['fx_tone', 'fxt_point']];
+// ---- Round 11 keying helpers ----
+const KEY_K = [['fx_key', 'fxk_point'], ['fx_noise', 'fxn_morph'], ['lumina_key', 'lk_mix'], ...BLUR_K];
+const IO_K = ['lk_known', 'lk_diff', 'lk_pack', 'lk_sub', 'lk_est', 'lk_col', 'lk_final'].map(e => ['lumina_key', e]);
+const KEY_VIEWS = [[0, 'Final output'], [1, 'Source only'], [2, 'Matte only']];
+const IO_SHAPES = [['rect', 'Rectangle'], ['ellipse', 'Oval'], ['diamond', 'Diamond'], ['star', 'Star'], ['heart', 'Heart']];   // MASK_SHAPES without split and bars
+// a matte image (x = keep) applied to the layer
+const fxKeyApply = (E, img, m) => E.run('fx_key', 'fxk_point', fxP({ 0: [5, 0, 0, 0] }), img, m);
+// util::morph_plane: min (erode) or max (grow) over a square of radius r, per channel (modes: 0 min, 1 max, 2 keep)
+function fxMorph(E, img, r, modes) {
+  if (r < 1) return img;
+  const h = E.run('fx_noise', 'fxn_morph', fxP({ 0: [r, 0, 0, 0], 1: modes }), img);
+  return E.run('fx_noise', 'fxn_morph', fxP({ 0: [r, 1, 0, 0], 1: modes }), h);
+}
+// util::morph_frac: a fractional radius blends the two nearest whole ones
+function fxMorphFrac(E, img, radius, grow, modes = grow ? [1, 1, 1, 1] : [0, 0, 0, 0]) {
+  if (radius <= 0) return img;
+  const r0 = Math.floor(radius), t = radius - r0, a = fxMorph(E, img, r0, modes);
+  if (t < 1e-4) return a;
+  return E.run('lumina_key', 'lk_mix', fxP({}, { 0: [t, 0, 0, 0] }), a, fxMorph(E, img, r0 + 1, modes));
+}
+// keying::thin_feather: Edge Thin (positive erodes, negative grows) then Edge Feather (a Gaussian), in frame pixels
+function fxThinFeather(E, m, thin, feather) {
+  if (thin > 0) m = fxMorphFrac(E, m, thin, false); else if (thin < 0) m = fxMorphFrac(E, m, -thin, true);
+  return feather > 0 ? fxGauss(E, m, feather * .5, feather * .5, true) : m;
+}
+// Inner/Outer Key's trimap on a frame-sized canvas: white inside, grey the edge (the outside shape, or a band of the
+// highlight radius round the inside), black the rest; shapes sit on the layer, sized as a share of it
+function fxTrimap(E, q) {
+  const c = layerCanvas('trimap'), x = c.cx, L = E.L, f = E.fx, raw = k => val(L, fxKey(f, k), E.T);
+  x.fillStyle = '#000'; x.fillRect(0, 0, E.w, E.h); x.setTransform(E.m);
+  const shape = p => { maskShapePath(x, q(p + 'Shape'), (raw(p + 'PosX') - .5) * E.bw, (raw(p + 'PosY') - .5) * E.bh, Math.max(.5, q(p + 'W') / 100 * E.bw),
+    Math.max(.5, q(p + 'H') / 100 * E.bh), q(p + 'Rot') * Math.PI / 180, E.bw, E.bh); };
+  const bg = q('bgShape') && q('bgShape') !== 'none', r = q('radius');
+  if (bg) { shape('bg'); x.fillStyle = '#808080'; x.fill(); }
+  shape('fg'); x.fillStyle = '#fff'; x.fill();
+  if (!bg && r > 0) { x.lineWidth = 2 * r; x.strokeStyle = '#808080'; x.stroke(); }
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  return c.cv;
+}
 function fxTone(E, img, op, u = {}, f = {}, aux = null, data = null) { u = { ...u }; u[0] = [op, ...(u[0] || []).slice(1)]; while (u[0].length < 4) u[0].push(0); return E.run('fx_tone', 'fxt_point', fxP(u, f), img, aux, null, data); }
 // effectcraft_color::rgb_to_hsl (the same maths as common.wgsl's): hue, saturation and lightness, all 0..1
 function fxHSL([r, g, b]) {
@@ -3561,6 +3604,130 @@ const FX = {
       if (sh || (ss && mask)) out = E.run(F, 'llm_sharpen', fxP({ 0: [ss && mask ? 1 : 0, 0, 0, 0] }, { 0: [sh, ss, E.px(1), 0] }), out, mask);
       return out;
     } },
+  // ---- Round 11: Keying I. Color Key, Luma Key, Color Range, Extract, Difference Matte and Color Difference Key run in
+  //      EffectCraft's fx_key.wgsl (fxk_point), Linear Color Key in fx_color's fxc_point; Inner/Outer Key in Lumina's
+  //      shaders/lumina_key.wgsl, with the inside and outside drawn as shapes on the effect (Lumina layers have one mask) ----
+  linearcolorkey: { name: 'Linear Color Key', cat: 'Keying', kernels: FXC_K, params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: KEY_VIEWS },
+      { id: 'key', label: 'Key color', type: 'color', def: '#0000ff' },
+      { id: 'match', label: 'Match colors', type: 'pick', def: 0, opts: [[0, 'Using RGB'], [1, 'Using hue'], [2, 'Using chroma']] },
+      { id: 'tolerance', label: 'Matching tolerance %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'softness', label: 'Matching softness %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'op', label: 'Key operation', type: 'pick', def: 0, opts: [[0, 'Key colors'], [1, 'Keep colors']] }],
+    run(E, img, q) {
+      const v = q('view'); if (v === 1) return img;
+      const k = q('key'), n = k[0] + k[1] + k[2], kc = n > 1e-6 ? [k[0] / n, k[1] / n] : [1 / 3, 1 / 3];
+      return E.run('fx_color', 'fxc_point', fxP({ 0: [8, q('match'), q('op'), v] }, { 0: [...k, q('tolerance') / 100], 1: [q('softness') / 100, ...kc, fxHSL(k)[0]] }), img);
+    } },
+  colorkey: { name: 'Color Key', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'key', label: 'Key color', type: 'color', def: '#0000ff' },
+      { id: 'tolerance', label: 'Color tolerance', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'thin', label: 'Edge thin', def: 0, min: -5, max: 5, dec: 1 },
+      { id: 'feather', label: 'Edge feather', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const m = E.run('fx_key', 'fxk_point', fxP({ 0: [1, 0, 0, 0] }, { 0: [...q('key'), q('tolerance') / 255] }), img);
+      return fxKeyApply(E, img, fxThinFeather(E, m, q('thin') * E.sc, q('feather') * E.sc));
+    } },
+  lumakey: { name: 'Luma Key', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'type', label: 'Key type', type: 'pick', def: 1, opts: [[0, 'Key out brighter'], [1, 'Key out darker'], [2, 'Key out similar'], [3, 'Key out dissimilar']] },
+      { id: 'threshold', label: 'Threshold', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'tolerance', label: 'Tolerance', def: 0, min: 0, max: 255, dec: 0, show: f => +(f.type ?? 1) >= 2 },
+      { id: 'thin', label: 'Edge thin', def: 0, min: -5, max: 5, dec: 1 },
+      { id: 'feather', label: 'Edge feather', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const m = E.run('fx_key', 'fxk_point', fxP({ 0: [2, q('type'), 0, 0] }, { 0: [q('threshold') / 255, q('tolerance') / 255, 0, 0] }), img);
+      return fxKeyApply(E, img, fxThinFeather(E, m, q('thin') * E.sc, q('feather') * E.sc));
+    } },
+  colorrange: { name: 'Color Range', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'fuzz', label: 'Fuzziness', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'space', label: 'Color space', type: 'pick', def: 0, opts: [[0, 'Lab'], [1, 'YUV'], [2, 'RGB']] },
+      ...[['L', 'L, Y, R', 0, 255], ['A', 'a, U, G', 0, 100], ['B', 'b, V, B', 128, 255]].flatMap(([k, n, lo, hi]) => [
+        { id: 'min' + k, label: `Min (${n})`, def: lo, min: 0, max: 255, dec: 0 }, { id: 'max' + k, label: `Max (${n})`, def: hi, min: 0, max: 255, dec: 0 }])],
+    run(E, img, q) {
+      const m = E.run('fx_key', 'fxk_point', fxP({ 0: [3, q('space'), 0, 0] }, { 0: ['minL', 'minA', 'minB', 0].map(k => k && q(k)),
+        1: ['maxL', 'maxA', 'maxB', 0].map(k => k && q(k)), 2: [q('fuzz'), 0, 0, 0] }), img);
+      return fxKeyApply(E, img, m);
+    } },
+  extract: { name: 'Extract', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, opts: [[0, 'Luminance'], [1, 'Red'], [2, 'Green'], [3, 'Blue'], [4, 'Alpha']] },
+      { id: 'black', label: 'Black point', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'white', label: 'White point', def: 255, min: 0, max: 255, dec: 0 },
+      { id: 'blackSoft', label: 'Black softness', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'whiteSoft', label: 'White softness', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'invert', label: 'Invert', type: 'check', def: false }],
+    run(E, img, q) {
+      const m = E.run('fx_key', 'fxk_point', fxP({ 0: [4, q('channel'), q('invert'), 0] }, { 0: [q('black'), q('white'), q('blackSoft'), q('whiteSoft')] }), img);
+      return fxKeyApply(E, img, m);
+    } },
+  // Difference Matte: keeps what differs from another layer (a clean plate), as that layer shows in the frame
+  differencematte: { name: 'Difference Matte', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: KEY_VIEWS },
+      { id: 'layer', label: 'Difference layer', type: 'pick', def: 0, opts: L => [[0, 'None (this layer)'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'tolerance', label: 'Matching tolerance %', def: 15, min: 0, max: 100, dec: 1 },
+      { id: 'softness', label: 'Matching softness %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'blur', label: 'Blur before difference', def: 0, min: 0, max: 1000, dec: 1 }],
+    run(E, img, q) {
+      const v = q('view'); if (v === 1) return img;
+      const M = q('layer') ? byId(q('layer')) : null;
+      let other = img;
+      if (M && M !== E.L && DRAW[M.kind]) { const [a, b] = liveRange(M); const c = layerCanvas('diff'); if (E.T >= a && E.T < b) paintLayer(M, E.T, c.cx); other = E.upload(c.cv); }
+      const s = q('blur') * E.sc * .5;
+      const A = s > .025 ? fxGauss(E, img, s, s, true) : img, B = s > .025 ? fxGauss(E, other, s, s, true) : other;
+      const m = E.run('fx_key', 'fxk_point', fxP({ 0: [6, 0, 0, 0] }, { 0: [q('tolerance') / 100, q('softness') / 100, 0, 0] }), A, B);
+      return E.run('fx_key', 'fxk_point', fxP({ 0: [5, v === 2 ? 3 : 4, 0, 0] }), img, m);
+    } },
+  // Color Difference Key: two partial mattes from the key colour's main channel minus each of the other two
+  colordifferencekey: { name: 'Color Difference Key', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'view', label: 'View', type: 'pick', def: 7, opts: ['Source', 'Uncorrected matte partial A', 'Corrected matte partial A', 'Uncorrected matte partial B', 'Corrected matte partial B',
+        'Uncorrected matte', 'Corrected matte', 'Final output', '[A, B, Matte] corrected, final'].map((n, i) => [i, n]) },
+      { id: 'key', label: 'Key color', type: 'color', def: '#0000ff' },
+      { id: 'accuracy', label: 'Color matching accuracy', type: 'pick', def: 0, opts: [[0, 'Faster'], [1, 'More accurate']] },
+      ...['A', 'B'].flatMap(k => [['InBlack', 'in black', 0], ['InWhite', 'in white', 255], ['Gamma', 'gamma', 1], ['OutBlack', 'out black', 0], ['OutWhite', 'out white', 255]]
+        .map(([s, n, d]) => s === 'Gamma' ? { id: 'p' + k + s, label: `Partial ${k} ${n}`, def: d, min: .01, max: 10, dec: 2 } : { id: 'p' + k + s, label: `Partial ${k} ${n}`, def: d, min: 0, max: 255, dec: 0 })),
+      { id: 'mBlack', label: 'Matte in black', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'mWhite', label: 'Matte in white', def: 255, min: 0, max: 255, dec: 0 },
+      { id: 'mGamma', label: 'Matte gamma', def: 1, min: .01, max: 10, dec: 2 }],
+    run(E, img, q) {
+      const v = q('view'); if (v === 0) return img;
+      const acc = q('accuracy') === 1, lin = x => acc ? (x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4) : x, k = q('key').map(x => lin(clamp(x, 0, 1)));
+      const [pi, o1, o2] = k[1] >= k[0] && k[1] >= k[2] ? [1, 0, 2] : k[2] >= k[0] && k[2] >= k[1] ? [2, 0, 1] : [0, 1, 2];
+      const g = (p, s) => q('p' + p + s);
+      return E.run('fx_key', 'fxk_point', fxP({ 0: [9, v, acc, 0], 1: [pi, o1, o2, 0] }, {
+        0: [Math.max(k[pi] - k[o1], 1e-3), Math.max(k[pi] - k[o2], 1e-3), q('mBlack'), q('mWhite')],
+        1: [g('A', 'InBlack'), g('A', 'InWhite'), g('A', 'Gamma'), g('A', 'OutBlack')], 2: [g('A', 'OutWhite'), g('B', 'OutWhite'), q('mGamma'), 0],
+        3: [g('B', 'InBlack'), g('B', 'InWhite'), g('B', 'Gamma'), g('B', 'OutBlack')] }), img);
+    } },
+  // Inner/Outer Key: the inside shape is kept, the outside one (or a band of Single mask highlight radius round the
+  // inside) is the edge, where the matte and colours are worked out from the colours either side
+  innerouterkey: { name: 'Inner/Outer Key', cat: 'Keying', kernels: [...KEY_K, ...IO_K], params: [
+      { id: 'fgShape', label: 'Foreground (inside)', type: 'pick', def: 'ellipse', str: true, opts: IO_SHAPES },
+      { id: 'fgPos', label: 'Inside center', type: 'pt', def: [.5, .5] },
+      { id: 'fgW', label: 'Inside width %', def: 50, min: 0, max: 200, dec: 1 },
+      { id: 'fgH', label: 'Inside height %', def: 50, min: 0, max: 200, dec: 1 },
+      { id: 'fgRot', label: 'Inside angle°', def: 0, min: -360, max: 360, dec: 1 },
+      { id: 'bgShape', label: 'Background (outside)', type: 'pick', def: 'none', str: true, opts: [['none', 'None'], ...IO_SHAPES] },
+      { id: 'bgPos', label: 'Outside center', type: 'pt', def: [.5, .5], show: f => (f.bgShape || 'none') !== 'none' },
+      { id: 'bgW', label: 'Outside width %', def: 70, min: 0, max: 200, dec: 1, show: f => (f.bgShape || 'none') !== 'none' },
+      { id: 'bgH', label: 'Outside height %', def: 70, min: 0, max: 200, dec: 1, show: f => (f.bgShape || 'none') !== 'none' },
+      { id: 'bgRot', label: 'Outside angle°', def: 0, min: -360, max: 360, dec: 1, show: f => (f.bgShape || 'none') !== 'none' },
+      { id: 'radius', label: 'Single mask highlight radius', def: 0, min: 0, max: 100, dec: 1, show: f => (f.bgShape || 'none') === 'none' },
+      { id: 'thin', label: 'Edge thin', def: 0, min: -10, max: 10, dec: 1 },
+      { id: 'feather', label: 'Edge feather', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'threshold', label: 'Edge threshold %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'invert', label: 'Invert extraction', type: 'check', def: false },
+      { id: 'original', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const tri = E.upload(fxTrimap(E, q)), K = 'lumina_key', r = q('radius');
+      const sig = Math.max(Math.max(r, 4) * E.sc, Math.min(E.lw, E.lh) * .02);
+      const FB = fxGauss(E, E.run(K, 'lk_known', fxP({ 0: [0, 0, 0, 0] }), img, tri), sig, sig, true);
+      const BB = fxGauss(E, E.run(K, 'lk_known', fxP({ 0: [1, 0, 0, 0] }), img, tri), sig, sig, true);
+      const TD = E.run(K, 'lk_pack', fxP(), tri, E.run(K, 'lk_diff', fxP(), FB, BB));
+      let col = E.run(K, 'lk_col', fxP(), E.run(K, 'lk_est', fxP(), E.run(K, 'lk_sub', fxP(), img, BB), TD), BB);
+      const th = q('thin') * E.sc, fe = q('feather') * E.sc;
+      if (Math.abs(th) > .01) col = fxMorphFrac(E, col, Math.abs(th), th < 0, [2, 2, 2, th < 0 ? 1 : 0]);
+      if (fe > .05) col = E.run(K, 'lk_mix', fxP({ 0: [1, 0, 0, 0] }), col, fxGauss(E, col, fe * .5, fe * .5, true));
+      return E.run(K, 'lk_final', fxP({ 0: [1, q('invert'), 0, 0] }, { 0: [q('threshold') / 100, q('original') / 100, 0, 0] }), img, col);
+    } },
   // ---- C4: anime VFX (Lumina's own shaders, shaders/lumina_vfx.wgsl), each can fire on beats, impacts or bookmarks ----
   rgbsplit: { name: 'RGB Split', cat: 'Anime VFX', kernels: VFX_K('lvx_rgbsplit'), params: [
       { id: 'amount', label: 'Amount (px)', def: 12, min: 0, max: 120, dec: 1 },
@@ -4293,8 +4460,12 @@ const hexA = (hex, a) => `rgba(${hex.match(/\w\w/g).map(x => parseInt(x, 16)).jo
 // Cinematic bars keeps a band across the frame. outline = only the edges you can see (the lines for split and bars).
 const MASK_SHAPES = [['rect', 'Rectangle'], ['ellipse', 'Oval'], ['diamond', 'Diamond'], ['star', 'Star'], ['heart', 'Heart'], ['split', 'Split'], ['bars', 'Cinematic bars']];
 function maskPath(c, L, t, w, h, outline) {
-  const cx = val(L, 'maskX', t) * w, cy = val(L, 'maskY', t) * h, mw = Math.max(1, val(L, 'maskW', t) * w), mh = Math.max(1, val(L, 'maskH', t) * h);
-  const a = val(L, 'maskRot', t) * Math.PI / 180, co = Math.cos(a), si = Math.sin(a), s = L.mask.shape;
+  maskShapePath(c, L.mask.shape, val(L, 'maskX', t) * w, val(L, 'maskY', t) * h, Math.max(1, val(L, 'maskW', t) * w), Math.max(1, val(L, 'maskH', t) * h),
+    val(L, 'maskRot', t) * Math.PI / 180, w, h, outline);
+}
+// one of MASK_SHAPES centred on (cx, cy), mw × mh, turned by a (radians); w, h = the layer box (split and bars reach past it)
+function maskShapePath(c, s, cx, cy, mw, mh, a, w, h, outline) {
+  const co = Math.cos(a), si = Math.sin(a);
   const P = (x, y) => [cx + x * co - y * si, cy + x * si + y * co];
   const poly = (pts, close) => { pts.forEach(([x, y], i) => c[i ? 'lineTo' : 'moveTo'](...P(x, y))); if (close) c.closePath(); };
   const big = 2 * (Math.hypot(w, h) + Math.hypot(cx, cy));

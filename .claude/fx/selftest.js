@@ -661,6 +661,91 @@
     }
     step('round10speed', r10speed);
 
+    // ---- Round 11: Keying I (EffectCraft's fx_key.wgsl, fx_color's Linear Color Key, Lumina's lumina_key.wgsl).
+    // Patches at y 270: black 160, white 480, red 800, green 1120, blue 1440, grey 1760; keyed-out pixels read black
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 1) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      // Color Key on red (tolerance 10) removes the red patch and keeps green; Edge Feather 20 lets red back in just inside its edge
+      f = await only('colorkey'); { const e = await kerr('fx_key', 'fxk_point') || await kerr('lumina_key', 'lk_mix'); if (e) step('keyKernel', e); }
+      f.key = '#dc2828'; set(f, 'tolerance', 10); draw(); const ckRed = px(K.RED, K.Y), ckGreen = px(K.GRN, K.Y), ckEdge = px(645, K.Y);
+      set(f, 'feather', 20); draw(); const ckFeather = px(645, K.Y); set(f, 'feather', 0);
+      set(f, 'thin', -3); draw(); const ckGrow = px(642, K.Y); set(f, 'thin', 0);   // growing the kept part brings red back 3 px into the patch
+      step('colorkey', { red: ckRed.join(), green: ckGreen.join(), edge: ckEdge.join(), feathered: ckFeather.join(), grown: ckGrow.join(),
+        works: cl(ckRed, z) && cl(ckGreen, P0(K.GRN, K.Y)) && cl(ckEdge, z) && ckFeather[0] > 20 && ckFeather[0] < 200 && cl(ckGrow, P0(642, K.Y), 2) });
+      // Luma Key: Key Out Darker at 100 removes black and the dark end of the ramp, keeps grey; Brighter at 200 removes white;
+      // Similar at 128 ± 10 removes grey only
+      f = await only('lumakey'); set(f, 'threshold', 100); draw(); const lkBlack = px(K.BLK, K.Y), lkGrey = px(K.GRY, K.Y), lkRampDark = px(300, 810), lkRampLight = px(1500, 810);
+      f.type = 0; set(f, 'threshold', 200); draw(); const lkWhite = px(K.WHT, K.Y), lkGrey2 = px(K.GRY, K.Y);
+      f.type = 2; set(f, 'threshold', 128); set(f, 'tolerance', 10); draw(); const lkSimGrey = px(K.GRY, K.Y), lkSimWhite = px(K.WHT, K.Y);
+      step('lumakey', { darkerBlack: lkBlack.join(), darkerGrey: lkGrey.join(), rampDark: lkRampDark.join(), rampLight: lkRampLight.join(), brighterWhite: lkWhite.join(), brighterGrey: lkGrey2.join(), similarGrey: lkSimGrey.join(), similarWhite: lkSimWhite.join(),
+        works: cl(lkBlack, z) && cl(lkGrey, P0(K.GRY, K.Y)) && cl(lkRampDark, z) && cl(lkRampLight, P0(1500, 810)) && cl(lkWhite, z) && cl(lkGrey2, P0(K.GRY, K.Y)) && cl(lkSimGrey, z) && cl(lkSimWhite, P0(K.WHT, K.Y)) });
+      // Linear Color Key on the blue patch's colour: blue goes, red stays; Matte Only shows blue black and red white; Keep Colors flips it
+      f = await only('linearcolorkey'); f.key = '#283cdc'; draw(); const lcBlue = px(K.BLU, K.Y), lcRed = px(K.RED, K.Y);
+      f.view = 2; draw(); const lcMB = px(K.BLU, K.Y), lcMR = px(K.RED, K.Y); f.view = 0;
+      f.op = 1; draw(); const lcKeepB = px(K.BLU, K.Y), lcKeepR = px(K.RED, K.Y); f.op = 0;
+      f.view = 1; draw(); const lcSrc = diff(plain, frame()).max; f.view = 0;
+      step('linearcolorkey', { blue: lcBlue.join(), red: lcRed.join(), matteBlue: lcMB.join(), matteRed: lcMR.join(), keepBlue: lcKeepB.join(), keepRed: lcKeepR.join(), sourceOnly: lcSrc,
+        works: cl(lcBlue, z) && cl(lcRed, P0(K.RED, K.Y)) && cl(lcMB, z) && cl(lcMR, [255, 255, 255]) && cl(lcKeepB, P0(K.BLU, K.Y)) && cl(lcKeepR, z) && lcSrc === 0 });
+      // Color Range in RGB: R 200-255, G and B 0-100 takes out red only
+      f = await only('colorrange'); f.space = 2; set(f, 'minL', 200); set(f, 'maxL', 255); set(f, 'minA', 0); set(f, 'maxA', 100); set(f, 'minB', 0); set(f, 'maxB', 100);
+      draw(); const crRed = px(K.RED, K.Y), crWhite = px(K.WHT, K.Y), crBlue = px(K.BLU, K.Y);
+      set(f, 'fuzz', 60); draw(); const crWhiteFuzz = px(K.WHT, K.Y);   // white is 155 outside on G and B: still out of reach of 60
+      set(f, 'maxA', 230); set(f, 'maxB', 230); draw(); const crWhitePart = px(K.WHT, K.Y);   // 25 outside, fuzziness 60: 25/60 of white kept
+      step('colorrange', { red: crRed.join(), white: crWhite.join(), blue: crBlue.join(), whiteFuzz60: crWhiteFuzz.join(), whitePartly: crWhitePart.join(),
+        works: cl(crRed, z) && cl(crWhite, [255, 255, 255]) && cl(crBlue, P0(K.BLU, K.Y)) && cl(crWhiteFuzz, [255, 255, 255]) && cl(crWhitePart, [106, 106, 106], 2) });
+      // Extract on luminance, black point 100: black goes, white and grey stay; Invert keeps only black (which reads black either
+      // way), so white goes; Black Softness 100 keeps half of a 50-luma pixel of the ramp
+      f = await only('extract'); set(f, 'black', 100); draw(); const exBlack = px(K.BLK, K.Y), exWhite = px(K.WHT, K.Y), exGrey = px(K.GRY, K.Y);
+      f.invert = true; draw(); const exInvWhite = px(K.WHT, K.Y); f.invert = false;
+      set(f, 'blackSoft', 100); draw(); const exRamp = px(376, 810), exRampPlain = P0(376, 810);
+      step('extract', { black: exBlack.join(), white: exWhite.join(), grey: exGrey.join(), invertWhite: exInvWhite.join(), ramp: exRamp.join(), rampPlain: exRampPlain.join(),
+        works: cl(exBlack, z) && cl(exWhite, [255, 255, 255]) && cl(exGrey, P0(K.GRY, K.Y)) && cl(exInvWhite, z) && Math.abs(exRamp[0] - exRampPlain[0] / 2) <= 3 });
+      // Difference Matte against a hidden copy of the card that only shows inside its own mask (the middle 60 %): where they
+      // match (green) the layer goes, outside (grey) it stays; Matte Only shows that as black / white; no layer keys out everything
+      const L2 = await load(card); L2.start = 0; L2.dur = 6; L2.visible = false; L2.mask = { on: true, shape: 'rect', invert: false };
+      S.layers = [L, ...S.layers.filter(x => x !== L && x !== L2), L2];
+      f = await only('differencematte'); f.layer = L2.id; draw(); const dmGreen = px(K.GRN, K.Y), dmGrey = px(K.GRY, K.Y);
+      f.view = 2; draw(); const dmMG = px(K.GRN, K.Y), dmMY = px(K.GRY, K.Y); f.view = 0;
+      f.layer = 0; draw(); const dmSelf = diff(frame(), new Uint8ClampedArray(plain.length)).max;
+      f.layer = L2.id; set(f, 'blur', 6); draw(); const dmBlur = px(K.GRN, K.Y);
+      const dmMenu = [...document.querySelectorAll(`#fx-${f.uid}-layer option`)].map(o => o.value);
+      S.layers = S.layers.filter(x => x !== L2); delete RT[L2.id];
+      step('differencematte', { green: dmGreen.join(), grey: dmGrey.join(), matteGreen: dmMG.join(), matteGrey: dmMY.join(), selfMax: dmSelf, blurredGreen: dmBlur.join(), menu: dmMenu,
+        works: cl(dmGreen, z) && cl(dmGrey, P0(K.GRY, K.Y)) && cl(dmMG, z) && cl(dmMY, [255, 255, 255]) && dmSelf === 0 && cl(dmBlur, z) });
+      // Color Difference Key on pure blue: the blue patch keeps 0.372 of itself (B − G partial) → (15, 22, 82); red stays;
+      // the corrected matte view shows blue as 95; Partial A In White 75 makes partial A (0.294) full, so blue stays
+      f = await only('colordifferencekey'); draw(); const cdBlue = px(K.BLU, K.Y), cdRed = px(K.RED, K.Y);
+      f.view = 6; draw(); const cdMatte = px(K.BLU, K.Y); f.view = 7;
+      set(f, 'pAInWhite', 75); draw(); const cdA = px(K.BLU, K.Y); set(f, 'pAInWhite', 255);
+      f.view = 8; draw(); const cdFour = [px(480, 270), px(1440, 810)].map(c => c.join()); f.view = 7;
+      step('colordifferencekey', { blue: cdBlue.join(), red: cdRed.join(), matteBlue: cdMatte.join(), partialAWhite75: cdA.join(), fourUp: cdFour,
+        works: cl(cdBlue, [15, 22, 82], 2) && cl(cdRed, P0(K.RED, K.Y)) && cl(cdMatte, [95, 95, 95], 2) && cl(cdA, P0(K.BLU, K.Y), 2) });
+      // Inner/Outer Key: the default oval keeps the middle and removes the corner; a rectangle over the white patch (x 300-660)
+      // keeps red at 650; with Single Mask Highlight Radius 20 that pixel is edge, its colour matches the red outside, so it goes
+      f = await only('innerouterkey'); { const e = await kerr('lumina_key', 'lk_est'); if (e) step('ioKernel', e); }
+      draw(); const ioMid = px(960, 400), ioCorner = px(100, 100);
+      f.fgShape = 'rect'; set(f, 'fgPosX', .25); set(f, 'fgPosY', .25); set(f, 'fgW', 18.75); set(f, 'fgH', 50); draw(); const ioRed = px(650, K.Y), ioWhite = px(K.WHT, K.Y);
+      set(f, 'radius', 20); draw(); const ioRedEdge = px(650, K.Y), ioWhite2 = px(K.WHT, K.Y), ioWhiteEdge = px(630, K.Y);
+      f.invert = true; draw(); const ioInv = px(K.GRN, K.Y); f.invert = false;
+      set(f, 'original', 100); draw(); const ioOrig = diff(plain, frame()).max; set(f, 'original', 0);
+      f.bgShape = 'rect'; S.sel = L.id; setRightTab('fx'); refresh(); const ioRows = !!$(`#inspector [data-p="${fxKey(f, 'bgW')}"]`); f.bgShape = 'none'; refresh(); const ioRowsGone = !$(`#inspector [data-p="${fxKey(f, 'bgW')}"]`);
+      step('innerouterkey', { middle: ioMid.join(), corner: ioCorner.join(), redInRect: ioRed.join(), white: ioWhite.join(), redOnEdge: ioRedEdge.join(), whiteAfter: ioWhite2.join(), whiteNearEdge: ioWhiteEdge.join(),
+        inverted: ioInv.join(), blendOriginal: ioOrig, outsideRows: ioRows, outsideRowsHidden: ioRowsGone,
+        works: cl(ioMid, P0(960, 400)) && cl(ioCorner, z) && cl(ioRed, P0(650, K.Y)) && cl(ioWhite, [255, 255, 255]) && ioRedEdge[0] < 40 && cl(ioWhite2, [255, 255, 255]) && ioWhiteEdge[0] > 230
+          && cl(ioInv, P0(K.GRN, K.Y)) && ioOrig === 0 && ioRows && ioRowsGone });
+      // the Effects menu has a Keying group with all eight
+      const menuKeying = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Keying');
+      step('keyingMenu', { items: menuKeying ? [...menuKeying.children].map(o => o.value) : null, works: menuKeying?.children.length === 8 });
+    }
+    const r11speed = {};
+    for (const [id, vals, opts] of [['colorkey', { tolerance: 20, feather: 10, thin: 1.5 }, { key: '#dc2828' }], ['lumakey', { threshold: 80, feather: 5 }], ['linearcolorkey', {}], ['colorrange', { fuzz: 40 }],
+      ['extract', { black: 60, blackSoft: 40 }], ['colordifferencekey', {}], ['innerouterkey', { radius: 25, feather: 4 }], ['differencematte', { blur: 4 }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r11speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round11speed', r11speed);
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }
@@ -760,6 +845,8 @@
       ['levelsic', { redGamma: 2, blueInWhite: 180 }], ['cccolorneutralizer', {}, { midsUn: '#998066' }], ['cckernel', { k1: -1, k2: -1, k3: -1, k4: -1, k5: 8, k6: -1, k7: -1, k8: -1, k9: -1 }, { absolute: true }],
       ['colorlink', { opacity: 50 }, { mode: 2 }],
       ['lumetri', { exposure: .3, contrast: 25, vigAmount: -2 }, { look: 5, rgbMaster: '0,0 0.3,0.22 0.7,0.8 1,1', wheelHighs: '#ffe0c0', wheelShadows: '#6080a0' }],
+      ['colorkey', { tolerance: 30, feather: 6 }, { key: '#dc2828' }], ['lumakey', { threshold: 100 }], ['linearcolorkey', { tolerance: 25 }, { key: '#283cdc' }], ['colorrange', { maxL: 200 }],
+      ['extract', { black: 100, blackSoft: 60 }], ['colordifferencekey', {}], ['innerouterkey', { radius: 30, feather: 6 }],
       ['rgbsplit', { amount: 30 }, { trigger: 0 }], ['edgeglow', { radius: 20 }, { trigger: 0 }], ['flash', { amount: 55 }, { trigger: 0, color: '#9fdcff' }], ['vhs', {}, { trigger: 0 }], ['shake', { amount: 40, rotation: 4 }, { trigger: 0 }]];
     const T = S.layers[0];
     const strip = document.createElement('canvas'); strip.width = 4 * 480; strip.height = Math.ceil(shots.length / 4) * 270; const sx = strip.getContext('2d');
