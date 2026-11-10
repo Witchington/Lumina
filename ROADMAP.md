@@ -263,6 +263,27 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
      They go in just before the effects that need a second layer or other frames (from Round 16, Displacement Map, onward).
+   - **After Effects' other features (rounds A1–A12, written 2026-11-09 at the user's request).** EffectCraft is only AE's
+     effects; these are the rest of After Effects. They come after the EffectCraft rounds unless the user says otherwise
+     (the foundations above, precomps / parenting, may pull parts of A1 forward). About 12 rounds, on top of EffectCraft's ~20.
+     **Lumina already has (some only in part):** keyframes and the graph editor, mask shapes, track mattes, blend modes, point
+     motion tracking, expressions as presets only (wiggle, pulse, loop), frame blending, AI background removal, a content-aware
+     fill box, 3D model layers with a camera tilt, bookmarks (markers), audio solo.
+
+     | Round | Theme | What |
+     |---|---|---|
+     | A1 | Layer basics | Parenting and null objects, adjustment layers, solo / shy / lock / guide layers, label colours, precomps (if not already done as a foundation), comp settings (any size, frame rate, pixel aspect, background). |
+     | A2 | Keyframe tools | Easy Ease in/out, keyframe velocity box, roving keyframes, motion paths drawn in the viewer, Motion Sketch, Smoother, Wiggler, time-reverse keyframes, Sequence Layers, Exponential Scale, Convert Audio to Keyframes. |
+     | A3 | Time and motion blur | Time remapping, time stretch, freeze frame, frame blending modes (frame mix, pixel motion), motion blur (layer switch, shutter angle and phase). |
+     | A4 | Real expressions | An expression editor with a pick whip: `wiggle()`, `loopOut()`, `time`, `valueAtTime()`, `linear()`/`ease()`, links between properties and layers; Expression Controls (Slider, Angle, Checkbox, Color, Point, Layer, Dropdown). |
+     | A5 | Shape layers | Rectangle / ellipse / polygon / star tools and pen paths in one layer, gradient fills and strokes, dashes; Trim Paths, Repeater, Merge Paths, Offset Paths, Pucker & Bloat, Round Corners, Twist, Wiggle Paths, Zig Zag. |
+     | A6 | Text animators | Per-character animators with range selectors (start / end / offset), wiggly and expression selectors, text on a path, per-character 3D, source text keyframes, paragraph text boxes. |
+     | A7 | Masks II | Mask modes (add, subtract, intersect, difference), mask expansion, variable-width feather, mask path keyframes, mask tracking, RotoBezier. |
+     | A8 | 3D | Any layer as a 3D layer; cameras (one / two node, depth of field); lights (point, spot, parallel, ambient) with shadows; material options; 3D views (front, top, custom); extruded text and shapes. |
+     | A9 | Tracking | Tracker panel: one / two / four-point (corner pin) tracking, Stabilize Motion, Warp Stabilizer, 3D Camera Tracker (place layers in the tracked scene), planar tracking (lite). |
+     | A10 | Roto and cleanup | Roto Brush (AI, carried across frames) with Refine Edge; Content-Aware Fill for video (across frames, not one box). |
+     | A11 | Puppet | Puppet Position, Starch, Bend and Overlap pins, Advanced pins, recording pins by dragging. |
+     | A12 | Output and workflow | Render Queue (several items, output modules, templates), proxies, Collect Files, preview options (resolution, region of interest, skip frames), rulers, guides, grids, safe zones, snapshots, Essential Graphics templates (shared with the Premiere Pro list). |
 2. **Start and finish PhotoCraft** (https://github.com/storytold/photocraft) as Lumina's **Image mode**, the Photoshop side.
    **Started 2026-11-08 at the user's request, before EffectCraft was finished** (EffectCraft resumes at Round 8 when the user says).
 
