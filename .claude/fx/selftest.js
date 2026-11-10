@@ -968,7 +968,7 @@
       f.reverse = true; draw(); const ocR = px(650, K.Y);
       step('opticscomp', { forward630: ocA.join(), white: ocC.join(), reverse650: ocR.join(), works: cl(ocA, RED) && cl(ocC, W3) && cl(ocR, W3) });
       const menuD = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Distort');
-      step('distortMenu', { items: menuD ? [...menuD.children].map(o => o.value) : null, works: menuD?.children.length === 15 });
+      step('distortMenu', { items: menuD ? [...menuD.children].map(o => o.value) : null, works: ['spherize', 'polar', 'mirror', 'offset', 'magnify', 'cornerpin', 'transform', 'opticscomp'].every(id => [...(menuD?.children || [])].some(o => o.value === id)) });
     }
     const r14speed = {};
     for (const [id, vals, opts] of [['spherize', {}], ['polar', {}], ['mirror', {}], ['offset', { shiftX: .7 }], ['magnify', {}], ['cornerpin', { urX: .8, lrY: .9 }],
@@ -977,6 +977,53 @@
       const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r14speed[id] = +((performance.now() - t0) / 10).toFixed(1);
     }
     step('round14speed', r14speed);
+
+    // ---- Round 15: Distort II (CC). Same patches; "changed" counts pixels that moved more than 4 levels
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0], W3 = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const changed = () => diff(plain, frame()).changed, same = () => diff(plain, frame()).max, BLUE = P0(K.BLU, K.Y);
+      // each one: moves a lot with its defaults, and nothing with its "off" setting
+      const R = {};
+      for (const [id, fam, entry, off] of [['ccbendit', 'fx_warp', 'fxw_bendit', { bend: 0 }], ['ccbender', 'fx_transition', 'ftr_bender', { amount: 0 }], ['ccflomotion', 'fx_stylize', 'fxs_flomotion', { amount1: 0, amount2: 0 }],
+        ['ccgriddler', 'fx_stylize', 'fxs_griddler', { rotation: 0 }], ['ccslant', 'fx_stylize', 'fxs_warp', { slant: 0 }], ['ccsmear', 'fx_stylize', 'fxs_warp', { reach: 0 }], ['ccsplit', 'fx_stylize', 'fxs_warp', { split: 0 }],
+        ['ccsplit2', 'fx_stylize', 'fxs_warp', { split1: 0, split2: 0 }], ['cctiler', 'fx_stylize', 'fxs_table', { scale: 100 }], ['ccripplepulse', 'fx_stylize', 'fxs_warp', { level: 0 }]]) {
+        f = await only(id); { const e = await kerr(fam, entry); if (e) step(id + 'Kernel', e); }
+        draw(.3); const on = changed(); for (const k in off) set(f, k, off[k]); draw(.3); R[id] = { changed: on, offMax: same() };
+      }
+      step('ccMoves', { ...R, works: Object.values(R).every(r => r.changed > 1000 && r.offMax <= 2) });
+      // CC Bend It: above Start (prestart Static) nothing moves
+      f = await only('ccbendit'); draw(); const biAbove = px(K.WHT, 100);
+      // CC Griddler: a tile's middle stays (tiles of 192 px from the corner); Cut Tiles (no turn) leaves gaps at the tile edges
+      f = await only('ccgriddler'); draw(); const grMid = px(K.WHT, 288); set(f, 'rotation', 0); f.cut = true; draw(); const grGap = px(384, 288), grMid2 = px(K.WHT, 288);
+      // CC Slant 20 from the bottom: at y 270 everything leans 162 px right (480 shows black from 318, 800 white from 638)
+      f = await only('ccslant'); draw(); const slA = px(K.WHT, K.Y), slB = px(K.RED, K.Y), slFloor = px(K.WHT, 1078);
+      // CC Tiler at 50%: the whole card twice across (720 shows white, 1200 blue)
+      f = await only('cctiler'); draw(); const tiW = px(720, K.Y), tiB = px(1200, K.Y);
+      // CC Split along the middle line: a gap opens at its centre; the top corner stays
+      f = await only('ccsplit'); draw(); const spGap = px(960, 540), spFar = px(K.BLK, 100);
+      // CC Power Pin: the defaults change nothing; the right corners at the middle squeeze the layer into the left half
+      f = await only('ccpowerpin'); draw(); const ppSame = same(); set(f, 'trX', .5); set(f, 'brX', .5); draw(); const ppL = px(240, K.Y), ppR = px(K.BLU, K.Y);
+      set(f, 'perspective', 0); set(f, 'trY', .2); draw(); const ppBil = changed();
+      // CC Page Turn: the top left of the page is untouched, and the turned corner shows something else
+      f = await only('ccpageturn'); draw(); const ptTL = px(K.WHT, K.Y), ptN = changed();
+      // CC Blobbylize (Red): white stays bright, green (little red) falls under the cut-away and goes
+      f = await only('ccblobbylize'); { const e = await kerr('fx_transition', 'ftr_blob'); if (e) step('blobKernel', e); }
+      draw(); const blW = px(K.WHT, K.Y), blG = px(K.GRN, K.Y);
+      step('ccDetails', { bendAbove: biAbove.join(), griddlerMiddle: grMid.join(), griddlerGap: grGap.join(), griddlerMiddleCut: grMid2.join(), slant480: slA.join(), slant800: slB.join(), slantFloor: slFloor.join(),
+        tiler720: tiW.join(), tiler1200: tiB.join(), splitGap: spGap.join(), splitFar: spFar.join(), powerPinSame: ppSame, powerPinLeft: ppL.join(), powerPinRight: ppR.join(), powerPinBilinear: ppBil,
+        pageTopLeft: ptTL.join(), pageChanged: ptN, blobWhite: blW.join(), blobGreen: blG.join(),
+        works: cl(biAbove, W3) && cl(grMid, W3) && cl(grGap, z) && cl(grMid2, W3) && cl(slA, z) && cl(slB, W3) && cl(slFloor, P0(K.WHT, 1078)) && cl(tiW, W3) && cl(tiB, BLUE, 3)
+          && cl(spGap, z) && cl(spFar, P0(K.BLK, 100)) && ppSame <= 2 && cl(ppL, W3) && cl(ppR, z) && ppBil > 1000 && cl(ptTL, W3) && ptN > 20000 && lum(blW) > 100 && blG[0] + blG[1] + blG[2] < 60 });
+      const menuD = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Distort');
+      step('distortMenu15', { count: menuD?.children.length, works: menuD?.children.length === 28 });
+    }
+    const r15speed = {};
+    for (const id of ['ccbendit', 'ccbender', 'ccblobbylize', 'ccflomotion', 'ccgriddler', 'ccpageturn', 'ccripplepulse', 'ccslant', 'ccsmear', 'ccsplit', 'ccsplit2', 'cctiler', 'ccpowerpin']) {
+      await only(id); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r15speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round15speed', r15speed);
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');

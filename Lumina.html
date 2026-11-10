@@ -2307,7 +2307,9 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   lumina_vfx: ['lumina_vfx'],         // Lumina's own anime VFX (C4), in shaders/ rather than EffectCraft's folder
   lumina_lumetri: ['lumina_lumetri'],   // Round 10: Lumetri Color, ported from EffectCraft's CPU maths (shaders/)
   fx_key: ['fx_distort', 'fx_key'],   // Round 11 on: keying and mattes (fxk_point; EffectCraft builds it with fx_distort)
-  lumina_key: ['lumina_key'] };       // Round 11: Inner/Outer Key's steps (shaders/)
+  lumina_key: ['lumina_key'],         // Round 11: Inner/Outer Key's steps (shaders/)
+  fx_warp: ['fx_warp'],               // Round 15 on: CC Bend It, CC Page Turn (fxw_*)
+  fx_transition: ['fx_transition'] }; // Round 15 on: CC Bender, CC Blobbylize (ftr_*)
 const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
@@ -2494,6 +2496,12 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// distort3::split_impl (CC Split, CC Split 2): the layer opens along A→B, each side pushed out by its own amount
+function fxSplit(E, img, q, s1, s2) {
+  if (!s1 && !s2) return img;
+  const [ax, ay] = q('a'), [bx, by] = q('b'), dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy); if (len < 1e-6) return img;
+  return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [6, 0, 0, 0] }, { 0: [ax, ay, dx / len, dy / len], 1: [len, s1, s2, len / 2] }), img);
+}
 // a layer's on-screen box (x, y, w, h in frame pixels) from its matrix and box size
 function fxRectOf(m, bw, bh) {
   const c = [[-.5, -.5], [.5, -.5], [-.5, .5], [.5, .5]].map(([u, v]) => m.transformPoint(new DOMPoint(u * bw, v * bh)));
@@ -4260,6 +4268,185 @@ const FX = {
         fit = rev ? Math.max(1, f * Math.tan(Math.min(rc / rRef * half, Math.PI / 2 - 1e-3)) / rc) : Math.min(1, Math.atan(rc / f) / half * rRef / rc);
       }
       return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [7, rev, 0, 0] }, { 0: [cx, cy, fit, f], 1: [rRef, half, 0, 0] }), img);
+    } },
+  // ---- Round 15: Distort II (CC). EffectCraft's distort2.rs, distort3.rs and distort4.rs; GPU host code from fx_stylize.rs,
+  //      fx_warp.rs and fx_transition.rs. Slant, CC Smear, the Splits, Ripple Pulse and Power Pin are fxs_warp modes 4, 5, 6,
+  //      11, 12; Tiler is fxs_table, Griddler fxs_griddler, Flo Motion fxs_flomotion ----
+  ccbendit: { name: 'CC Bend It', cat: 'Distort', kernels: [['fx_warp', 'fxw_bendit']], params: [
+      { id: 'bend', label: 'Bend°', def: 45, min: -720, max: 720, dec: 1 },
+      { id: 'start', label: 'Start', type: 'pt', def: [.5, .2] },
+      { id: 'end', label: 'End', type: 'pt', def: [.5, .8] },
+      { id: 'prestart', label: 'Render prestart', type: 'pick', def: 1, opts: [[0, 'None'], [1, 'Static']] }],
+    run(E, img, q) {
+      // the part from Start to End curls round an arc of Bend degrees
+      let beta = q('bend') * Math.PI / 180; if (Math.abs(beta) < 1e-6) return img;
+      const [sx, sy] = q('start'), [ex, ey] = q('end'), l = Math.hypot(ex - sx, ey - sy); if (l < 1e-6) return img;
+      const a = [(ex - sx) / l, (ey - sy) / l]; let n = [-a[1], a[0]];
+      if (beta < 0) { beta = -beta; n = [-n[0], -n[1]]; }
+      const rho = l / beta, c = Math.cos(beta), sn = Math.sin(beta);
+      return E.run('fx_warp', 'fxw_bendit', fxP({ 0: [0, q('prestart') === 1, 0, 0] },
+        { 0: [sx, sy, ...a], 1: [...n, rho, beta], 2: [rho * sn, rho - rho * c, l, 0], 3: [c, sn, -sn, c] }), img);
+    } },
+  ccbender: { name: 'CC Bender', cat: 'Distort', kernels: [['fx_transition', 'ftr_bender']], params: [
+      { id: 'amount', label: 'Amount', def: 30, min: -200, max: 200, dec: 1 },
+      { id: 'style', label: 'Style', type: 'pick', def: 0, opts: [[0, 'Bend'], [1, 'Marilyn'], [2, 'Sharp'], [3, 'Boxer']] },
+      { id: 'toDistance', label: 'Adjust to distance', type: 'check', def: false },
+      { id: 'top', label: 'Top', type: 'pt', def: [.5, 0] },
+      { id: 'base', label: 'Base', type: 'pt', def: [.5, 1] }],
+    run(E, img, q) {
+      const amt = q('amount') / 100; if (!amt) return img;
+      const [tx, ty] = q('top'), [bx, by] = q('base'), ax = tx - bx, ay = ty - by, len = Math.max(Math.hypot(ax, ay), 1e-6), ux = ax / len, uy = ay / len;
+      return E.run('fx_transition', 'ftr_bender', fxP({ 0: [q('style'), 0, 0, 0] }, { 0: [bx, by, ux, uy], 1: [len, -uy, ux, amt * (q('toDistance') ? len : E.lh)] }), img);
+    } },
+  ccblobbylize: { name: 'CC Blobbylize', cat: 'Distort', kernels: [['fx_transition', 'ftr_plane'], ['fx_transition', 'ftr_blob'], ...BLUR_K], params: [
+      { id: 'layer', label: 'Blob layer', type: 'pick', def: 0, opts: L => [[0, 'None (this layer)'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'property', label: 'Property', type: 'pick', def: 0, opts: ['Red', 'Green', 'Blue', 'Alpha', 'Luminance', 'Hue', 'Lightness', 'Saturation'].map((n, i) => [i, n]) },
+      { id: 'softness', label: 'Softness', def: 20, min: 0, max: 500, dec: 1 },
+      { id: 'cutAway', label: 'Cut away %', def: 25, min: 0, max: 100, dec: 1 },
+      { id: 'intensity', label: 'Light intensity %', def: 100, min: 0, max: 1000, dec: 1 },
+      { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+      { id: 'lightType', label: 'Light type', type: 'pick', def: 0, opts: [[0, 'Distant light'], [1, 'Point light']] },
+      { id: 'lightHeight', label: 'Light height', def: 65, min: 0, max: 100, dec: 1 },
+      { id: 'lightPos', label: 'Light position', type: 'pt', def: [.5, .5] },
+      { id: 'lightDir', label: 'Light direction°', def: -45, min: -360, max: 360, dec: 1 },
+      { id: 'ambient', label: 'Ambient %', def: 75, min: 0, max: 200, dec: 1 },
+      { id: 'diffuse', label: 'Diffuse %', def: 25, min: 0, max: 200, dec: 1 },
+      { id: 'specular', label: 'Specular %', def: 100, min: 0, max: 200, dec: 1 },
+      { id: 'roughness', label: 'Roughness', def: .025, min: .001, max: 1, dec: 3 },
+      { id: 'metal', label: 'Metal %', def: 100, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // a bumpy, lit surface from the blob layer's (or this layer's) channel, softened; low parts are cut away
+      const soft = Math.max(0, q('softness')) * E.sc, M = q('layer') ? byId(q('layer')) : null;
+      let blob = img;
+      if (M && M !== E.L && DRAW[M.kind]) { const c = layerCanvas('blob'), [a, b] = liveRange(M); if (E.T >= a && E.T < b) paintLayer(M, E.T, c.cx); blob = E.upload(c.cv); }
+      const raw = E.run('fx_transition', 'ftr_plane', fxP({ 0: [Math.min(q('property'), 10), 0, 0, 0] }), blob), h = fxGauss(E, raw, soft * .42, soft * .42, true);
+      const [lx, ly] = q('lightPos'), lh = q('lightHeight'), d = q('lightDir') * Math.PI / 180, el = clamp(lh / 100, 0, 1) * Math.PI / 2;
+      const span = Math.max(1, E.lw, E.lh), P = k => q(k) / 100;
+      return E.run('fx_transition', 'ftr_blob', fxP({}, {
+        0: [clamp(P('cutAway'), 0, 1), P('intensity'), P('ambient'), soft * 1.5], 1: [P('diffuse'), P('specular'), Math.min(500, 1 / clamp(q('roughness'), .001, 1)), P('metal')],
+        2: [lx, ly, lh / 100 * span, q('lightType') === 1 ? 1 : 0], 3: [Math.sin(d) * Math.cos(el), -Math.cos(d) * Math.cos(el), Math.sin(el), 0], 4: [...q('lightColor'), 0],
+        5: [soft > .05 ? span / 64 : 0, span * .34 * E.sc, Math.max(1, soft * .65), 1.25], 6: [span * .5, 0, 0, 0] }), img, h);
+    } },
+  ccflomotion: { name: 'CC Flo Motion', cat: 'Distort', kernels: [['fx_stylize', 'fxs_flomotion']], params: [
+      { id: 'knot1', label: 'Knot 1', type: 'pt', def: [.25, .5] },
+      { id: 'amount1', label: 'Amount 1', def: 50, min: -400, max: 100, dec: 1 },
+      { id: 'knot2', label: 'Knot 2', type: 'pt', def: [.75, .5] },
+      { id: 'amount2', label: 'Amount 2', def: -50, min: -400, max: 100, dec: 1 },
+      { id: 'tile', label: 'Tile edges', type: 'check', def: false },
+      { id: 'aa', label: 'Antialiasing', type: 'pick', def: 1, opts: [[0, 'Low'], [1, 'Medium'], [2, 'High']] },
+      { id: 'falloff', label: 'Falloff', def: 2, min: .01, max: 10, dec: 2 }],
+    run(E, img, q) {
+      // two knots pull the picture in (positive) or push it out (negative); worked in the layer's own pixels
+      const L = E.L, f = E.fx, raw = id => [val(L, fxKey(f, id + 'X'), E.T) * E.bw, val(L, fxKey(f, id + 'Y'), E.T) * E.bh];
+      const a1 = q('amount1') / 100, a2 = q('amount2') / 100; if (!a1 && !a2) return img;
+      const [ox, oy] = E.pt(0, 0);
+      return E.run('fx_stylize', 'fxs_flomotion', fxP({ 0: [q('aa') + 1, q('tile'), 0, 0] },
+        { 0: [...raw('knot1'), a1, 0], 1: [...raw('knot2'), a2, 0], 2: [Math.max(.01, q('falloff')), Math.hypot(E.bw, E.bh) / 2, E.bw, E.bh], 3: [E.sc, ox, oy, 0] }), img);
+    } },
+  ccgriddler: { name: 'CC Griddler', cat: 'Distort', kernels: [['fx_stylize', 'fxs_griddler']], params: [
+      { id: 'hScale', label: 'Horizontal scale %', def: 100, min: 1, max: 1000, dec: 1 },
+      { id: 'vScale', label: 'Vertical scale %', def: 100, min: 1, max: 1000, dec: 1 },
+      { id: 'tile', label: 'Tile size %', def: 10, min: .5, max: 100, dec: 1 },
+      { id: 'rotation', label: 'Rotation°', def: 15, min: -360, max: 360, dec: 1 },
+      { id: 'cut', label: 'Cut tiles', type: 'check', def: false }],
+    run(E, img, q) {
+      // the layer cut into square tiles, each scaled and turned round its own middle
+      const hs = Math.max(.001, q('hScale') / 100), vs = Math.max(.001, q('vScale') / 100), rot = q('rotation') * Math.PI / 180, cut = q('cut');
+      const [x0, y0, lw] = E.rect, t = Math.max(1, q('tile') / 100 * lw);
+      if (Math.abs(hs - 1) < 1e-9 && Math.abs(vs - 1) < 1e-9 && Math.abs(rot) < 1e-9 && !cut) return img;
+      const d = [], centre = (v, o) => { const tc = o + (Math.floor((v - o) / t) + .5) * t; d.push(tc, v - tc); };
+      for (let x = 0; x < E.w; x++) centre(x + .5, x0);
+      for (let y = 0; y < E.h; y++) centre(y + .5, y0);
+      return E.run('fx_stylize', 'fxs_griddler', fxP({ 0: [E.w, cut, 0, 0] }, { 0: [Math.cos(rot), Math.sin(rot), hs, vs], 1: [.45 * t, 0, 0, 0] }), img, null, null, E.data(d));
+    } },
+  ccpageturn: { name: 'CC Page Turn', cat: 'Distort', kernels: [['fx_warp', 'fxw_pageturn']], params: [
+      { id: 'fold', label: 'Fold position', type: 'pt', def: [.7, .7] },
+      { id: 'foldDir', label: 'Fold direction°', def: 315, min: -360, max: 360, dec: 1 },
+      { id: 'radius', label: 'Fold radius', def: 20, min: 0, max: 1000, dec: 1 },
+      { id: 'lightDir', label: 'Light direction°', def: -45, min: -360, max: 360, dec: 1 },
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: [[0, 'Front & back page'], [1, 'Back page'], [2, 'Front page']] },
+      { id: 'backOpacity', label: 'Back opacity %', def: 75, min: 0, max: 100, dec: 1 },
+      { id: 'paper', label: 'Paper color', type: 'color', def: '#ffffff' }],
+    run(E, img, q) {
+      const [fx, fy] = q('fold'), phi = q('foldDir') * Math.PI / 180, lam = q('lightDir') * Math.PI / 180, r = Math.max(.5, q('radius') * E.sc), render = q('render');
+      const n = [-Math.sin(phi), Math.cos(phi)];
+      return E.run('fx_warp', 'fxw_pageturn', fxP({ 0: [0, render !== 1, render !== 2, 0] },
+        { 0: [fx, fy, ...n], 1: [r, n[0] * Math.sin(lam) - n[1] * Math.cos(lam), q('backOpacity') / 100, 0], 2: [...q('paper'), 0] }), img);
+    } },
+  ccripplepulse: { name: 'CC Ripple Pulse', cat: 'Distort', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'level', label: 'Pulse level (animate)', def: 100, min: -1000, max: 1000, dec: 1 },
+      { id: 'span', label: 'Time span (sec)', def: 1, min: .01, max: 100, dec: 2 },
+      { id: 'amplitude', label: 'Amplitude', def: 100, min: -1000, max: 1000, dec: 1 },
+      { id: 'bump', label: 'Render bump as well', type: 'check', def: false }],
+    run(E, img, q) {
+      // a ring that runs out from the centre over the layer's time, fading over Time span
+      const level = q('level') / 100, amp = q('amplitude') / 100; if (!level || !amp) return img;
+      const [cx, cy] = q('center'), span = Math.max(.01, q('span')), size = E.size, speed = size * .5 / span, lambda = Math.max(2, size * .06);
+      return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [11, q('bump'), 0, 0] }, { 0: [cx, cy, speed * Math.max(0, E.t), speed], 1: [span, lambda, level * amp * lambda * .5, 0] }), img);
+    } },
+  ccslant: { name: 'CC Slant', cat: 'Distort', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'slant', label: 'Slant', def: 20, min: -1000, max: 1000, dec: 1 },
+      { id: 'stretch', label: 'Stretching', type: 'check', def: false },
+      { id: 'height', label: 'Height %', def: 100, min: -1000, max: 1000, dec: 1 },
+      { id: 'floor', label: 'Floor', type: 'pt', def: [.5, 1] }],
+    run(E, img, q) {
+      const k = q('slant') / 100, h = q('height') / 100; if (k === 0 && Math.abs(h - 1) < 1e-12) return img;
+      const [fx, fy] = q('floor');
+      return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [4, 0, 0, 0] }, { 0: [fx, fy, Math.abs(h) < 1e-6 ? 1e6 : 1 / h, k], 1: [q('stretch') ? 1 / Math.sqrt(1 + k * k) : 1, 0, 0, 0] }), img);
+    } },
+  ccsmear: { name: 'CC Smear', cat: 'Distort', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'from', label: 'From', type: 'pt', def: [.35, .5] },
+      { id: 'to', label: 'To', type: 'pt', def: [.65, .5] },
+      { id: 'reach', label: 'Reach', def: 50, min: -100, max: 100, dec: 1 },
+      { id: 'radius', label: 'Radius', def: 50, min: 0, max: 4000, dec: 1 }],
+    run(E, img, q) {
+      // the picture round From is dragged along towards To
+      const reach = q('reach') / 100, [fx, fy] = q('from'), [tx, ty] = q('to'), dx = tx - fx, dy = ty - fy, l2 = dx * dx + dy * dy;
+      if (l2 < 1e-12 || !reach) return img;
+      return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [5, 0, 0, 0] }, { 0: [fx, fy, dx, dy], 1: [l2, reach, Math.max(.5, q('radius') * E.sc), 0] }), img);
+    } },
+  ccsplit: { name: 'CC Split', cat: 'Distort', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'a', label: 'Point A', type: 'pt', def: [.25, .5] },
+      { id: 'b', label: 'Point B', type: 'pt', def: [.75, .5] },
+      { id: 'split', label: 'Split', def: 50, min: 0, max: 1000, dec: 1 }],
+    run: (E, img, q) => fxSplit(E, img, q, q('split') / 100, q('split') / 100) },
+  ccsplit2: { name: 'CC Split 2', cat: 'Distort', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'a', label: 'Point A', type: 'pt', def: [.25, .5] },
+      { id: 'b', label: 'Point B', type: 'pt', def: [.75, .5] },
+      { id: 'split1', label: 'Split 1', def: 50, min: 0, max: 1000, dec: 1 },
+      { id: 'split2', label: 'Split 2', def: 50, min: 0, max: 1000, dec: 1 }],
+    run: (E, img, q) => fxSplit(E, img, q, q('split1') / 100, q('split2') / 100) },
+  cctiler: { name: 'CC Tiler', cat: 'Distort', kernels: [['fx_stylize', 'fxs_table']], params: [
+      { id: 'scale', label: 'Scale %', def: 50, min: 1, max: 10000, dec: 1 },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // the layer shrunk and repeated across its own box
+      const sc = Math.max(.001, q('scale') / 100), [cx, cy] = q('center'), [x0, y0, rw, rh] = E.rect, w = Math.max(1, rw), h = Math.max(1, rh), d = [];
+      const wrap = (v, c, o, n) => o + (((c + (v - c) / sc - o) % n) + n) % n;
+      for (let x = 0; x < E.w; x++) d.push(wrap(x + .5, cx, x0, w));
+      for (let y = 0; y < E.h; y++) d.push(wrap(y + .5, cy, y0, h));
+      return E.run('fx_stylize', 'fxs_table', fxP({ 0: [E.w, 1, 0, 0] }, { 0: [q('blend') / 100, 0, 0, 0] }), img, null, null, E.data(d));
+    } },
+  ccpowerpin: { name: 'CC Power Pin', cat: 'Distort', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'tl', label: 'Top left', type: 'pt', def: [0, 0] },
+      { id: 'tr', label: 'Top right', type: 'pt', def: [1, 0] },
+      { id: 'bl', label: 'Bottom left', type: 'pt', def: [0, 1] },
+      { id: 'br', label: 'Bottom right', type: 'pt', def: [1, 1] },
+      { id: 'perspective', label: 'Perspective %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'exTop', label: 'Expand top %', def: 0, min: -100, max: 1000, dec: 1 },
+      { id: 'exLeft', label: 'Expand left %', def: 0, min: -100, max: 1000, dec: 1 },
+      { id: 'exRight', label: 'Expand right %', def: 0, min: -100, max: 1000, dec: 1 },
+      { id: 'exBottom', label: 'Expand bottom %', def: 0, min: -100, max: 1000, dec: 1 }],
+    run(E, img, q) {
+      // like Corner Pin, with a Perspective amount (0 = straight-line bilinear) and edges that can take in more of the layer
+      const persp = clamp(q('perspective') / 100, 0, 1), lw = Math.max(1, E.bw), lh = Math.max(1, E.bh);
+      const x0 = -q('exLeft') / 100 * lw, y0 = -q('exTop') / 100 * lh, x1 = lw + q('exRight') / 100 * lw, y1 = lh + q('exBottom') / 100 * lh;
+      const c = ['tl', 'tr', 'br', 'bl'].map(q), inv = m3inv(m3quad(c)); if (!inv) return img;
+      const [ox, oy] = E.pt(0, 0), F = { 2: inv[0], 3: inv[1], 4: inv[2], 5: [x0, y0, x1 - x0, y1 - y0], 6: [E.sc, ox, oy, 0] };
+      if (persp < 1) { const rel = i => [c[i][0] - c[0][0], c[i][1] - c[0][1]]; F[7] = [...c[0], persp, 1]; F[8] = [...rel(1), ...rel(2)]; F[9] = [...rel(3), 0, 0]; }
+      return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [12, 0, 0, 0] }, F), img);
     } },
   reduceflicker: { name: 'Reduce Interlace Flicker', cat: 'Obsolete', kernels: BLUR_K, params: [
       { id: 'softness', label: 'Softness', def: 1, min: 0, max: 100, dec: 2 }],

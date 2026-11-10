@@ -7,17 +7,19 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 15 (Distort II, CC); Round 14 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 16 (Distort III, warps); Round 15 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 14 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 15 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section).
-Rounds 8–14 and the Round 6 leftovers are done. **Round 15 is next, Distort II (CC)** (WORKPLAN.md's round table):
-CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, CC Smear, Split, Split 2, Tiler,
-Power Pin. Most are `fx_stylize`'s `fxs_warp` modes (4 Slant, 5 CC Smear, 6 Split, 11 Ripple Pulse, 12 Power Pin) or
-`fxs_griddler` / `fxs_flomotion` / `fxs_table` (Tiler); Bend It and Page Turn are `fx_warp`'s; host code in EffectCraft's
-crates/gpu/src/fx_stylize.rs and fx_warp.rs. Round 14's helpers: `m3mul` / `m3inv` / `m3t` / `m3s` / `m3r` / `m3of` /
+Rounds 8–15 and the Round 6 leftovers are done. **Round 16 is next, Distort III (warps)** (WORKPLAN.md's round table):
+Bezier Warp, Mesh Warp, Warp, Reshape, Smear, Twirl (legacy), Rolling Shutter Repair, Upscale, Displacement Map*.
+**Before it: Stage 1 (precomps, blend modes, track mattes, parenting)** is built just before the first starred effect
+(Displacement Map), per WORKPLAN.md; Reshape and Smear need masks on the layer (check what Lumina's mask system has
+first). Host code: EffectCraft's crates/gpu/src/fx_warp.rs (warp, bezier_warp, smear, reshape), fx_distort.rs (mesh_warp,
+displacement_map), fx_stylize.rs (twirl_legacy). Round 15 added the `fx_warp` and `fx_transition` kernel families and
+`fxSplit`. Round 14's helpers: `m3mul` / `m3inv` / `m3t` / `m3s` / `m3r` / `m3of` /
 `m3quad` (3 × 3 matrices, Mat3::square_to_quad) and `fxWarp(E, img, m, {dst, opacity, sampling, acc})` (ops::warp
 through `warp_blend`; m maps frame pixels, source → output). Round 13's helpers: `fxGaussPlane` (util::gauss_plane, `fp2_box`), `fxEdgePreserve`
 (blur2::edge_preserving), `fxRectOf(m, w, h)` (a layer's on-screen box) and `E.rows(img)` (a working image as a data
@@ -234,7 +236,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 15 (Distort II, CC)**.
+EffectCraft carries on at **Round 16 (Distort III, warps)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -256,8 +258,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–14 and the Round 6 leftovers are done; Round 15 (Distort II, CC) is next.** About 188
-   effects are left, in Rounds 15–31+.
+   **Where we left off: Rounds 1–15 and the Round 6 leftovers are done; Round 16 (Distort III, warps) is next.** About 175
+   effects are left, in Rounds 16–31+.
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -344,6 +346,18 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 15 done (2026-11-10): Distort II (CC).** Distort gets **CC Bend It**, **CC Bender**, **CC
+  Blobbylize**, **CC Flo Motion**, **CC Griddler**, **CC Page Turn**, **CC Ripple Pulse**, **CC Slant**, **CC Smear**,
+  **CC Split**, **CC Split 2**, **CC Tiler** and **CC Power Pin** (28 in the group now).
+  - New kernel families: `fx_warp` (Bend It, Page Turn) and `fx_transition` (Bender, Blobbylize: `ftr_plane`, `ftr_blob`).
+    The rest are `fx_stylize`'s `fxs_warp` modes 4, 5, 6, 11, 12, `fxs_table`, `fxs_griddler` and `fxs_flomotion`.
+  - Flo Motion and Power Pin work in the layer's own pixels (scale and the top-left corner's frame position); that's exact
+    for a layer that isn't rotated. Blobbylize's Blob Layer is any other layer, where it sits (like Compound Blur's).
+  - Ripple Pulse runs on the layer's own time; Pulse Level is meant to be keyframed.
+  - Left out: Power Pin's Unstretch (EffectCraft draws it on the CPU only).
+  - Tests: each moves the card with its defaults and leaves it exactly alone when switched off, plus spot checks
+    (Slant's lean, Tiler's repeats, Griddler's gaps, Split's gap, Power Pin's squeeze, Blobbylize's cut-away).
+  - Speeds 6.1–9.3 ms a frame.
 - **EffectCraft Round 14 done (2026-11-10): Distort I.** Distort gets **Spherize**, **Polar Coordinates**, **Mirror**,
   **Offset**, **Magnify**, **Corner Pin**, **Transform** and **Optics Compensation** (15 in the group now).
   - Mirror, Spherize, Polar and Optics are `fx_stylize`'s `fxs_warp` modes 1, 2, 3, 7; Offset is `fxs_table`, Magnify
