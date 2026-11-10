@@ -1171,6 +1171,68 @@
     }
     step('round18speed', r18speed);
 
+    // ---- Round 19: Generate I. Same card (patches at y 270); the mask tests use a centred rectangle mask (x 384–1536, y 216–864)
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t);
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const K19 = {};
+      for (const id of ['fill', 'checkerboard', 'circle', 'ellipse', 'cellpattern', 'stroke', 'scribble', 'vegas', 'writeon', 'paintbucket', 'eyedropperfill', 'radiowaves']) {
+        await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K19[fam + ':' + e] = r; }
+      }
+      step('generate1Kernels', { ...K19, works: !Object.keys(K19).length });
+      const BK = [0, 0, 0], WH = [255, 255, 255];
+      // counts lit pixels inside / outside the mask rectangle
+      const lit = () => { const d = frame(); let inn = 0, out = 0; for (let y = 0; y < 1080; y += 2) for (let x = 0; x < 1920; x += 2) { const i = (y * 1920 + x) * 4; if (d[i] + d[i + 1] + d[i + 2] > 60) { if (x > 360 && x < 1560 && y > 196 && y < 884) inn++; else out++; } } return [inn, out]; };
+      // Fill: the card turns the fill colour; Invert fills only the clear parts (none here)
+      f = await only('fill'); f.color = '#00ff00'; draw(); const fl = [px(K.WHT, K.Y), px(K.RED, 900)]; f.invert = true; draw(); const flInv = px(K.WHT, K.Y);
+      // Checkerboard (None): white and clear squares 100 px wide from the top left
+      f = await only('checkerboard'); set(f, 'width', 100); draw(); const ck = [px(50, 50), px(150, 50), px(150, 150)];
+      // Circle (None): a white disc of radius 100 in the middle, clear round it; Edge Thickness makes it a ring
+      f = await only('circle'); set(f, 'radius', 100); draw(); const ci = [px(960, 540), px(960, 700)]; f.edge = 2; set(f, 'thickness', 20); draw(); const ring = [px(960, 540), px(960, 450)];
+      // Ellipse 400 × 200: the outline is white, its middle clear
+      f = await only('ellipse'); set(f, 'width', 400); set(f, 'height', 200); draw(); const el = [px(1160, 540), px(960, 640), px(960, 540)];
+      // Cell Pattern: opaque grey cells; the HQ pattern differs from the standard one a little
+      f = await only('cellpattern'); f.pattern = 2; draw(); const cp = px(700, 500), cpStd = frame(); f.pattern = 7; draw(); const cpHQ = diff(cpStd, frame());
+      // Paint Bucket: blue floods the red patch only
+      f = await only('paintbucket'); set(f, 'fillPointX', K.RED / 1920); set(f, 'fillPointY', K.Y / 1080); f.color = '#0000ff'; draw(); const pb = [px(K.RED, K.Y), px(K.GRN, K.Y), px(K.WHT, K.Y)];
+      f.viewThreshold = true; draw(); const pbView = [px(K.RED, K.Y), px(K.GRN, K.Y)];
+      // Eyedropper Fill: the colour under the sample point fills the card
+      f = await only('eyedropperfill'); set(f, 'samplePointX', K.RED / 1920); set(f, 'samplePointY', K.Y / 1080); draw(); const ed = px(K.BLU, K.Y);
+      // Radio Waves at 1.5 s: rings of radius 150 and 50 round the middle, the card between them untouched
+      f = await only('radiowaves'); draw(1.5); const rw = [px(1110, 540), px(1010, 540), px(1060, 540)];
+      // Vegas (Transparent): lines along the card's contours only
+      f = await only('vegas'); f.blendMode = 0; set(f, 'width', 4); draw(); const vg = lit();
+      // Write-on along a keyframed brush (x 20% → 80% over the first second), on transparent
+      f = await only('writeon'); f.paintStyle = 1; set(f, 'brushSize', 40); L.keys[fxKey(f, 'brushPositionX')] = [{ t: 0, v: .2, ease: 'linear' }, { t: 1, v: .8, ease: 'linear' }];
+      draw(1); const wo = [px(960, 540), px(500, 540), px(200, 540), px(1700, 540)]; delete L.keys[fxKey(f, 'brushPositionX')];
+      // Stroke and Scribble follow the layer's mask
+      L.mask = { on: true, shape: 'rect', invert: false };
+      f = await only('stroke'); f.color = '#ff0000'; f.paintStyle = 1; set(f, 'brushSize', 10); draw(); const sk = [px(384, 540), px(960, 540), px(1536, 700)]; set(f, 'end', 50); draw(); const skHalf = lit();
+      f = await only('scribble'); f.wiggle = 0; draw(); const sb = lit(); draw(1.3); const sbStatic = lit();
+      L.mask = null;
+      step('generate1Details', { fill: fl.map(String), fillInvert: flInv.join(), checker: ck.map(String), circle: ci.map(String), ring: ring.map(String), ellipse: el.map(String),
+        cell: cp.join(), cellHQ: cpHQ.changed, bucket: pb.map(String), bucketView: pbView.map(String), eyedrop: ed.join(), radio: rw.map(String), vegas: vg, writeOn: wo.map(String),
+        stroke: sk.map(String), strokeHalf: skHalf, scribble: sb, scribbleStatic: sbStatic,
+        works: cl(fl[0], [0, 255, 0]) && cl(fl[1], [0, 255, 0]) && cl(flInv, BK) && cl(ck[0], WH) && cl(ck[1], BK) && cl(ck[2], WH) && cl(ci[0], WH) && cl(ci[1], BK) && cl(ring[0], BK) && cl(ring[1], WH, 10)
+          && cl(el[0], WH, 10) && cl(el[1], WH, 10) && cl(el[2], BK) && cp[0] === cp[1] && cp[1] === cp[2] && cpHQ.changed > 100
+          && cl(pb[0], [0, 0, 255], 3) && cl(pb[1], P0(K.GRN, K.Y)) && cl(pb[2], P0(K.WHT, K.Y)) && cl(pbView[0], WH) && cl(pbView[1], BK) && cl(ed, P0(K.RED, K.Y), 3)
+          && cl(rw[0], WH, 30) && cl(rw[1], WH, 30) && cl(rw[2], P0(1060, 540), 3) && vg[0] + vg[1] > 200 && vg[0] + vg[1] < 100000
+          && cl(wo[0], WH, 10) && cl(wo[1], WH, 10) && cl(wo[2], BK) && cl(wo[3], BK) && sk[0][0] > 150 && sk[0][1] < 60 && cl(sk[1], BK) && skHalf[0] > 50 && skHalf[1] === 0
+          && sb[0] > 2000 && sb[1] === 0 && sb[0] === sbStatic[0] });
+      const menuG = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Generate');
+      step('generateMenu19', { count: menuG?.children.length, works: menuG?.children.length === 16 });
+    }
+    const r19speed = {};
+    for (const [id, vals, mask] of [['fill', {}], ['checkerboard', {}], ['circle', {}], ['ellipse', {}], ['cellpattern', {}], ['stroke', {}, 1], ['scribble', {}, 1], ['vegas', {}],
+      ['writeon', {}], ['paintbucket', {}], ['eyedropperfill', {}], ['radiowaves', {}]]) {
+      L.mask = mask ? { on: true, shape: 'rect', invert: false } : null;
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]);
+      draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r19speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    L.mask = null;
+    step('round19speed', r19speed);
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }

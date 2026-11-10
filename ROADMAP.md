@@ -7,16 +7,22 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 19 (Generate I); Round 18 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 20 (Generate II, light); Round 19 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 18 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 19 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section).
-Rounds 8–18 and the Round 6 leftovers are done. **Round 19 is next, Generate I (shapes & fills)** (WORKPLAN.md's
-round table): Fill, Circle, Ellipse, Checkerboard, Cell Pattern, Stroke, Write-on, Scribble, Vegas, Paint Bucket,
-Eyedropper Fill, Radio Waves. Find their host code in EffectCraft's crates/gpu/src first (check each file's `IDS` list;
-fx_generate.rs and fx_gen2.rs are likely). Round 18's helpers: `fxLayerOr(E, img, id, name)` (util::layer_or_self:
+Rounds 8–19 and the Round 6 leftovers are done. **Round 20 is next, Generate II (light)** (WORKPLAN.md's round
+table): Advanced Lightning, Lens Flare, Beam, CC Light Burst, CC Light Sweep, CC Glue Gun, CC Threads, Fractal. Their host
+code is in EffectCraft's crates/gpu/src/fx_gen2.rs (bolts, beam, flare, glue, threads; Fractal stays on the CPU there) and
+the CC lights in generate2.rs; the kernels are fx_gen2.wgsl's (already a Lumina family). Round 19's helpers: `fxMaskPoly(E)`
+(the layer's mask as a frame-pixel polygon, raster::mask_px), `fxRasterSegs` / `fxRasterConvex` / `fxPaint` (fx_gen2's
+tiled raster and fg2_paint), `fxItems` / `fxItemPush` / `fxItemData` (its tile tables), `fxPolyLen` / `fxPolyCum` /
+`fxPolyAt` / `fxTrimPoly` / `fxPolySegs` / `fxChaikin` / `fxStrokeOutline`, `fxContours` (marching squares), `fxGaussCPU`,
+`fxDT` / `fxSDF` (distance transforms), `fxValuePlane` (a read-back picture as one value a pixel), `fxAt(E, t)` (an
+effect's settings at another time), `fxRem`, `fxSmooth`, `fxReflect`; `E.texFrom(floats, w, h)` (a one-float-a-pixel plane
+from the CPU). Lumina's own `shaders/lumina_gen.wgsl` holds what EffectCraft draws only on the CPU. Round 18's helpers: `fxLayerOr(E, img, id, name)` (util::layer_or_self:
 another layer as it sits in the frame, or this one), `fxLayerPick(id, label)` (its menu), `fxBumpLight`/`fxBump` (CC
 Glass / Plastic's light), `fxRound` (f64::round); `E.data` now takes a ready Float32Array as it is. Round 17's helpers: `fxSeed(E)` (a layer's own random seed, EffectCraft's
 ctx.seed), `FXC` (a WeakMap for per-effect CPU tables) and `fxGuided` (fx_noise::guided_filter). **Stage 1 decision (2026-11-10, the user):** Round 16's effects went first;
@@ -239,7 +245,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 19 (Generate I)**.
+EffectCraft carries on at **Round 20 (Generate II, light)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -261,8 +267,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–18 and the Round 6 leftovers are done; Round 19 (Generate I) is next.** About 153
-   effects are left, in Rounds 19–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–19 and the Round 6 leftovers are done; Round 20 (Generate II, light) is next.** About 141
+   effects are left, in Rounds 20–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -349,6 +355,22 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 19 done (2026-11-10): Generate I (shapes & fills).** Generate gets **Fill**, **Checkerboard**,
+  **Circle**, **Ellipse**, **Cell Pattern**, **Stroke**, **Scribble**, **Vegas**, **Write-on**, **Paint Bucket**,
+  **Eyedropper Fill** and **Radio Waves** (16 in the group now).
+  - New kernel family `fx_gen2` (EffectCraft's fx_gen2.wgsl: fg2_segs, fg2_convex, fg2_paint, fg2_bucket, fg2_bucket_cov,
+    fg2_eyedropper, fg2_radio); Fill is the base pointwise op 7; Checkerboard and Cell Pattern are fx_generate's.
+  - Circle, Ellipse and Cell Pattern's five HQ patterns are drawn only on the CPU in EffectCraft; Lumina has them as
+    `shaders/lumina_gen.wgsl` (lg_circle, lg_ellipse, lg_cell_hq), ported operation for operation.
+  - The geometry is EffectCraft's CPU plans ported to JS (stroke/scribble/vegas/write-on plans, marching-squares contours,
+    flood fill, distance fields), rasterised on the graphics card through the same 16 × 16 tile tables.
+  - "Mask" means the layer's own mask (Lumina has one a layer): Stroke, Scribble, Vegas (Mask) and Radio Waves (Mask)
+    follow it. Fill's Fill Mask / All Masks and the feathers that go with them are left out (the mask already cuts the
+    layer); Scribble's mask choice is one checkbox, "Follow the mask's Invert". Vegas' "If Layer Sizes Differ" is left
+    out (other layers are used as they sit in the frame).
+  - Write-on and Radio Waves ("Parameters Are Set At Birth") read the effect's keyframed settings at earlier times.
+  - Speeds 5.5–17 ms a frame, except Vegas on image contours (about 52 ms: it reads the picture back and traces the
+    contours on the CPU, as EffectCraft does). Paint Bucket and Eyedropper Fill also read the picture back (17 / 10 ms).
 - **EffectCraft Round 18 done (2026-11-10): Stylize II (CC).** Stylize gets **CC Block Load**, **CC Burn Film**,
   **CC Glass**, **CC HexTile**, **CC Kaleida**, **CC Mr. Smoothie**, **CC Plastic** and **CC RepeTile** (24 in the group now).
   - All EffectCraft's own kernels: `fx_pixel2`'s `fp2_block_means`, `fp2_block_load`, `fp2_burn`, `fp2_plane`, `fp2_box`,

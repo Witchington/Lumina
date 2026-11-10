@@ -2309,8 +2309,10 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   fx_key: ['fx_distort', 'fx_key'],   // Round 11 on: keying and mattes (fxk_point; EffectCraft builds it with fx_distort)
   lumina_key: ['lumina_key'],         // Round 11: Inner/Outer Key's steps (shaders/)
   fx_warp: ['fx_warp'],               // Round 15 on: CC Bend It, CC Page Turn (fxw_*)
-  fx_transition: ['fx_transition'] }; // Round 15 on: CC Bender, CC Blobbylize (ftr_*)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl' };
+  fx_transition: ['fx_transition'],   // Round 15 on: CC Bender, CC Blobbylize (ftr_*)
+  fx_gen2: ['fx_gen2'],               // Round 19 on: Stroke, Scribble, Vegas, Write-on, Paint Bucket, Eyedropper Fill, Radio Waves (fg2_*)
+  lumina_gen: ['fx_generate', 'lumina_gen'] };   // Round 19: Circle, Ellipse, Cell Pattern HQ (EffectCraft draws them on the CPU; shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2422,6 +2424,11 @@ function fxApply(L, t, lc) {
       const row = Math.ceil(w / 16) * 16, b = dev.createBuffer({ size: row * 16 * h, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       enc.copyTextureToBuffer({ texture: img }, { buffer: b, bytesPerRow: row * 16 }, [w, h]); temp.push(b); return [b, row];
     },
+    // a float plane made on the CPU (one float a pixel, tw × th) as a working image: kernels read it as (v, 0, 0, 1)
+    texFrom(arr, tw = w, th = h) {
+      const x = dev.createTexture({ size: [tw, th], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      dev.queue.writeTexture({ texture: x }, arr, { bytesPerRow: tw * 4, rowsPerImage: th }, [tw, th]); temp.push(x); return x;
+    },
     tex(tw, th) {
       const x = dev.createTexture({ size: [tw, th], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
       temp.push(x); return x;
@@ -2496,6 +2503,480 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 19 helpers (Generate I): generate3's plans (raster.rs, paths.rs, fill.rs) and fx_gen2.rs's tiled raster ----
+const fxRem = (x, m) => ((x % m) + m) % m;   // f64::rem_euclid
+const fxSmooth = (e0, e1, x) => { if (Math.abs(e1 - e0) < 1e-9) return x < e0 ? 0 : 1; const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };   // util::smoothstep
+// the layer's mask (Lumina has one a layer) as a polygon in frame pixels, as raster::mask_px: { pts, closed, inv }, or null
+function fxMaskPoly(E) {
+  const L = E.L; if (!L?.mask?.on) return null;
+  const m = E.m, pts = [], tp = (x, y) => { const q = m.transformPoint(new DOMPoint(x, y)); pts.push([q.x, q.y]); };
+  let cx = 0, cy = 0;
+  const rec = { beginPath() {}, closePath() {},
+    moveTo(x, y) { tp(x, y); cx = x; cy = y; }, lineTo(x, y) { tp(x, y); cx = x; cy = y; },
+    bezierCurveTo(a, b, c, d, x, y) { for (let i = 1; i <= 16; i++) { const q = fxBez([cx, cy], [a, b], [c, d], [x, y], i / 16); tp(q[0], q[1]); } cx = x; cy = y; },
+    ellipse(ex, ey, rx, ry, rot, a0, a1) { const co = Math.cos(rot), si = Math.sin(rot); for (let i = 0; i < 128; i++) { const a = a0 + (a1 - a0) * i / 128, x = Math.cos(a) * rx, y = Math.sin(a) * ry; tp(ex + x * co - y * si, ey + x * si + y * co); } } };
+  maskPath(rec, L, E.T, E.bw, E.bh);
+  if (pts.length > 1) { const a = pts[0], b = pts[pts.length - 1]; if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) < 1e-9) pts.pop(); }
+  return pts.length ? { pts, closed: true, inv: !!L.mask.invert } : null;
+}
+const fxSegLen = (a, b) => Math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2);
+// util::poly_length; cumulative lengths and util::poly_point_at over them
+const fxPolyLen = (p, closed) => { const n = p.length; if (n < 2) return 0; let s = 0; for (let i = 0, m = closed ? n : n - 1; i < m; i++) s += fxSegLen(p[i], p[(i + 1) % n]); return s; };
+function fxPolyCum(p, closed) { const n = p.length, m = n < 2 ? 0 : closed ? n : n - 1, c = new Float64Array(m + 1); for (let i = 0; i < m; i++) c[i + 1] = c[i] + fxSegLen(p[i], p[(i + 1) % n]); return c; }
+function fxPolyAt(p, c, s) {
+  const n = p.length; if (!n) return [0, 0]; if (n === 1) return p[0];
+  const rem = Math.max(0, s); let lo = 0, hi = c.length - 2;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (c[mid + 1] >= rem) hi = mid; else lo = mid + 1; }
+  const a = p[lo], b = p[(lo + 1) % n], l = c[lo + 1] - c[lo], t = l > 0 ? Math.min(1, (rem - c[lo]) / l) : 0;
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+// raster::trim_poly (the part [s0, s1] of a polyline), poly_segs (segments [ax, ay, bx, by, r, v]), chaikin
+function fxTrimPoly(p, closed, s0, s1) {
+  const n = p.length, out = []; if (n < 2 || s1 <= s0) return out;
+  let acc = 0;
+  for (let i = 0, m = closed ? n : n - 1; i < m; i++) {
+    const a = p[i], b = p[(i + 1) % n], l = fxSegLen(a, b), e0 = acc, e1 = acc + l; acc = e1;
+    if (e1 < s0 || e0 > s1 || l <= 0) continue;
+    const at = v => { const t = clamp((v - e0) / l, 0, 1); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; };
+    const p0 = at(Math.max(s0, e0)), last = out[out.length - 1];
+    if (!last || last[0] !== p0[0] || last[1] !== p0[1]) out.push(p0);
+    out.push(at(Math.min(s1, e1)));
+  }
+  return out;
+}
+function fxPolySegs(p, closed, r, v, out) {
+  const n = p.length; if (n === 1) out.push([p[0][0], p[0][1], p[0][0], p[0][1], r, v]); if (n < 2) return;
+  for (let i = 0, m = closed ? n : n - 1; i < m; i++) { const a = p[i], b = p[(i + 1) % n]; out.push([a[0], a[1], b[0], b[1], r, v]); }
+}
+function fxChaikin(pts, iters) {
+  let cur = pts;
+  for (let it = 0; it < iters; it++) {
+    if (cur.length < 3) return cur;
+    const nx = [cur[0]];
+    for (let i = 0; i + 1 < cur.length; i++) { const a = cur[i], b = cur[i + 1]; nx.push([a[0] * .75 + b[0] * .25, a[1] * .75 + b[1] * .25], [a[0] * .25 + b[0] * .75, a[1] * .25 + b[1] * .75]); }
+    nx.push(cur[cur.length - 1]); cur = nx;
+  }
+  return cur;
+}
+// raster::scan_runs: the runs (along d) of the fill region on the line n·p = s
+function fxScanRuns(polys, fill, ew, d, n, s) {
+  const out = [];
+  for (const [pts, , inv] of polys) {
+    const m = pts.length; if (m < 2) continue;
+    const xs = [];
+    for (let i = 0; i < m; i++) {
+      const a = pts[i], b = pts[(i + 1) % m], na = a[0] * n[0] + a[1] * n[1] - s, nb = b[0] * n[0] + b[1] * n[1] - s;
+      if ((na > 0) === (nb > 0)) continue;
+      const t = na / (na - nb), qx = a[0] + (b[0] - a[0]) * t, qy = a[1] + (b[1] - a[1]) * t, ex = b[0] - a[0], ey = b[1] - a[1], el = Math.max(1e-9, Math.sqrt(ex * ex + ey * ey));
+      xs.push([qx * d[0] + qy * d[1], Math.max(.2, Math.abs((ex * n[0] + ey * n[1]) / el))]);
+    }
+    xs.sort((p, q) => p[0] - q[0]);
+    let area = 0; for (let i = 0; i < m; i++) area += pts[i][0] * pts[(i + 1) % m][1] - pts[(i + 1) % m][0] * pts[i][1];
+    const lin = area < 0; let mode = fill === 4 ? (lin ? 2 : 3) : fill === 5 ? (lin ? 3 : 2) : fill;
+    if (inv && mode === 0) mode = 6;
+    xs.forEach(([t, sin], k) => {
+      const ent = k % 2 === 0, l = ew / sin;
+      if (mode === 0) { if (ent && k + 1 < xs.length) out.push([t, xs[k + 1][0]]); }
+      else if (mode === 1) out.push([t - l * .5, t + l * .5]);
+      else if (mode === 2) out.push(ent ? [t, t + l] : [t - l, t]);
+      else if (mode === 3) out.push(ent ? [t - l, t] : [t, t + l]);
+    });
+    if (mode === 6) {
+      let lo = Infinity, hi = -Infinity; for (const q of pts) { const v = q[0] * d[0] + q[1] * d[1]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      lo -= ew; hi += ew; let cur = lo;
+      for (let k = 0; k < xs.length; k += 2) { out.push([cur, xs[k][0]]); cur = k + 1 < xs.length ? xs[k + 1][0] : hi; }
+      out.push([cur, hi]);
+    }
+  }
+  out.sort((a, b) => a[0] - b[0]);
+  const mg = []; for (const [a, b] of out) { const l = mg[mg.length - 1]; if (l && a <= l[1]) { l[1] = Math.max(l[1], b); continue; } mg.push([a, b]); }
+  return mg;
+}
+// raster::stroke_outline: convex polygons whose union strokes the polylines (half width r; caps Round / Butt / Projecting,
+// joins Round / Miter / Bevel)
+function fxStrokeOutline(lines, r, cap, join, miter) {
+  const disc = c => Array.from({ length: 16 }, (_, k) => { const a = k / 16 * Math.PI * 2; return [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r]; });
+  const dir = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.max(1e-12, Math.hypot(dx, dy)); return [dx / l, dy / l]; };
+  const out = [];
+  for (const l of lines) {
+    const pts = []; for (const p of l) { const q = pts[pts.length - 1]; if (!q || Math.hypot(q[0] - p[0], q[1] - p[1]) > 1e-9) pts.push(p); }
+    if (pts.length < 2) { if (pts.length && cap === 0) out.push(disc(pts[0])); continue; }
+    const n = pts.length;
+    for (let k = 0; k < n - 1; k++) {
+      let a = pts[k], b = pts[k + 1]; const d = dir(a, b);
+      if (cap === 2 && k === 0) a = [a[0] - d[0] * r, a[1] - d[1] * r];
+      if (cap === 2 && k === n - 2) b = [b[0] + d[0] * r, b[1] + d[1] * r];
+      const nx = -d[1] * r, ny = d[0] * r;
+      out.push([[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]]);
+    }
+    for (let k = 1; k < n - 1; k++) {
+      const p = pts[k], d0 = dir(pts[k - 1], p), d1 = dir(p, pts[k + 1]), cross = d0[0] * d1[1] - d0[1] * d1[0];
+      if (Math.abs(cross) < 1e-9 && d0[0] * d1[0] + d0[1] * d1[1] > 0) continue;
+      if (join === 0) { out.push(disc(p)); continue; }
+      const sg = cross > 0 ? -1 : 1, o0 = [p[0] - d0[1] * r * sg, p[1] + d0[0] * r * sg], o1 = [p[0] - d1[1] * r * sg, p[1] + d1[0] * r * sg];
+      if (join === 1) {
+        const bl = Math.hypot(d0[0] - d1[0], d0[1] - d1[1]), ch = Math.sqrt(Math.max(0, (1 + d0[0] * d1[0] + d0[1] * d1[1]) * .5)), len = ch > 1e-6 ? r / ch : Infinity;
+        if (bl > 1e-9 && len <= miter * r) {
+          const mx = p[0] + (o0[0] + o1[0] - 2 * p[0]) * .5, my = p[1] + (o0[1] + o1[1] - 2 * p[1]) * .5, ml = Math.max(1e-12, Math.hypot(mx - p[0], my - p[1]));
+          out.push([p, o0, [p[0] + (mx - p[0]) / ml * len, p[1] + (my - p[1]) / ml * len], o1]); continue;
+        }
+      }
+      out.push([p, o0, o1]);
+    }
+    if (cap === 0) out.push(disc(pts[0]), disc(pts[n - 1]));
+  }
+  return out;
+}
+// fx_gen2.rs's Items: item records with their integer pixel bounds, binned into 16 × 16 tiles, as the kernels' data table
+function fxItems(E, stride) { const tx = Math.ceil(E.w / 16), ty = Math.ceil(E.h / 16); return { stride, recs: [], tiles: Array.from({ length: tx * ty }, () => []), tx, w: E.w, h: E.h, n: 0 }; }
+function fxItemPush(it, bb, rec) {
+  if (!bb.every(Number.isFinite)) return;
+  const x0 = Math.max(0, Math.floor(bb[0])), y0 = Math.max(0, Math.floor(bb[1])), x1 = Math.min(it.w - 1, Math.ceil(bb[2])), y1 = Math.min(it.h - 1, Math.ceil(bb[3]));
+  if (x1 < x0 || y1 < y0 || bb[2] < 0 || bb[3] < 0) return;
+  const i = it.n++, r = it.recs; for (let k = 0; k < it.stride - 4; k++) r.push(rec[k] ?? 0); r.push(x0, y0, x1, y1);
+  for (let ty = y0 >> 4; ty <= y1 >> 4; ty++) for (let tx = x0 >> 4; tx <= x1 >> 4; tx++) it.tiles[ty * it.tx + tx].push(i);
+}
+function fxItemData(it) {
+  const nt = it.tiles.length; let ni = 0; for (const t of it.tiles) ni += t.length;
+  const total = nt + 1 + ni + it.recs.length; if (total > 1 << 24) return null;
+  const d = new Float32Array(total), base = nt + 1; let at = 0, k = 0;
+  for (const t of it.tiles) { d[k++] = base + at; at += t.length; }
+  d[k++] = base + at;
+  for (const t of it.tiles) for (const i of t) d[k++] = i;
+  d.set(it.recs, k);
+  return { d, at: k };
+}
+// generate3::raster_segs on the graphics card (fg2_segs): round-capped segments [ax, ay, bx, by, r, v] → coverage (x)
+function fxRasterSegs(E, img, segs, hard) {
+  const it = fxItems(E, 10);
+  for (const g of segs) { const pad = g[4] + 1; fxItemPush(it, [Math.min(g[0], g[2]) - pad, Math.min(g[1], g[3]) - pad, Math.max(g[0], g[2]) + pad, Math.max(g[1], g[3]) + pad], g); }
+  const D = fxItemData(it); if (!D) return E.clear(img);
+  return E.run('fx_gen2', 'fg2_segs', fxP({ 0: [D.at, 10, it.tx, 1] }, { 0: [1, 0, -3e38, hard] }), img, null, null, E.data(D.d));
+}
+// generate3::raster_convex (fg2_convex): the union of convex polygons (up to 16 corners each), 4 × 4 samples a pixel
+function fxRasterConvex(E, img, polys) {
+  const it = fxItems(E, 37);
+  for (const p of polys) {
+    if (p.length < 3 || p.length > 16) continue;
+    const rec = [p.length], bb = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const q of p) { rec.push(q[0], q[1]); bb[0] = Math.min(bb[0], q[0]); bb[1] = Math.min(bb[1], q[1]); bb[2] = Math.max(bb[2], q[0]); bb[3] = Math.max(bb[3], q[1]); }
+    fxItemPush(it, bb, rec);
+  }
+  const D = fxItemData(it); if (!D) return E.clear(img);
+  return E.run('fx_gen2', 'fg2_convex', fxP({ 0: [D.at, 37, it.tx, 0] }), img, null, null, E.data(D.d));
+}
+// generate3's draw_paint (fg2_paint): style 0 on the original, 1 on transparent, 2 reveal the original, 3 under the layer
+function fxPaint(E, img, plan) {
+  const cov = plan.segs ? fxRasterSegs(E, img, plan.segs, plan.hard) : fxRasterConvex(E, img, plan.polys);
+  return E.run('fx_gen2', 'fg2_paint', fxP({ 0: [plan.style, 0, 0, 0] }, { 0: [...plan.color, 1], 1: [plan.opacity, 0, 0, 0] }), img, cov);
+}
+const GEN2_PAINT_K = [['fx_gen2', 'fg2_segs'], ['fx_gen2', 'fg2_convex'], ['fx_gen2', 'fg2_paint'], ['kernels', 'fill']];
+// an effect's settings at another time tl (seconds into the layer): Write-on's dabs, Radio Waves' "Birth"
+const fxAt = (E, tl) => { const D = FX[E.fx.id], off = E.T - E.t; return id => fxValue(E.L, E.fx, D.params.find(d => d.id === id), tl + off, E); };
+// util::gauss_plane on the CPU: 3 box passes an axis, edges repeated
+function fxBoxCPU(a, w, h, r, vert) {
+  const o = new Float32Array(w * h), n = vert ? h : w, lines = vert ? w : h, st = vert ? w : 1, ls = vert ? 1 : w, k = 1 / (2 * r + 1);
+  for (let L = 0; L < lines; L++) {
+    const b = L * ls; let s = 0;
+    for (let i = -r; i <= r; i++) s += a[b + Math.min(n - 1, Math.max(0, i)) * st];
+    for (let i = 0; i < n; i++) { o[b + i * st] = s * k; s += a[b + Math.min(n - 1, i + r + 1) * st] - a[b + Math.max(0, i - r) * st]; }
+  }
+  return o;
+}
+function fxGaussCPU(a, w, h, sx, sy) { let cur = a; for (const [v, sg] of [[0, sx], [1, sy]]) if (sg > .05) for (const r of fxBoxRadii(sg, 3)) if (r) cur = fxBoxCPU(cur, w, h, r, v); return cur; }
+// util::distance_transform (exact squared Euclidean, Felzenszwalb & Huttenlocher) and signed_distance (negative inside)
+function fxDT1(f, n, o, v, z) {
+  let k = -1; const sOf = (q, p) => ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p);
+  for (let q = 0; q < n; q++) {
+    if (f[q] === Infinity) continue;
+    if (k < 0) { k = 0; v[0] = q; z[0] = -Infinity; z[1] = Infinity; continue; }
+    let x = sOf(q, v[k]); while (x <= z[k]) { k--; x = sOf(q, v[k]); }
+    k++; v[k] = q; z[k] = x; z[k + 1] = Infinity;
+  }
+  if (k < 0) { o.fill(Infinity, 0, n); return; }
+  k = 0; for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; const d = q - v[k]; o[q] = d * d + f[v[k]]; }
+}
+function fxDT(mask, w, h) {
+  const g = new Float64Array(w * h), n = Math.max(w, h), f = new Float64Array(n), o = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+  for (let i = 0; i < w * h; i++) g[i] = mask[i] ? 0 : Infinity;
+  for (let x = 0; x < w; x++) { for (let y = 0; y < h; y++) f[y] = g[y * w + x]; fxDT1(f, h, o, v, z); for (let y = 0; y < h; y++) g[y * w + x] = o[y]; }
+  for (let y = 0; y < h; y++) { const b = y * w; for (let x = 0; x < w; x++) f[x] = g[b + x]; fxDT1(f, w, o, v, z); for (let x = 0; x < w; x++) g[b + x] = o[x]; }
+  const out = new Float32Array(w * h); for (let i = 0; i < w * h; i++) out[i] = Math.sqrt(g[i]); return out;
+}
+function fxSDF(inside, w, h) {
+  const outside = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) outside[i] = inside[i] ? 0 : 1;
+  const a = fxDT(inside, w, h), b = fxDT(outside, w, h), o = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) o[i] = a[i] > 0 ? a[i] - .5 : -(b[i] - .5);
+  return o;
+}
+// paths::contours: marching-squares iso-lines of a plane at thr, chained into polylines [points, closed]
+function fxContours(pl, w, h, thr) {
+  if (w < 2 || h < 2) return [];
+  const pos = new Map(), adj = new Map(), ip = (a, b) => Math.abs(b - a) > 1e-9 ? clamp((thr - a) / (b - a), 0, 1) : .5;
+  const T = { 1: [[3, 0]], 14: [[3, 0]], 2: [[0, 1]], 13: [[0, 1]], 3: [[3, 1]], 12: [[3, 1]], 4: [[1, 2]], 11: [[1, 2]], 5: [[3, 0], [1, 2]], 6: [[0, 2]], 9: [[0, 2]], 7: [[3, 2]], 8: [[3, 2]], 10: [[0, 1], [2, 3]] };
+  const link = (e1, e2) => { pos.set(e1[0], e1[1]); pos.set(e2[0], e2[1]); for (const [x, y] of [[e1[0], e2[0]], [e2[0], e1[0]]]) { const l = adj.get(x); if (l) l.push(y); else adj.set(x, [y]); } };
+  for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) {
+    const i = y * w + x, a = pl[i], b = pl[i + 1], c = pl[i + w + 1], d = pl[i + w];
+    const idx = (a > thr) | (b > thr) << 1 | (c > thr) << 2 | (d > thr) << 3; if (idx === 0 || idx === 15) continue;
+    const e = [[2 * i, [x + .5 + ip(a, b), y + .5]], [2 * (i + 1) + 1, [x + 1.5, y + .5 + ip(b, c)]], [2 * (i + w), [x + .5 + ip(d, c), y + 1.5]], [2 * i + 1, [x + .5, y + .5 + ip(a, d)]]];
+    for (const [p, q] of T[idx]) link(e[p], e[q]);
+  }
+  const keys = [...adj.keys()].sort((p, q) => p - q); keys.sort((p, q) => (adj.get(p).length !== 1) - (adj.get(q).length !== 1));
+  const used = new Set(), uk = (p, q) => Math.min(p, q) * 67108864 + Math.max(p, q), out = [];
+  for (const k0 of keys) for (const first of adj.get(k0)) {
+    if (used.has(uk(k0, first))) continue;
+    const chain = [pos.get(k0)]; let prev = k0, cur = first, closed = false; used.add(uk(prev, cur));
+    for (;;) {
+      chain.push(pos.get(cur));
+      if (cur === k0) { closed = true; chain.pop(); break; }
+      const nx = adj.get(cur).find(nn => nn !== prev && !used.has(uk(cur, nn)));
+      if (nx === undefined) break;
+      used.add(uk(cur, nx)); prev = cur; cur = nx;
+    }
+    if (chain.length >= 2) out.push([chain, closed]);
+  }
+  return out;
+}
+// the picture as one value a pixel (0..1), read back at full size: Vegas' and Radio Waves' image contours
+function fxValuePlane(E, img, fn) {
+  const R = E.read(img, Math.max(E.w, E.h)), n = R.w * R.h, d = R.d, o = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const a = d[i * 4 + 3] / 255, k = a > 0 ? 1 / 255 : 0; o[i] = fn(d[i * 4] * k, d[i * 4 + 1] * k, d[i * 4 + 2] * k, a); }
+  return { v: o, w: R.w, h: R.h };
+}
+// paths::stroke_plan: brush dabs or a line along the layer's mask, Start to End
+function fxStrokePlan(E, q) {
+  const M = fxMaskPoly(E), sc = E.px(1), size = Math.max(.1, q('brushSize') * sc), r = size * .5, spacing = q('spacing') / 100;
+  const start = clamp(q('start'), 0, 100) / 100, end = clamp(q('end'), 0, 100) / 100, segs = [];
+  if (M) {
+    const { pts, closed } = M, len = fxPolyLen(pts, closed), s0 = len * start, s1 = len * end;
+    if (s1 > s0) {
+      if (spacing <= .5) fxPolySegs(fxTrimPoly(pts, closed, s0, s1), false, r, 1, segs);
+      else { const c = fxPolyCum(pts, closed), st = Math.max(.5, size * spacing); for (let s = s0; s <= s1 + 1e-9 && segs.length < 200000; s += st) { const p = fxPolyAt(pts, c, s); segs.push([p[0], p[1], p[0], p[1], r, 1]); } }
+    }
+  }
+  return { segs, hard: q('brushHardness') / 100, color: q('color'), opacity: q('opacity') / 100, style: q('paintStyle') };
+}
+// paths::scribble_plan: zig-zag strokes filling the layer's mask (null: no mask)
+function fxScribblePlan(E, q) {
+  const M = fxMaskPoly(E); if (!M || M.pts.length < 3) return null;
+  const g = [[M.pts, true, q('useModes') && M.inv]], sc = E.px(1), fill = q('fillType'), ew = Math.max(.1, q('edgeWidth')) * sc;
+  const ang = q('angle') * Math.PI / 180, d = [Math.cos(ang), Math.sin(ang)], n = [-d[1], d[0]];
+  const width = Math.max(.1, q('strokeWidth') * sc), curv = q('curviness') / 100, curvVar = q('curvinessVar') / 100;
+  const spacing = Math.max(.75, width * .25, q('spacing') * sc), spVar = q('spacingVar') / 100, ovl = q('overlap') / 100, ovlVar = q('overlapVar') / 100;
+  const start = clamp(q('start'), 0, 100) / 100, end = clamp(q('end'), 0, 100) / 100, wig = q('wiggle'), wps = Math.max(0, q('wps'));
+  const seed = ((Math.trunc(q('seed')) >>> 0) ^ fxSeed(E)) >>> 0;
+  let step = 0, frac = 0;
+  if (wig === 1) step = Math.max(0, Math.floor(E.t * wps)) >>> 0;
+  else if (wig === 2) { const u = Math.max(0, E.t * wps); step = Math.floor(u) >>> 0; frac = fxSmooth(0, 1, u - Math.floor(u)); }
+  const hk = (k, st) => (Math.imul(k, 31) + Math.imul(st, 7919)) >>> 0;
+  const rnd = (i, k) => { const a = fxHash(i, hk(k, step), seed) * 2 - 1; if (frac > 0) { const c = fxHash(i, hk(k, step + 1), seed) * 2 - 1; return a + (c - a) * frac; } return a; };
+  let nmin = Infinity, nmax = -Infinity;
+  for (const [pts] of g) for (const p of pts) { const v = p[0] * n[0] + p[1] * n[1]; nmin = Math.min(nmin, v); nmax = Math.max(nmax, v); }
+  nmin -= ew; nmax += ew;
+  // chains of zig-zags: each run joins the nearest chain that ended on the previous scan line
+  const chains = [], reach = spacing * 3 + ew; let s = nmin + spacing * .5, li = 0;
+  while (s < nmax && li < 20000) {
+    fxScanRuns(g, fill, ew, d, n, s).forEach(([a0, b0], k) => {
+      const ov = spacing * Math.max(-.45, ovl + ovlVar * rnd(li, k * 4) * .5), ov2 = spacing * Math.max(-.45, ovl + ovlVar * rnd(li, k * 4 + 1) * .5);
+      const a = a0 - ov, bb = b0 + ov2; if (bb <= a) return;
+      const at = t => [d[0] * t + n[0] * s, d[1] * t + n[1] * s], pa = at(a), pb = at(bb);
+      let best = -1, bd = Infinity;
+      chains.forEach((c, i) => { if (!(li > 0 && c[1] === li - 1)) return; const last = c[0][c[0].length - 1] || pa, dd = Math.min(fxSegLen(last, pa), fxSegLen(last, pb)); if (dd < reach && dd < bd) { bd = dd; best = i; } });
+      if (best >= 0) {
+        const ch = chains[best], last = ch[0][ch[0].length - 1] || pa, [p0, p1, dir] = fxSegLen(last, pa) <= fxSegLen(last, pb) ? [pa, pb, -1] : [pb, pa, 1];
+        const c = Math.max(0, curv + curvVar * rnd(li, k * 4 + 2) * .5);
+        ch[0].push([(last[0] + p0[0]) * .5 + d[0] * dir * c * spacing, (last[1] + p0[1]) * .5 + d[1] * dir * c * spacing], p0, p1); ch[1] = li;
+      } else chains.push([[pa, pb], li]);
+    });
+    s += spacing * Math.max(.25, 1 + spVar * rnd(li, 3) * .5); li++;
+  }
+  const lines = chains.map(([z]) => curv > 0 ? fxChaikin(z, 2) : z), r = width * .5, each = q('applyTo') === 1;
+  const lens = lines.map(l => fxPolyLen(l, false)), total = lens.reduce((a, b) => a + b, 0), g0 = total * start, g1 = total * end, parts = [];
+  let acc = 0;
+  lines.forEach((l, i) => { const len = lens[i]; parts.push(each ? fxTrimPoly(l, false, len * start, len * end) : fxTrimPoly(l, false, clamp(g0 - acc, 0, len), clamp(g1 - acc, 0, len))); acc += len; });
+  const cap = q('endCap'), join = q('join'), base = { color: q('color'), opacity: q('opacity') / 100, style: q('composite') };
+  if (cap === 0 && join === 0) { const segs = []; for (const p of parts) fxPolySegs(p, false, r, 1, segs); return { ...base, segs, hard: .9 }; }
+  return { ...base, polys: fxStrokeOutline(parts, r, cap, join, Math.max(1, q('miter'))) };
+}
+// paths::vegas_plan: segments running along the picture's contours (or the mask), fading from start to end
+const fxVegasSub = (each, width) => { const n = Math.min(512, Math.max(12, Math.ceil(each / Math.max(2, width)))); return n + (n & 1); };
+function fxVegasPlan(E, img, q) {
+  const sc = E.px(1); let paths;
+  if (q('stroke') === 1) { const M = fxMaskPoly(E); paths = M ? [[M.pts, M.closed]] : []; }
+  else {
+    const ch = q('channel'), inv = q('invertInput');
+    let { v: pl, w, h } = fxValuePlane(E, fxLayerOr(E, img, q('inputLayer'), 'vegasIn'), (r, g, b, a) => { const v = ch === 1 ? r : ch === 2 ? g : ch === 3 ? b : ch === 4 ? a : fxLum(r, g, b) * a; return inv ? 1 - v : v; });
+    const blur = q('preBlur') * sc; if (blur > .05) pl = fxGaussCPU(pl, w, h, blur, blur);
+    let cs = fxContours(pl, w, h, q('threshold') / 100);
+    const tol = Math.max(0, q('tolerance')) * E.size * .1;
+    if (tol > 0) for (const c of cs) { const keep = []; for (const p of c[0]) { const l = keep[keep.length - 1]; if (!l || fxSegLen(l, p) >= tol) keep.push(p); } c[0] = keep; }
+    cs = cs.map(c => [c[0], c[1], fxPolyLen(c[0], c[1])]).sort((a, b) => b[2] - a[2]);
+    const sel = Math.max(1, Math.round(q('selected')));
+    paths = q('renderMode') === 1 ? cs.slice(sel - 1, sel) : cs;
+  }
+  const nseg0 = clamp(Math.round(q('segments')), 1, 1000), fewer = q('stroke') === 0 && q('shorter') === 1;
+  const lens = paths.map(([p, c]) => fxPolyLen(p, c)), longest = lens.reduce((m, v) => Math.max(m, v), 0);
+  const segLen = clamp(q('length'), 0, 1), bunched = q('distribution') === 0, rot = q('rotation') / 360, rph = q('randomPhase');
+  const seed = ((Math.trunc(q('seed')) >>> 0) ^ fxSeed(E)) >>> 0, width = Math.max(.1, q('width') * sc), hard = clamp(q('hardness'), 0, 1);
+  const o0 = q('startOpacity'), om = q('midOpacity'), o1 = q('endOpacity'), mp = clamp(q('midPos'), .01, .99), segs = [];
+  paths.forEach(([pts, closed], ci) => {
+    const len = lens[ci]; if (len <= 0) return;
+    const cum = fxPolyCum(pts, closed), phase = rot + (rph ? fxHash(ci, 1, seed) : 0);
+    const nseg = fewer && longest > 0 ? Math.max(1, Math.round(nseg0 * len / longest)) : nseg0, each = len / nseg * segLen, sub = fxVegasSub(each, width);
+    for (let i = 0; i < nseg; i++) {
+      const base = bunched ? (i + (fxHash(ci, i + 7, seed) - .5) * .8) / nseg : i / nseg, s0 = fxRem(base + phase, 1) * len;
+      let prev = null;
+      for (let k = 0; k <= sub; k++) {
+        const f = k / sub; let s = s0 + each * f;
+        if (closed) s = fxRem(s, len); else if (s > len) break;
+        const p = fxPolyAt(pts, cum, s), op = f < mp ? o0 + (om - o0) * (f / mp) : om + (o1 - om) * ((f - mp) / (1 - mp));
+        if (prev && (prev[0] - p[0]) ** 2 + (prev[1] - p[1]) ** 2 < (each * .5) ** 2 + 4) segs.push([prev[0], prev[1], p[0], p[1], width * .5, clamp(op, 0, 1)]);
+        prev = p;
+      }
+    }
+  });
+  return { segs, hard, color: q('color'), opacity: 1, style: [1, 0, 3, 2][q('blendMode')] ?? 1 };
+}
+// paths::write_on_plan: a dab every Brush Spacing seconds along the (animated) Brush Position, each lasting Stroke Length
+function fxWriteOnPlan(E, q) {
+  const ownOp = q('paintTime') === 1, ownSize = [1, 3].includes(q('brushTime'));
+  const opac = p => clamp(p('brushOpacity') / 100, 0, 1), rad = p => Math.max(.05, E.px(p('brushSize')) * .5);
+  const dab = p => [p('brushPosition'), rad(ownSize ? p : q), ownOp ? opac(p) : 1];
+  const segs = [], t = E.t, spacing = Math.max(.001, q('brushSpacing')), life = Math.max(0, q('strokeLength'));
+  if (isFinite(t) && t >= 0) {
+    const start = life > 0 ? Math.max(0, t - life) : 0, k0 = Math.max(0, Math.ceil(start / spacing - 1e-9)), k1 = Math.max(0, Math.floor(t / spacing + 1e-9));
+    const stride = Math.max(1, Math.floor((k1 - k0 + 1) / 4096) + 1);
+    let prev = null;
+    for (let k = k0; k <= k1; k += stride) {
+      const tk = k * spacing, [p, r, v] = Math.abs(tk - t) < 1e-9 ? dab(q) : dab(fxAt(E, tk)), a = stride > 1 ? prev || p : p;
+      segs.push([a[0], a[1], p[0], p[1], r, v]); prev = p;
+    }
+  }
+  if (!segs.length) { const [p, r, v] = dab(q); segs.push([p[0], p[1], p[0], p[1], r, v]); }
+  return { segs, hard: q('brushHardness') / 100, color: q('color'), opacity: ownOp ? 1 : opac(q), style: q('paintStyle') };
+}
+// fill::paint_bucket_region: the flood fill from the Fill Point over the layer's read-back pixels (1 inside)
+function fxBucketRegion(E, img, q) {
+  const R = E.read(img, Math.max(E.w, E.h)), w = R.w, h = R.h, d = R.d, [fx, fy] = q('fillPoint'), sx = Math.floor(fx * R.k), sy = Math.floor(fy * R.k);
+  const sel = q('fillSelector'), tol = q('tolerance') / 255 + 1e-6, reg = new Float32Array(w * h);
+  const key = (i, o) => {
+    const a = d[i * 4 + 3] / 255, r = d[i * 4] / 255, g = d[i * 4 + 1] / 255, b = d[i * 4 + 2] / 255;
+    if (sel === 1) { o[0] = r; o[1] = g; o[2] = b; o[3] = 0; }
+    else if (sel === 2) { o[0] = o[1] = o[2] = 0; o[3] = a <= 1e-3 ? 0 : 1; }
+    else if (sel >= 3) { o[0] = o[1] = o[2] = 0; o[3] = a; }
+    else { o[0] = r * a; o[1] = g * a; o[2] = b * a; o[3] = a; }
+  };
+  if (sx < 0 || sy < 0 || sx >= w || sy >= h) return { reg, w, h };
+  const sd = [0, 0, 0, 0], kk = [0, 0, 0, 0]; key(sy * w + sx, sd);
+  const within = i => { key(i, kk); if (sel === 2) return kk[3] === sd[3]; return Math.abs(kk[0] - sd[0]) <= tol && Math.abs(kk[1] - sd[1]) <= tol && Math.abs(kk[2] - sd[2]) <= tol && Math.abs(kk[3] - sd[3]) <= tol; };
+  const seen = new Uint8Array(w * h), stack = [sx, sy];
+  while (stack.length) {
+    const y = stack.pop(), x = stack.pop(), row = y * w;
+    if (seen[row + x] || !within(row + x)) continue;
+    let l = x, r = x;
+    while (l > 0 && !seen[row + l - 1] && within(row + l - 1)) l--;
+    while (r + 1 < w && !seen[row + r + 1] && within(row + r + 1)) r++;
+    for (let i = l; i <= r; i++) {
+      seen[row + i] = 1; reg[row + i] = 1;
+      if (y > 0 && !seen[row - w + i]) stack.push(i, y - 1);
+      if (y + 1 < h && !seen[row + w + i]) stack.push(i, y + 1);
+    }
+  }
+  return { reg, w, h };
+}
+// fill::eyedropper_color: the sampled colour (straight rgb, alpha) round the Sample Point
+function fxEyedropColor(E, img, q) {
+  const R = E.read(img, Math.max(E.w, E.h)), w = R.w, h = R.h, d = R.d, [px, py] = q('samplePoint'), r = Math.max(0, E.px(q('sampleRadius'))), mode = q('average');
+  const cx = Math.floor(px), cy = Math.floor(py), ri = Math.ceil(r), acc = [0, 0, 0, 0]; let n = 0;
+  for (let y = Math.max(0, cy - ri); y <= Math.min(h - 1, cy + ri); y++) for (let x = Math.max(0, cx - ri); x <= Math.min(w - 1, cx + ri); x++) {
+    if ((x - cx) ** 2 + (y - cy) ** 2 > r * r + .5) continue;
+    const i = (y * w + x) * 4, a = d[i + 3] / 255, s = [d[i] / 255, d[i + 1] / 255, d[i + 2] / 255];
+    if (mode === 0 && a <= 1e-4) continue;
+    if (mode <= 1) { for (let k = 0; k < 3; k++) acc[k] += s[k]; acc[3] += 1; }
+    else if (mode === 2) { for (let k = 0; k < 3; k++) acc[k] += s[k] * a; acc[3] += 1; }
+    else { for (let k = 0; k < 3; k++) acc[k] += s[k] * a; acc[3] += a; }
+    n++;
+  }
+  if (!n) return [0, 0, 0, 0];
+  if (mode === 3) { const a = acc[3] / n; return a > 1e-6 ? [acc[0] / n / a, acc[1] / n / a, acc[2] / n / a, a] : [0, 0, 0, a]; }
+  return [acc[0] / n, acc[1] / n, acc[2] / n, 1];
+}
+// generate2's Radio Waves: the live waves (oldest first) and the contour they ripple from
+const fxReflect = (v, lo, hi) => { const sp = hi - lo; if (sp <= 0) return lo; const t = fxRem(v - lo, 2 * sp); return lo + (t > sp ? 2 * sp - t : t); };
+function fxImageContour(E, img, q) {
+  const ch = q('valueChannel'), sc = E.px(1);
+  let { v, w, h } = fxValuePlane(E, fxLayerOr(E, img, q('sourceLayer'), 'radioSrc'), (r, g, b, a) => {
+    if (ch >= 5 && ch <= 7) { const [hh, s, l] = fxHSL([r, g, b]); return ch === 5 ? hh : ch === 6 ? l * a : s; }
+    return ch === 0 ? r * a : ch === 1 ? g * a : ch === 2 ? b * a : ch === 3 ? a : fxLum(r, g, b) * a; });
+  const blur = Math.max(0, q('preBlur')) * sc; if (blur > 0) v = fxGaussCPU(v, w, h, blur * .5, blur * .5);
+  const thr = q('valueThreshold') / 255, inv = q('invertInput'), n = w * h, inside = new Uint8Array(n);
+  for (let i = 0; i < n; i++) inside[i] = (v[i] >= thr) !== inv ? 1 : 0;
+  // Contour n: only the n-th largest connected region
+  const pick = Math.round(q('contour'));
+  if (pick > 0) {
+    const label = new Int32Array(n), sizes = [0], stack = [];
+    for (let st = 0; st < n; st++) {
+      if (!inside[st] || label[st]) continue;
+      const id = sizes.length; let c = 0; label[st] = id; stack.push(st);
+      while (stack.length) {
+        const i = stack.pop(), x = i % w; c++;
+        for (const j of [x > 0 ? i - 1 : -1, x + 1 < w ? i + 1 : -1, i >= w ? i - w : -1, i + w < n ? i + w : -1]) if (j >= 0 && inside[j] && !label[j]) { label[j] = id; stack.push(j); }
+      }
+      sizes.push(c);
+    }
+    const order = sizes.map((_, i) => i).slice(1).sort((a, b) => sizes[b] - sizes[a] || a - b), keep = order[pick - 1] ?? -1;
+    for (let i = 0; i < n; i++) if (label[i] !== keep) inside[i] = 0;
+  }
+  if (!inside.some(x => x)) return null;
+  let sdf = fxSDF(inside, w, h);
+  const tol = Math.max(0, q('tolerance')) * sc; if (tol > 0) sdf = fxGaussCPU(sdf, w, h, tol * .5, tol * .5);
+  return { sdf, w, h, anchor: q('sourceCenter') };
+}
+const FX_MASKCV = document.createElement('canvas'), FX_MASKCX = FX_MASKCV.getContext('2d', { willReadFrequently: true });
+function fxMaskContour(E, q) {
+  const M = fxMaskPoly(E); if (!M) return null;
+  const w = E.w, h = E.h, key = w + 'x' + h + (M.inv ? 'i' : '') + M.pts.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' '), had = FXC.get(E.fx);
+  let sdf = had?.mkey === key ? had.msdf : null;
+  if (!sdf) {
+    // the mask filled at the pixel centres (even-odd), as util::point_in_poly
+    if (FX_MASKCV.width !== w || FX_MASKCV.height !== h) { FX_MASKCV.width = w; FX_MASKCV.height = h; }
+    const c = FX_MASKCX; c.clearRect(0, 0, w, h); c.beginPath(); M.pts.forEach((p, i) => c[i ? 'lineTo' : 'moveTo'](p[0], p[1])); c.closePath(); c.fillStyle = '#fff'; c.fill('evenodd');
+    const d = c.getImageData(0, 0, w, h).data, inside = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) inside[i] = (d[i * 4 + 3] >= 128) !== M.inv ? 1 : 0;
+    if (!inside.some(x => x)) return null;
+    sdf = fxSDF(inside, w, h); FXC.set(E.fx, { ...had, mkey: key, msdf: sdf });
+  }
+  return { sdf, w, h, anchor: q('producer') };
+}
+function fxRadioPlan(E, img, q) {
+  const t = Math.max(0, E.t), freq = Math.max(.01, q('frequency')), lifeNow = Math.max(.01, q('lifespan')), birth = q('setAt') === 0, type = q('waveType');
+  const aa = .5 + 1.5 / clamp(q('quality'), 1, 10), [lx, ly, lw, lh] = E.rect, sc = E.px(1), refl = q('reflection');
+  const contour = type === 1 ? fxImageContour(E, img, q) : type === 2 ? fxMaskContour(E, q) : null;
+  if (type !== 0 && !contour) return null;
+  const kHi = Math.floor(t * freq), kLo = Math.max(0, Math.floor((t - lifeNow) * freq) - 1, kHi - 256), waves = [];
+  for (let k = kLo; k <= kHi; k++) {
+    const born = k / freq, age = t - born, p = birth ? fxAt(E, born) : q, life = Math.max(.01, p('lifespan'));
+    if (!(age >= 0 && age < life)) continue;
+    const c = p('producer'), fin = Math.max(0, p('fadeIn')), fout = Math.max(0, p('fadeOut'));
+    const fi = fin > 0 ? Math.min(1, age / fin) : 1, fo = fout > 0 ? Math.min(1, (life - age) / fout) : 1, dir = p('direction') * Math.PI / 180, vel = p('velocity') * sc;
+    let cx = c[0] + Math.sin(dir) * vel * age, cy = c[1] - Math.cos(dir) * vel * age;
+    if (refl) { cx = fxReflect(cx, lx, lx + lw); cy = fxReflect(cy, ly, ly + lh); }
+    const sw = p('startWidth') * sc, ew = p('endWidth') * sc, radius = p('expansion') * sc * age, rot = (p('orientation') + p('spin') * age) * Math.PI / 180;
+    let outline = null;
+    if (type === 0) {
+      const sides = clamp(Math.round(p('sides')), 3, 64), star = p('star'), depth = clamp(p('starDepth'), -1, 1);
+      if (!(sides >= 64 && !star)) {
+        outline = [];
+        for (let i = 0, cnt = star ? 2 * sides : sides; i < cnt; i++) {
+          const a = (star ? Math.PI * i / sides : 2 * Math.PI * i / sides) - Math.PI / 2 + rot, kk = star && i % 2 ? Math.max(0, 1 + depth) : 1;
+          outline.push([Math.cos(a) * radius * kk, Math.sin(a) * radius * kk]);
+        }
+      }
+    }
+    waves.push({ cx, cy, radius, hw: Math.max(.25, (sw + (ew - sw) * age / life) * .5), rot, fade: fi * fo, color: p('color'), op: p('opacity') / 100, outline });
+  }
+  return { waves, contour, aa, profile: q('profile') };
+}
 // ---- Round 18 helpers ----
 // util::layer_or_self: another layer as it sits in the frame, as a working image, or this layer's own picture
 function fxLayerOr(E, img, id, name) {
@@ -3647,6 +4128,244 @@ const FX = {
       return E.run('fx_generate', 'gen_grid', fxP({ 0: [q('mode'), q('invert'), 0, 0] }, {
         0: [.5 - ax, .5 - ay, Math.max(1, E.px(q('width'))), Math.max(1, E.px(q('height')))],
         1: [fe, fe, q('opacity') / 100, Math.max(0, E.px(q('border')))], 2: [...q('color'), 1] }), img);
+    } },
+  // ---- Round 19: Generate I (shapes & fills). EffectCraft's color_fx.rs (Fill), generate.rs (Checkerboard, Circle),
+  //      generate2.rs (Cell Pattern, Ellipse, Radio Waves) and generate3 (Stroke, Scribble, Vegas, Write-on, Paint Bucket,
+  //      Eyedropper Fill); GPU host code from fx_generate.rs and fx_gen2.rs. Circle, Ellipse and the HQ cell patterns,
+  //      which EffectCraft draws on the CPU, are in Lumina's shaders/lumina_gen.wgsl. "Mask" means the layer's own mask.
+  fill: { name: 'Fill', cat: 'Generate', clip: true, kernels: [['kernels', 'pointwise']], params: [
+      { id: 'color', label: 'Color', type: 'color', def: '#ff0000' },
+      { id: 'invert', label: 'Invert (fill the clear parts)', type: 'check', def: false },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) { return E.run('kernels', 'pointwise', fxP({ 0: [7, q('invert'), 0, 0] }, { 0: [...q('color'), 1], 1: [q('opacity') / 100, 0, 0, 0] }), img); } },
+  checkerboard: { name: 'Checkerboard', cat: 'Generate', clip: true, kernels: [['fx_generate', 'gen_checker']], params: [
+      { id: 'anchor', label: 'Anchor', type: 'pt', def: [0, 0] },
+      { id: 'sizeFrom', label: 'Size from', type: 'pick', def: 1, opts: [[0, 'Corner point'], [1, 'Width slider'], [2, 'Width & height sliders']] },
+      { id: 'corner', label: 'Corner', type: 'pt', def: [.1, .1], show: f => +(f.sizeFrom ?? 1) === 0 },
+      { id: 'width', label: 'Width', def: 64, min: 1, max: 4000, dec: 1, show: f => +(f.sizeFrom ?? 1) !== 0 },
+      { id: 'height', label: 'Height', def: 64, min: 1, max: 4000, dec: 1, show: f => +(f.sizeFrom ?? 1) === 2 },
+      { id: 'featherW', label: 'Feather width', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'featherH', label: 'Feather height', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Blending mode', type: 'pick', def: 255, opts: FX_GEN_MODES }],
+    run(E, img, q) {
+      // generate::cell_size
+      const [ax, ay] = q('anchor'), from = q('sizeFrom'), c = q('corner');
+      const [w, h] = (from === 0 ? [Math.abs(c[0] - ax), Math.abs(c[1] - ay)] : from === 1 ? [E.px(q('width')), E.px(q('width'))] : [E.px(q('width')), E.px(q('height'))]).map(v => Math.max(1, v));
+      return E.run('fx_generate', 'gen_checker', fxP({ 0: [q('mode'), 0, 0, 0] }, { 0: [.5 - ax, .5 - ay, w, h],
+        1: [Math.max(1, E.px(q('featherW'))), Math.max(1, E.px(q('featherH'))), q('opacity') / 100, 0], 2: [...q('color'), 1] }), img);
+    } },
+  circle: { name: 'Circle', cat: 'Generate', clip: true, kernels: [['lumina_gen', 'lg_circle']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'radius', label: 'Radius', def: 75, min: 0, max: 4000, dec: 1 },
+      { id: 'edge', label: 'Edge', type: 'pick', def: 0, opts: [[0, 'None'], [1, 'Edge radius'], [2, 'Thickness'], [3, 'Thickness × radius'], [4, 'Thickness & feather × radius']] },
+      { id: 'edgeRadius', label: 'Edge radius', def: 0, min: 0, max: 4000, dec: 1, show: f => +(f.edge ?? 0) === 1 },
+      { id: 'thickness', label: 'Thickness', def: 10, min: 0, max: 4000, dec: 1, show: f => +(f.edge ?? 0) >= 2 },
+      { id: 'feather', label: 'Feather outer edge', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'featherInner', label: 'Feather inner edge', def: 0, min: 0, max: 1000, dec: 1, show: f => +(f.edge ?? 0) > 0 },
+      { id: 'invert', label: 'Invert circle', type: 'check', def: false },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Blending mode', type: 'pick', def: 255, opts: FX_GEN_MODES }],
+    run(E, img, q) {
+      const [cx, cy] = q('center'), s = E.px(1), r = q('radius') * s, th = Math.max(0, q('thickness')), e = q('edge');
+      let fo = Math.max(0, q('feather')) * s, fi = Math.max(0, q('featherInner')) * s, inner = null;
+      if (e === 1) inner = q('edgeRadius') * s;
+      else if (e === 2) inner = r - th * s;
+      else if (e >= 3) { inner = r - th / 100 * r; if (e === 4) { fo = Math.max(0, q('feather')) / 100 * r; fi = Math.max(0, q('featherInner')) / 100 * r; } }
+      const ro = inner == null ? r : Math.max(r, inner), ri = inner == null ? 0 : Math.max(0, Math.min(r, inner));
+      return E.run('lumina_gen', 'lg_circle', fxP({ 0: [q('mode'), q('invert'), inner != null, 0] },
+        { 0: [cx, cy, ro, ri], 1: [Math.max(.5, fo), Math.max(.5, fi), q('opacity') / 100, 0], 2: [...q('color'), 1] }), img);
+    } },
+  ellipse: { name: 'Ellipse', cat: 'Generate', clip: true, kernels: [['lumina_gen', 'lg_ellipse']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'width', label: 'Width', def: 100, min: 0, max: 30000, dec: 1 },
+      { id: 'height', label: 'Height', def: 100, min: 0, max: 30000, dec: 1 },
+      { id: 'thickness', label: 'Thickness', def: 10, min: 0, max: 3000, dec: 1 },
+      { id: 'softness', label: 'Softness %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'inside', label: 'Inside color', type: 'color', def: '#ffffff' },
+      { id: 'outside', label: 'Outside color', type: 'color', def: '#0099ff' },
+      { id: 'composite', label: 'Composite on original', type: 'check', def: false }],
+    run(E, img, q) {
+      const [cx, cy] = q('center');
+      return E.run('lumina_gen', 'lg_ellipse', fxP({ 0: [q('composite'), 0, 0, 0] }, { 0: [cx, cy, Math.max(.5, E.px(q('width')) * .5), Math.max(.5, E.px(q('height')) * .5)],
+        1: [Math.max(.25, E.px(q('thickness')) * .5), clamp(q('softness') / 100, 0, 1), 0, 0], 2: [...q('inside'), 1], 3: [...q('outside'), 1] }), img);
+    } },
+  cellpattern: { name: 'Cell Pattern', cat: 'Generate', clip: true, kernels: [['fx_generate', 'gen_cell_pattern'], ['lumina_gen', 'lg_cell_hq']], params: [
+      { id: 'pattern', label: 'Cell pattern', type: 'pick', def: 0, opts: [[0, 'Bubbles'], [1, 'Crystals'], [2, 'Plates'], [3, 'Static plates'], [4, 'Crystallize'], [5, 'Pillow'], [6, 'Crystals HQ'], [7, 'Plates HQ'], [8, 'Static plates HQ'], [9, 'Crystallize HQ'], [10, 'Mixed crystals HQ'], [11, 'Tubular']] },
+      { id: 'invert', label: 'Invert', type: 'check', def: false },
+      { id: 'contrast', label: 'Contrast', def: 100, min: 0, max: 10000, dec: 1 },
+      { id: 'overflow', label: 'Overflow', type: 'pick', def: 0, opts: [[0, 'Clip'], [1, 'Soft clamp'], [2, 'Wrap back']] },
+      { id: 'disperse', label: 'Disperse', def: 1, min: 0, max: 1.5, dec: 2 },
+      { id: 'size', label: 'Size', def: 60, min: 2, max: 4000, dec: 1 },
+      { id: 'offset', label: 'Offset', type: 'pt', def: [.5, .5] },
+      { id: 'tile', label: 'Enable tiling', type: 'check', def: false },
+      { id: 'cellsH', label: 'Cells horizontal', def: 16, min: 1, max: 1000, dec: 0, show: f => !!f.tile },
+      { id: 'cellsV', label: 'Cells vertical', def: 16, min: 1, max: 1000, dec: 0, show: f => !!f.tile },
+      { id: 'evolution', label: 'Evolution°', def: 0, min: -36000, max: 36000, dec: 1 },
+      { id: 'cycleEvo', label: 'Cycle evolution', type: 'check', def: false },
+      { id: 'cycle', label: 'Cycle (revolutions)', def: 1, min: 1, max: 1000, dec: 0, show: f => !!f.cycleEvo },
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 100000, dec: 0 }],
+    run(E, img, q) {
+      const pat = q('pattern'), kind = pat <= 5 ? pat : [1, 2, 3, 4, 6, 8][pat - 6] ?? 8, hq = pat >= 6 && pat <= 10;
+      const [ox, oy] = q('offset'); let evo = q('evolution') / 360;
+      if (q('cycleEvo')) evo = fxRem(evo, Math.max(1, fxRound(q('cycle'))));
+      const seed = (Math.imul(Math.trunc(q('seed')) >>> 0, 7919) ^ 0xce11) >>> 0;
+      const buf = fxP({ 0: [kind, q('overflow'), q('invert'), seed], 1: [q('tile'), Math.max(1, fxRound(q('cellsH'))), Math.max(1, fxRound(q('cellsV'))), 0] },
+        { 0: [q('contrast') / 100, clamp(q('disperse'), 0, 1.5), Math.max(1, E.px(q('size'))), fxRem(evo, 1)], 1: [.5 - ox, .5 - oy, 0, 0] });
+      return hq ? E.run('lumina_gen', 'lg_cell_hq', buf, img) : E.run('fx_generate', 'gen_cell_pattern', buf, img);
+    } },
+  stroke: { name: 'Stroke', cat: 'Generate', clip: true, kernels: GEN2_PAINT_K, params: [
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'brushSize', label: 'Brush size', def: 2, min: 0, max: 50, dec: 1 },
+      { id: 'brushHardness', label: 'Brush hardness %', def: 75, min: 0, max: 100, dec: 1 },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'start', label: 'Start %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'end', label: 'End %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'spacing', label: 'Spacing %', def: 15, min: 0, max: 100, dec: 1 },
+      { id: 'paintStyle', label: 'Paint style', type: 'pick', def: 0, opts: [[0, 'On original image'], [1, 'On transparent'], [2, 'Reveal original image']] }],
+    // strokes the layer's mask (turn on Mask in the layer's properties)
+    run(E, img, q) { return fxPaint(E, img, fxStrokePlan(E, q)); } },
+  scribble: { name: 'Scribble', cat: 'Generate', clip: true, kernels: GEN2_PAINT_K, params: [
+      { id: 'useModes', label: 'Follow the mask\'s Invert', type: 'check', def: false },
+      { id: 'fillType', label: 'Fill type', type: 'pick', def: 0, opts: [[0, 'Inside'], [1, 'Centered edge'], [2, 'Inside edge'], [3, 'Outside edge'], [4, 'Left edge'], [5, 'Right edge']] },
+      { id: 'edgeWidth', label: 'Edge width', def: 10, min: 0, max: 1000, dec: 1, show: f => +(f.fillType ?? 0) > 0 },
+      { id: 'endCap', label: 'End cap', type: 'pick', def: 0, opts: [[0, 'Round'], [1, 'Butt'], [2, 'Projecting']] },
+      { id: 'join', label: 'Join', type: 'pick', def: 0, opts: [[0, 'Round'], [1, 'Miter'], [2, 'Bevel']] },
+      { id: 'miter', label: 'Miter limit', def: 4, min: 1, max: 100, dec: 1, show: f => +(f.join ?? 0) === 1 },
+      { id: 'color', label: 'Color', type: 'color', def: '#ff0000' },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'angle', label: 'Angle°', def: 45, min: -3600, max: 3600, dec: 1 },
+      { id: 'strokeWidth', label: 'Stroke width', def: 2, min: .1, max: 50, dec: 1 },
+      { id: 'curviness', label: 'Curviness %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'curvinessVar', label: 'Curviness variation %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'spacing', label: 'Spacing', def: 5, min: .1, max: 100, dec: 1 },
+      { id: 'spacingVar', label: 'Spacing variation %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'overlap', label: 'Path overlap %', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'overlapVar', label: 'Path overlap variation %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'start', label: 'Start %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'end', label: 'End %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'applyTo', label: 'Start/End apply to', type: 'pick', def: 0, opts: [[0, 'All strokes'], [1, 'Each stroke']] },
+      { id: 'wiggle', label: 'Wiggle type', type: 'pick', def: 1, opts: [[0, 'Static'], [1, 'Jumpy'], [2, 'Smooth']] },
+      { id: 'wps', label: 'Wiggles/second', def: 5, min: 0, max: 100, dec: 2, show: f => +(f.wiggle ?? 1) > 0 },
+      { id: 'seed', label: 'Random seed', def: 1, min: 0, max: 10000, dec: 0 },
+      { id: 'composite', label: 'Composite', type: 'pick', def: 1, opts: [[0, 'On original image'], [1, 'On transparent'], [2, 'Reveal original image']] }],
+    // fills the layer's mask; without one the layer is cleared (On transparent) or left alone
+    run(E, img, q) { const plan = fxScribblePlan(E, q); return plan ? fxPaint(E, img, plan) : q('composite') === 1 ? E.clear(img) : img; } },
+  vegas: { name: 'Vegas', cat: 'Generate', clip: true, kernels: GEN2_PAINT_K, params: [
+      { id: 'stroke', label: 'Stroke', type: 'pick', def: 0, opts: [[0, 'Image contours'], [1, 'Mask']] },
+      { ...fxLayerPick('inputLayer', 'Input layer'), show: f => !+(f.stroke ?? 0) },
+      { id: 'invertInput', label: 'Invert input', type: 'check', def: false, show: f => !+(f.stroke ?? 0) },
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, opts: [[0, 'Intensity'], [1, 'Red'], [2, 'Green'], [3, 'Blue'], [4, 'Alpha']], show: f => !+(f.stroke ?? 0) },
+      { id: 'threshold', label: 'Threshold %', def: 50, min: 0, max: 100, dec: 1, show: f => !+(f.stroke ?? 0) },
+      { id: 'preBlur', label: 'Pre-blur', def: 1, min: 0, max: 100, dec: 1, show: f => !+(f.stroke ?? 0) },
+      { id: 'tolerance', label: 'Tolerance', def: .01, min: 0, max: 1, dec: 3, show: f => !+(f.stroke ?? 0) },
+      { id: 'renderMode', label: 'Render', type: 'pick', def: 0, opts: [[0, 'All contours'], [1, 'Selected contour']], show: f => !+(f.stroke ?? 0) },
+      { id: 'selected', label: 'Selected contour', def: 1, min: 1, max: 1000, dec: 0, show: f => !+(f.stroke ?? 0) && +(f.renderMode ?? 0) === 1 },
+      { id: 'shorter', label: 'Shorter contours have', type: 'pick', def: 0, opts: [[0, 'Same number of segments'], [1, 'Fewer segments']], show: f => !+(f.stroke ?? 0) },
+      { id: 'segments', label: 'Segments', def: 32, min: 1, max: 1000, dec: 0 },
+      { id: 'length', label: 'Segment length', def: .5, min: 0, max: 1, dec: 3 },
+      { id: 'distribution', label: 'Segment distribution', type: 'pick', def: 0, opts: [[0, 'Bunched'], [1, 'Even']] },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -36000, max: 36000, dec: 1 },
+      { id: 'randomPhase', label: 'Random phase', type: 'check', def: false },
+      { id: 'seed', label: 'Random seed', def: 1, min: 1, max: 10000, dec: 0 },
+      { id: 'blendMode', label: 'Blend mode', type: 'pick', def: 1, opts: [[0, 'Transparent'], [1, 'Over'], [2, 'Under'], [3, 'Stencil']] },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'width', label: 'Width', def: 2, min: 0, max: 100, dec: 2 },
+      { id: 'hardness', label: 'Hardness', def: .5, min: 0, max: 1, dec: 3 },
+      { id: 'startOpacity', label: 'Start opacity', def: 1, min: 0, max: 1, dec: 3 },
+      { id: 'midOpacity', label: 'Mid-point opacity', def: .5, min: 0, max: 1, dec: 3 },
+      { id: 'midPos', label: 'Mid-point position', def: .5, min: 0, max: 1, dec: 3 },
+      { id: 'endOpacity', label: 'End opacity', def: 0, min: 0, max: 1, dec: 3 }],
+    run(E, img, q) { return fxPaint(E, img, fxVegasPlan(E, img, q)); } },
+  writeon: { name: 'Write-on', cat: 'Generate', clip: true, kernels: GEN2_PAINT_K, params: [
+      { id: 'brushPosition', label: 'Brush position (keyframe it)', type: 'pt', def: [.5, .5] },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'brushSize', label: 'Brush size', def: 6, min: 0, max: 50, dec: 1 },
+      { id: 'brushHardness', label: 'Brush hardness %', def: 75, min: 0, max: 100, dec: 1 },
+      { id: 'brushOpacity', label: 'Brush opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'strokeLength', label: 'Stroke length (secs)', def: 0, min: 0, max: 30, dec: 1 },
+      { id: 'brushSpacing', label: 'Brush spacing (secs)', def: .001, min: .001, max: 5, dec: 3 },
+      { id: 'paintTime', label: 'Paint time properties', type: 'pick', def: 0, opts: [[0, 'None'], [1, 'Opacity'], [2, 'Color']] },
+      { id: 'brushTime', label: 'Brush time properties', type: 'pick', def: 0, opts: [[0, 'None'], [1, 'Size'], [2, 'Hardness'], [3, 'Size & hardness']] },
+      { id: 'paintStyle', label: 'Paint style', type: 'pick', def: 0, opts: [[0, 'On original image'], [1, 'On transparent'], [2, 'Reveal original image']] }],
+    run(E, img, q) { return fxPaint(E, img, fxWriteOnPlan(E, q)); } },
+  paintbucket: { name: 'Paint Bucket', cat: 'Generate', clip: true,
+    kernels: [['fx_gen2', 'fg2_bucket'], ['fx_gen2', 'fg2_bucket_cov'], ['fx_pixel2', 'fp2_box'], ['fx_noise', 'fxn_morph'], ['lumina_key', 'lk_mix']], params: [
+      { id: 'fillPoint', label: 'Fill point', type: 'pt', def: [.5, .5] },
+      { id: 'fillSelector', label: 'Fill selector', type: 'pick', def: 0, opts: [[0, 'Color & alpha'], [1, 'Straight color'], [2, 'Transparency'], [3, 'Opacity'], [4, 'Alpha channel']] },
+      { id: 'tolerance', label: 'Tolerance', def: 10, min: 0, max: 255, dec: 1 },
+      { id: 'viewThreshold', label: 'View threshold', type: 'check', def: false },
+      { id: 'stroke', label: 'Stroke', type: 'pick', def: 0, opts: [[0, 'Antialias'], [1, 'Feather'], [2, 'Spread'], [3, 'Choke'], [4, 'Stroke']] },
+      { id: 'featherSoftness', label: 'Feather softness', def: 10, min: 0, max: 100, dec: 1, show: f => +(f.stroke ?? 0) === 1 },
+      { id: 'spreadRadius', label: 'Spread radius', def: 3, min: 0, max: 100, dec: 1, show: f => [2, 3].includes(+(f.stroke ?? 0)) },
+      { id: 'strokeWidth', label: 'Stroke width', def: 2, min: 0, max: 100, dec: 1, show: f => +(f.stroke ?? 0) === 4 },
+      { id: 'color', label: 'Color', type: 'color', def: '#ff0000' },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Blending mode', type: 'pick', def: 0, opts: [[0, 'Normal'], [1, 'Add'], [2, 'Multiply'], [3, 'Screen'], [4, 'Hue'], [5, 'Saturation'], [6, 'Color'], [7, 'Luminosity'], [8, 'Behind'], [9, 'Fill only']] }],
+    run(E, img, q) {
+      const { reg, w, h } = fxBucketRegion(E, img, q), region = E.texFrom(reg, w, h), sc = E.px(1), cov = (mode, x, y) => E.run('fx_gen2', 'fg2_bucket_cov', fxP({ 0: [mode, 0, 0, 0] }), x, y);
+      if (q('viewThreshold')) return cov(1, region, region);
+      const st = q('stroke'); let c;
+      if (st === 1) { const s = q('featherSoftness') * sc * .5; c = s > .05 ? fxGaussPlane(E, region, s, s) : region; }
+      else if (st === 2) c = fxMorphFrac(E, region, q('spreadRadius') * sc, true, DILATE_X);
+      else if (st === 3) c = fxMorphFrac(E, region, q('spreadRadius') * sc, false, ERODE_X);
+      else if (st === 4) { const r = q('strokeWidth') * sc * .5; c = cov(2, fxMorphFrac(E, region, r, true, DILATE_X), fxMorphFrac(E, region, r, false, ERODE_X)); }
+      else c = cov(0, region, fxGaussPlane(E, region, .5, .5));
+      return E.run('fx_gen2', 'fg2_bucket', fxP({ 0: [q('mode'), 0, 0, 0] }, { 0: [...q('color'), 1], 1: [q('opacity') / 100, 0, 0, 0] }), img, c);
+    } },
+  eyedropperfill: { name: 'Eyedropper Fill', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_eyedropper']], params: [
+      { id: 'samplePoint', label: 'Sample point', type: 'pt', def: [.5, .5] },
+      { id: 'sampleRadius', label: 'Sample radius', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'average', label: 'Average pixel colors', type: 'pick', def: 0, opts: [[0, 'Skip empty'], [1, 'All'], [2, 'All premultiplied'], [3, 'Including alpha']] },
+      { id: 'keepAlpha', label: 'Maintain original alpha', type: 'check', def: false },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) { return E.run('fx_gen2', 'fg2_eyedropper', fxP({ 0: [q('keepAlpha'), 0, 0, 0] }, { 0: fxEyedropColor(E, img, q), 1: [q('blend') / 100, 0, 0, 0] }), img); } },
+  radiowaves: { name: 'Radio Waves', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_radio']], params: [
+      { id: 'producer', label: 'Producer point', type: 'pt', def: [.5, .5] },
+      { id: 'setAt', label: 'Parameters are set at', type: 'pick', def: 1, opts: [[0, 'Birth'], [1, 'Each frame']] },
+      { id: 'quality', label: 'Render quality', def: 4, min: 1, max: 10, dec: 0 },
+      { id: 'waveType', label: 'Wave type', type: 'pick', def: 0, opts: [[0, 'Polygon'], [1, 'Image contours'], [2, 'Mask']] },
+      { id: 'sides', label: 'Sides', def: 64, min: 3, max: 64, dec: 0, show: f => !+(f.waveType ?? 0) },
+      { id: 'star', label: 'Star', type: 'check', def: false, show: f => !+(f.waveType ?? 0) },
+      { id: 'starDepth', label: 'Star depth', def: -.3, min: -1, max: 1, dec: 2, show: f => !+(f.waveType ?? 0) && !!f.star },
+      { ...fxLayerPick('sourceLayer', 'Source layer'), show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'sourceCenter', label: 'Source center', type: 'pt', def: [.5, .5], show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'valueChannel', label: 'Value channel', type: 'pick', def: 4, opts: [[0, 'Red'], [1, 'Green'], [2, 'Blue'], [3, 'Alpha'], [4, 'Luminance'], [5, 'Hue'], [6, 'Lightness'], [7, 'Saturation']], show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'invertInput', label: 'Invert input', type: 'check', def: false, show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'valueThreshold', label: 'Value threshold', def: 128, min: 0, max: 255, dec: 0, show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'preBlur', label: 'Pre-blur', def: 1, min: 0, max: 100, dec: 1, show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'tolerance', label: 'Tolerance', def: 1, min: 0, max: 100, dec: 1, show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'contour', label: 'Contour (0 = all)', def: 0, min: 0, max: 100, dec: 0, show: f => +(f.waveType ?? 0) === 1 },
+      { id: 'frequency', label: 'Frequency (waves/sec)', def: 1, min: .01, max: 100, dec: 2 },
+      { id: 'expansion', label: 'Expansion', def: 100, min: 0, max: 10000, dec: 1 },
+      { id: 'orientation', label: 'Orientation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'direction', label: 'Direction°', def: 90, min: -3600, max: 3600, dec: 1 },
+      { id: 'velocity', label: 'Velocity', def: 0, min: 0, max: 10000, dec: 1 },
+      { id: 'spin', label: 'Spin°/sec', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'lifespan', label: 'Lifespan (sec)', def: 2, min: .01, max: 100, dec: 2 },
+      { id: 'reflection', label: 'Reflection', type: 'check', def: false },
+      { id: 'profile', label: 'Profile', type: 'pick', def: 0, opts: [[0, 'Square'], [1, 'Taper front'], [2, 'Taper back'], [3, 'Taper both'], [4, 'Sine'], [5, 'Sawtooth out'], [6, 'Sawtooth in']] },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'fadeIn', label: 'Fade-in time', def: 0, min: 0, max: 100, dec: 2 },
+      { id: 'fadeOut', label: 'Fade-out time', def: 0, min: 0, max: 100, dec: 2 },
+      { id: 'startWidth', label: 'Start width', def: 5, min: 0, max: 1000, dec: 1 },
+      { id: 'endWidth', label: 'End width', def: 5, min: 0, max: 1000, dec: 1 }],
+    run(E, img, q) {
+      const P = fxRadioPlan(E, img, q); if (!P) return img;
+      const n = P.waves.length, d = [], ol = [];
+      for (const w of P.waves) {
+        let off = 0, cnt = 0;
+        if (w.outline) { off = n * 13 + ol.length; for (const [x, y] of w.outline) ol.push(x, y); cnt = w.outline.length; }
+        d.push(w.cx, w.cy, w.radius, w.hw, w.rot, w.fade, ...w.color, 1, w.op, off, cnt);
+      }
+      const f0 = [P.aa, 0, 0, 0]; let aux = null;
+      if (P.contour) {
+        const c = P.contour; aux = E.texFrom(c.sdf, c.w, c.h); f0[1] = c.anchor[0]; f0[2] = c.anchor[1];
+      }
+      return E.run('fx_gen2', 'fg2_radio', fxP({ 0: [n, P.contour ? 1 : 0, P.profile, 0] }, { 0: f0 }), img, aux, null, E.data(new Float32Array([...d, ...ol, 0])));
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's
