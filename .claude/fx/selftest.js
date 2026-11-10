@@ -1016,7 +1016,7 @@
         works: cl(biAbove, W3) && cl(grMid, W3) && cl(grGap, z) && cl(grMid2, W3) && cl(slA, z) && cl(slB, W3) && cl(slFloor, P0(K.WHT, 1078)) && cl(tiW, W3) && cl(tiB, BLUE, 3)
           && cl(spGap, z) && cl(spFar, P0(K.BLK, 100)) && ppSame <= 2 && cl(ppL, W3) && cl(ppR, z) && ppBil > 1000 && cl(ptTL, W3) && ptN > 20000 && lum(blW) > 100 && blG[0] + blG[1] + blG[2] < 60 });
       const menuD = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Distort');
-      step('distortMenu15', { count: menuD?.children.length, works: menuD?.children.length === 28 });
+      step('distortMenu15', { count: menuD?.children.length, works: menuD?.children.length >= 28 });
     }
     const r15speed = {};
     for (const id of ['ccbendit', 'ccbender', 'ccblobbylize', 'ccflomotion', 'ccgriddler', 'ccpageturn', 'ccripplepulse', 'ccslant', 'ccsmear', 'ccsplit', 'ccsplit2', 'cctiler', 'ccpowerpin']) {
@@ -1024,6 +1024,46 @@
       const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r15speed[id] = +((performance.now() - t0) / 10).toFixed(1);
     }
     step('round15speed', r15speed);
+
+    // ---- Round 16: Distort III (warps). Same patches
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0], W3 = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const changed = () => diff(plain, frame()).changed, same = () => diff(plain, frame()).max, RED = P0(K.RED, K.Y);
+      const R = {};
+      for (const [id, fam, entry, off] of [['warp', 'fx_warp', 'fxw_warp', { bend: 0 }], ['displacement', 'fx_distort', 'dst_displace', { maxH: 0, maxV: 0 }], ['twirllegacy', 'fx_stylize', 'fxs_warp', { angle: 0 }],
+        ['upscale', 'kernels', 'warp_blend', { scale: 100 }]]) {
+        f = await only(id); { const e = await kerr(fam, entry); if (e) step(id + 'Kernel', e); }
+        draw(); const on = changed(); for (const k in off) set(f, k, off[k]); draw(); R[id] = { changed: on, offMax: same() };
+      }
+      step('warpMoves', { ...R, works: Object.values(R).every(r => r.changed > 1000 && r.offMax <= 2) });
+      // Bezier Warp: the defaults change nothing; the right edge (vertices and tangents) at the middle, with straight top and
+      // bottom edges, squeezes the layer into the left half
+      f = await only('bezierwarp'); { const e = await kerr('fx_distort', 'dst_mesh'); if (e) step('meshKernel', e); }
+      draw(); const bzSame = same();
+      for (const k of ['rtV', 'rtT', 'rbT', 'brV']) set(f, k + 'X', .5);
+      for (const [k, v] of [['tlT', 1 / 6], ['trT', 1 / 3], ['blT', 1 / 6], ['brT', 1 / 3]]) set(f, k + 'X', v);
+      draw(); const bzL = px(240, K.Y), bzR = px(K.BLU, K.Y);
+      // Mesh Warp, one cell: the two right corners moved 960 px left does the same
+      f = await only('meshwarp'); set(f, 'rows', 1); set(f, 'columns', 1); draw(); const mwFlat = same();
+      f.mesh = '0,0 -960,0 0,0 -960,0'; draw(); const mwL = px(240, K.Y), mwR = px(K.BLU, K.Y);
+      // Displacement Map with a hidden white ellipse as the map: white means the full push, so the card moves
+      f = await only('displacement'); addShape('ellipse'); const DM = selLayer(); Object.assign(DM, { fill: '#ffffff', visible: false, start: 0, dur: 6 }); f.layer = DM.id; set(f, 'maxH', 40);
+      draw(); const dmLayer = changed(); S.layers = S.layers.filter(x => x !== DM); f.layer = 0; S.sel = L.id;
+      // Detail-preserving Upscale 200% (no extra detail): 720,270 shows what was at 840,405 (red)
+      f = await only('upscale'); set(f, 'detail', 0); draw(); const upA = px(720, K.Y); set(f, 'detail', 50); draw(); const upD = px(720, K.Y);
+      step('warpDetails', { bezierSame: bzSame, bezierLeft: bzL.join(), bezierRight: bzR.join(), meshFlat: mwFlat, meshLeft: mwL.join(), meshRight: mwR.join(), displaceByLayer: dmLayer, upscale: upA.join(), upscaleDetail: upD.join(),
+        works: bzSame <= 2 && cl(bzL, W3) && cl(bzR, z) && mwFlat <= 2 && cl(mwL, W3) && cl(mwR, z) && dmLayer > 1000 && cl(upA, RED, 3) && cl(upD, RED, 6) });
+      const menuD = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Distort');
+      step('distortMenu16', { count: menuD?.children.length, works: menuD?.children.length === 34 });
+    }
+    const r16speed = {};
+    for (const [id, vals] of [['warp', {}], ['bezierwarp', { rtVX: .8, brVY: .9 }], ['meshwarp', {}], ['displacement', { maxH: 20, maxV: 20 }], ['twirllegacy', {}], ['upscale', {}]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); if (id === 'meshwarp') { set(g, 'rows', 2); set(g, 'columns', 2); g.mesh = '0,0 0,0 0,0 0,0 60,40 0,0 0,0 0,0 0,0'; }
+      draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r16speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round16speed', r16speed);
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');

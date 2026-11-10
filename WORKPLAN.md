@@ -44,7 +44,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 13 ✅ | Blur & Sharpen rest | Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross/Radial/Radial Fast/Vector Blur, Reduce Flicker (Camera-Shake Deblur moved to 25) |
 | 14 ✅ | Distort I | Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation (Smear moved to 16) |
 | 15 ✅ | Distort II (CC) | CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, CC Smear, Split, Split 2, Tiler, Power Pin |
-| 16 | Distort III (warps) | Bezier Warp, Mesh Warp, Warp, Reshape, Smear, Twirl (legacy), Rolling Shutter Repair, Upscale, Displacement Map* |
+| 16 ✅ | Distort III (warps) | Bezier Warp, Mesh Warp, Warp, Twirl (legacy), Upscale, Displacement Map (Reshape and Smear moved to Masks II, Rolling Shutter Repair to 25) |
 | 17 | Stylize I | Brush Strokes, Cartoon, Color Emboss, Roughen Edges, Scatter, Texturize, CC Threshold, CC Threshold RGB |
 | 18 | Stylize II (CC) | CC Block Load, Burn Film, Glass, HexTile, Kaleida, Mr. Smoothie, Plastic, RepeTile |
 | 19 | Generate I (shapes & fills) | Fill, Circle, Ellipse, Checkerboard, Cell Pattern, Stroke, Write-on, Scribble, Vegas, Paint Bucket, Eyedropper Fill, Radio Waves |
@@ -53,7 +53,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 22 | Perspective | Drop Shadow, Radial Shadow, Bevel Alpha, Bevel Edges, 3D Glasses, CC Cylinder, CC Sphere, CC Spotlight, CC Environment |
 | 23 | Transitions | Block Dissolve, Card Wipe, Gradient Wipe*, Iris/Linear/Radial Wipe, Venetian Blinds, CC Glass/Grid/Image/Light/Radial Scale/Scale Wipe, CC Jaws, Line Sweep, Twister, WarpoMatic |
 | 24 | Channel* | Arithmetic, Blend, Calculations, CC Composite, Channel Combiner, Compound Arithmetic, Invert, Minimax, Remove Color Matting, Set Channels, Set Matte, Shift Channels, Solid Composite |
-| 25 | Time* | Echo, Posterize Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time, Camera-Shake Deblur |
+| 25 | Time* | Echo, Posterize Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time, Camera-Shake Deblur, Rolling Shutter Repair |
 | 26–28 | Simulation | Particles (CC Particle World, Particle Systems II, Particle Playground), weather (Rainfall, Snowfall, Drizzle, Bubbles), Shatter, Card Dance, Caustics, Foam, Wave World, Ball Action, Hair, Mr. Mercury, Pixel Polly, Scatterize, Star Burst |
 | 29 | Utility & Text | Apply LUT, Cineon, Color Profile Converter, HDR Compander/Compression, CC Overbrights, Grow Bounds, Numbers, Timecode |
 | 30 | Audio-driven | Audio Spectrum, Audio Waveform |
@@ -69,7 +69,8 @@ Every round: port → self-tests on known colour patches → speed check → eff
 ## 2. Lumina roadmap
 
 Follow `ROADMAP.md`, which now uses the same order: EffectCraft, then PhotoCraft, then Claude's own additions.
-Stage 1 (precomps, blend modes, track mattes, parenting) is built during EffectCraft, just before the first starred
+(2026-11-10, the user chose: Round 16's effects first; parenting and precomps stay in After Effects Round A1. Blend modes
+and track mattes were already there.) Stage 1 (precomps, blend modes, track mattes, parenting) was planned during EffectCraft, just before the first starred
 effect (Displacement Map, Round 16). The other stages (graph editor, motion blur, pen masks/roto) come in step 4.
 
 ---
