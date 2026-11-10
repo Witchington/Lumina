@@ -49,7 +49,7 @@
     const o = id => off.replies.find(r => r.id === id);
     step('mcpOff', {
       initialize: o(1)?.result?.serverInfo?.name === 'lumina' && o(1).result.protocolVersion === '2025-06-18' && !!o(1).result.capabilities?.tools,
-      tools: (o(2)?.result?.tools || []).map(t => t.name).join(), allReadOnly: (o(2)?.result?.tools || []).every(t => t.annotations?.readOnlyHint === true),
+      tools: (o(2)?.result?.tools || []).map(t => t.name).join(), allReadOnly: (o(2)?.result?.tools || []).filter(t => ['get_project', 'get_layer', 'list_effects', 'snapshot'].includes(t.name)).every(t => t.annotations?.readOnlyHint === true),
       saysTurnOn: o(3)?.result?.isError === true && /Allow Claude to control Lumina/.test(o(3).result.content[0].text),
       onlyJsonOut: off.replies.every(r => !r.notJson), stderr: off.stderr
     });
@@ -132,9 +132,73 @@
     const tOn = await lumina.claudeTest();
     $('#ccTestBtn').click(); for (let i = 0; i < 50 && !/Working|can't|didn't/.test($('#ccTest').textContent); i++) await new Promise(r => setTimeout(r, 200));
     const shown = $('#ccTest').textContent; $('#mOk').click(); await setClaude(false);
-    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 4 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
+    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 19 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
       buttonSaysWorking: /Working/.test(shown), shown, closed: $('#modal').hidden });
     await TF({ name: 'claude-desktop', remove: true }); await TF({ name: 'claude-code.json', remove: true });
+
+    // ---- 8. M2 editing: each tool does its job, is exactly one undo step, and says why when it can't
+    S.layers = []; for (const k in RT) delete RT[k]; clearMulti(); S.global.bg = 'black'; seek(0); undoStack.length = 0; redoStack.length = 0; commit(); refresh();
+    const C = (n, a) => LuminaAPI.call(n, a);
+    const one = async (n, a) => { const u = undoStack.length, r = await C(n, a); return { ...r, steps: undoStack.length - u }; };
+    const sk = await one('seek', { time: 1 });
+    const tx = await one('add_text', { text: 'Hi there', start: 2, duration: 4, x: .3, color: '#ff0000', animation: 'fade' });
+    const TL = byId(tx.result?.id);
+    const sh = await one('add_shape', { shape: 'heart', fill: '#00ff00', w: 300, h: 280 });
+    const SL = byId(sh.result?.id);
+    const so = await one('add_solid', { color: '#2040ff', start: 0, duration: 8 });
+    const OL = byId(so.result?.id);
+    step('add', { seek: sk.ok && S.time === 1 && sk.steps === 0,
+      text: tx.ok && TL?.text === 'Hi there' && TL.start === 2 && TL.dur === 4 && TL.p.x === .3 && TL.color === '#ff0000' && TL.anim === 'fade' && tx.steps === 1,
+      shape: sh.ok && SL?.shape === 'heart' && SL.fill === '#00ff00' && SL.p.w === 300 && SL.start === 1 && sh.steps === 1,
+      solid: so.ok && OL?.fill === '#2040ff' && OL.p.w === W() && OL.p.h === H() && OL.dur === 8 && so.steps === 1,
+      badShape: !(await C('add_shape', { shape: 'dragon' })).ok, badColor: /colour like/.test((await C('add_solid', { color: 'blue' })).error) });
+    // properties and keyframes
+    const p1 = await one('set_property', { id: TL.id, property: 'scale', value: 1.5 }), p2 = await one('set_property', { id: TL.id, property: 'text', value: 'Changed' });
+    const p3 = await C('set_property', { id: TL.id, property: 'evil', value: 1 }), p4 = await C('set_property', { id: TL.id, property: 'opacity', value: 'lots' });
+    const p5 = await C('set_property', { id: TL.id, property: 'visible', value: 'yes' });
+    const k1 = await one('set_keyframe', { id: OL.id, property: 'opacity', time: 1, value: 0, ease: 'linear' }), k2 = await one('set_keyframe', { id: OL.id, property: 'opacity', time: 3, value: 1 });
+    const mid = val(OL, 'opacity', 2), k3 = await one('set_keyframe', { id: OL.id, property: 'opacity', time: 3, remove: true });
+    const k4 = await C('set_keyframe', { id: OL.id, property: 'opacity', time: 5, remove: true });
+    seek(1); const p6 = await one('set_property', { id: OL.id, property: 'opacity', value: .4 });
+    step('props', { scale: p1.ok && TL.p.scale === 1.5 && p1.steps === 1, text: p2.ok && TL.text === 'Changed' && p2.steps === 1,
+      unknownRefused: !p3.ok && /can't be set/.test(p3.error), notANumber: !p4.ok && /must be a number/.test(p4.error), notABool: !p5.ok && /true or false/.test(p5.error),
+      keys: k1.ok && k2.ok && OL.keys.opacity?.length === 1 && k1.steps === 1 && k2.steps === 1, midway: Math.abs(mid - .5) < 1e-6,
+      removed: k3.ok && k3.steps === 1, noKeyThere: !k4.ok && /no opacity keyframe/.test(k4.error),
+      setOnKeyed: p6.ok && p6.result.keyframed === true && OL.keys.opacity[0].v === .4 });
+    // moving, trimming, splitting
+    const m1 = await one('move', { id: TL.id, start: 3, order: S.layers.length - 1 }), mv = { start: TL.start, last: S.layers.at(-1) === TL };
+    const t1 = await one('trim', { id: TL.id, start: 3.5, end: 6 }), tr = { start: TL.start, end: endOf(TL) };
+    const s1 = await one('split', { id: TL.id, time: 5 }), B2 = byId(s1.result?.second), s2 = await C('split', { id: TL.id, time: 99 });
+    step('timing', { move: m1.ok && mv.start === 3 && mv.last && m1.steps === 1,
+      trim: t1.ok && Math.abs(tr.start - 3.5) < 1e-6 && Math.abs(tr.end - 6) < 1e-6 && t1.steps === 1,
+      split: s1.ok && !!B2 && Math.abs(endOf(TL) - 5) < 1e-6 && Math.abs(B2.start - 5) < 1e-6 && Math.abs(endOf(B2) - 6) < 1e-6 && s1.steps === 1,
+      outside: !s2.ok && /not inside/.test(s2.error) });
+    // effects
+    const e1 = await one('add_effect', { id: SL.id, effect: 'brightness' }), e1fx = SL.fx?.[0]?.id, e2 = await one('set_effect', { id: SL.id, index: 0, settings: { brightness: 30, legacy: true } });
+    const e3 = await C('set_effect', { id: SL.id, index: 0, settings: { sparkle: 1 } }), e4 = await C('set_effect', { id: SL.id, index: 5, settings: {} });
+    const e5 = await one('set_effect', { id: SL.id, index: 0, on: false }), e6 = await C('add_effect', { id: SL.id, effect: 'nope' });
+    const e7 = await one('remove_effect', { id: SL.id, index: 0 });
+    step('effects', { add: e1.ok && e1fx === 'brightness' && e1.steps === 1,
+      set: e2.ok && e2.result.settings.brightness === 30 && e2.result.settings.legacy === true && e2.steps === 1, badSetting: !e3.ok && /no setting "sparkle"/.test(e3.error),
+      badIndex: !e4.ok && /no effect at index 5/.test(e4.error), off: e5.ok && e5.result.on === false, badEffect: !e6.ok, remove: e7.ok && !(SL.fx || []).length && e7.steps === 1 });
+    // locked layers, delete, undo / redo
+    SL.locked = true; const lk = await C('move', { id: SL.id, start: 0 }); SL.locked = false;
+    const n0 = S.layers.length, d1 = await one('delete_layer', { id: OL.id }), gone = !byId(OL.id);
+    const u1 = await C('undo', {}), back = !!byId(OL.id), r1 = await C('redo', {}), again = !byId(OL.id);
+    step('deleteUndo', { locked: !lk.ok && /locked/.test(lk.error), deleted: d1.ok && gone && S.layers.length === n0 - 1 && d1.steps === 1,
+      undo: u1.ok && u1.result.undone && back, redo: r1.ok && r1.result.redone && again });
+    // through Claude's own path: the 19 tools, an edit, and a look at the result
+    await setClaude(true);
+    const m2 = await lumina.claudeProbe({ want: 4, lines: [init, { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'add_solid', arguments: { color: '#ff0000', start: 0, duration: 5 } } },
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'snapshot', arguments: { time: 2.5, max_width: 160 } } }] });
+    await setClaude(false);
+    const b = id => m2.replies.find(r => r.id === id), names = (b(2)?.result?.tools || []).map(t => t.name);
+    const img2 = b(4)?.result?.content?.find(c => c.type === 'image'); let red = null;
+    if (img2) { const im = new Image(); im.src = 'data:image/png;base64,' + img2.data; await im.decode(); const c2 = document.createElement('canvas'); c2.width = im.width; c2.height = im.height; const x2 = c2.getContext('2d'); x2.drawImage(im, 0, 0); red = [...x2.getImageData(4, 4, 1, 1).data].slice(0, 3); }
+    step('viaClaude', { tools: names.length === 19, toolNames: names.join(), editTools: names.includes('set_keyframe') && names.includes('undo'),
+      editsMarked: (b(2)?.result?.tools || []).filter(t => t.annotations?.readOnlyHint === false).length === 15,
+      added: !b(3)?.result?.isError, redFrame: !!red && red[0] > 200 && red[1] < 40 && red[2] < 40, red });
 
     const flat = []; (function walk(o, p) { for (const [k, v] of Object.entries(o)) { if (v === false) flat.push(p + k); else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, p + k + '.'); } })(R.steps, '');
     R.falses = flat;

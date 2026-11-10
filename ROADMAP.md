@@ -7,7 +7,7 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M2 (editing tools); ask the user which
+## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M3 (media); ask the user which
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
@@ -74,7 +74,7 @@ The beginner layout, for reference:
 - **B4 Welcome + tips (done):** first-run welcome (new, open, sizes like YouTube / TikTok / Square) and one-time tips pointing at
   key features, which can be turned off.
 
-### Claude control (MCP), asked for by the user 2026-11-08: M1 done 2026-11-09, M2 next
+### Claude control (MCP), asked for by the user 2026-11-08: M1, M1b and M2 done 2026-11-09, M3 (media) next
 Goal: Claude edits a project in the running Lumina through tools (add clips, text, effects, keyframes, look at frames,
 export) instead of only writing Lumina's code.
 
@@ -140,7 +140,22 @@ export) instead of only writing Lumina's code.
     pretend Claude settings folder, answer the question, check the file.
   - **Tests:** steps `connect` and `window` in `.claude\mcp`, using pretend settings files in the test folder.
   - **Keep in mind:** if Electron fuses are ever turned on, leave RunAsNode on, or friends' connections break.
-- **M2 Editing:** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
+- **M2 Editing: done 2026-11-09.** Fifteen editing tools:
+  - Adding: `seek`, `add_text`, `add_shape`, `add_solid` (a frame-sized rectangle shape layer).
+  - Changing: `set_property` (numbers in `L.p` through `setProp`, so a keyframed property gets a key at the playhead, plus
+    the text/colour/on-off fields in `API_FIELDS`), `set_keyframe` (with `ease`, or `remove`).
+  - Timing: `move` (start and/or layer order; a linked clip moves too), `trim` (the timeline's own `trimHead` / `trimEnd`,
+    with the linked clip), `split` (`splitAt`), `delete_layer`.
+  - Effects and history: `add_effect`, `set_effect` (numbers, points, checks, colours, text and picks; curves are refused
+    for now), `remove_effect`, `undo` / `redo`.
+  - **How it works:** `apiStep` folds everything a tool did into **one undo step**, then refreshes, so the user sees each
+    change happen. Every input is checked, and a bad one comes back with what to send instead. Locked layers are refused.
+  - In mcp.js the edit tools have `readOnlyHint: false`, and delete/remove are marked destructive.
+  - Lumina's wording now says Claude can look and edit, and every change can be undone with Ctrl+Z.
+  - **Tests:** mcp-suite steps `add`, `props`, `timing`, `effects`, `deleteUndo` and `viaClaude` (19 tools; an edit made
+    through mcp.js shows up red in a snapshot).
+  - **Not tested here:** trimming a video clip (it uses the same functions the timeline suite tests).
+- **M2 Editing (the plan):** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
   `delete_layer`, `add_effect`, `set_effect`, `undo` / `redo`.
 - **M3 Media:** `import_media` (a file path), `place_media` on the timeline, captions, `optimize`.
 - **M4 Output + Image mode:** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.

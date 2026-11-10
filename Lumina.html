@@ -8404,17 +8404,17 @@ document.addEventListener('keydown', e => { if (e.key === 'F11') { e.preventDefa
 
 // ---------- Claude control (MCP step M1) ----------
 // Edit › Allow Claude to control Lumina turns on a door in main.js (127.0.0.1 only, with a key). Claude's MCP server
-// (electron/mcp.js) calls LuminaAPI.call(name, args) through it. M1's tools only look; nothing here changes the project.
+// (electron/mcp.js) calls LuminaAPI.call(name, args) through it. M1's tools only look; M2's (below) edit, one undo step each.
 let CLAUDE_ON = false, claudeLightT = 0;
 function claudeLight(busy) {
   const el = $('#claudeLight'); if (!el) return;
   el.hidden = !CLAUDE_ON; el.classList.toggle('busy', !!busy);
-  el.title = busy ? 'Claude is looking at this project right now' : 'Claude may control Lumina (Edit › Allow Claude to control Lumina)';
+  el.title = busy ? 'Claude is working in this project right now' : 'Claude may control Lumina (Edit › Allow Claude to control Lumina)';
 }
 async function setClaude(on) {
   try { CLAUDE_ON = !!(await lumina.claudeSet(!!on)).enabled; } catch (e) { toast('Could not change Claude control: ' + (e.message || e)); }
   claudeLight();
-  notice(CLAUDE_ON ? 'Claude can now look at Lumina. Only Claude on this computer can connect, with Lumina\'s own key.' : 'Claude control is off. Nothing can connect to Lumina.');
+  notice(CLAUDE_ON ? 'Claude can now work in Lumina. Only Claude on this computer can connect, with Lumina\'s own key, and every change it makes can be undone with Ctrl+Z.' : 'Claude control is off. Nothing can connect to Lumina.');
   if (!$('#modal').hidden && $('#ccBox')) claudeBox();
 }
 // Help › Connect Claude… (M1b): everything a friend needs to let their Claude reach their Lumina, in one window
@@ -8428,7 +8428,7 @@ async function claudeBox(testResult) {
   const sec = (n, title, body) => `<div style="margin:0 0 14px"><b>${n}. ${title}</b><div style="margin:4px 0 0 18px">${body}</div></div>`;
   $('#mTitle').textContent = 'Connect Claude'; $('#mBarWrap').hidden = true;
   $('#mText').innerHTML = `<div id="ccBox" style="text-align:left;max-width:640px">
-    <p style="margin:0 0 12px">Let Claude look at the project open in Lumina. Claude can only connect from <b>this computer</b>, with Lumina's own key, and for now it can only look, not change anything.</p>
+    <p style="margin:0 0 12px">Let Claude look at and edit the project open in Lumina. Claude can only connect from <b>this computer</b>, with Lumina's own key. You see every change as it happens, and each one can be undone with Ctrl+Z.</p>
     ${sec(1, 'Turn it on', `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ccOn" ${I.enabled ? 'checked' : ''}> Allow Claude to control Lumina</label>
       <small style="opacity:.75">Also in Edit. While it's on, the Claude light shows in the menu bar.</small>`)}
     ${sec(2, 'The Claude app', `<div id="ccApp">${esc(appState)}</div>
@@ -8522,8 +8522,163 @@ const API_TOOLS = {
     return { time: apiNum(t), width: c.width, height: c.height, projectSize: [W(), H()], __image: { data, mimeType: 'image/png' } };
   }
 };
+// ---------- M2: editing tools. Each call is one Ctrl+Z, and the user sees it happen. ----------
+// apiStep runs a change, then folds every undo entry it made into one
+function apiStep(fn) {
+  const n = undoStack.length, out = fn();
+  undoStack.length = Math.min(undoStack.length, n); commit(); refresh(); drawOverlay();
+  return out;
+}
+const apiNumber = (v, what) => { const n = +v; if (v === null || v === '' || typeof v === 'boolean' || !isFinite(n)) throw new Error(`${what} must be a number.`); return n; };
+const apiColor = (v, what) => { if (!/^#[0-9a-f]{6}$/i.test(String(v))) throw new Error(`${what} must be a colour like "#ff8800".`); return String(v).toLowerCase(); };
+const apiTime = (v, what = 'time') => Math.max(0, apiNumber(v, what));
+// the layer fields set_property can change besides the animatable numbers in L.p, with what each must be
+const API_FIELDS = { name: 'string', text: 'string', font: 'string', color: 'color', fill: 'color', strokeColor: 'color', stroke: 'boolean', filled: 'boolean',
+  visible: 'boolean', anim: TEXT_ANIMS.map(a => a[0]), blend: ['source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'] };
+const apiAnimatable = (L, prop) => !/^fx\d+_/.test(prop) && (prop in L.p || prop in BASE_P);
+const apiPlace = (L, a) => {
+  if (a.start != null) L.start = apiTime(a.start, 'start');
+  if (a.duration != null) L.dur = Math.max(.1, apiNumber(a.duration, 'duration'));
+  for (const k of ['x', 'y', 'w', 'h', 'size', 'rotation', 'opacity', 'scale']) if (a[k] != null) L.p[k] = apiNumber(a[k], k);
+};
+const apiEffect = (L, index) => {
+  const f = (L.fx || [])[+index];
+  if (!f) throw new Error(`Layer ${L.id} has no effect at index ${index}. get_layer lists its effects.`);
+  return f;
+};
+const apiLocked = L => { if (L.locked) throw new Error(`Layer ${L.id} is locked. Unlock it in the Layers panel first.`); return L; };
+Object.assign(API_TOOLS, {
+  seek({ time }) { seek(apiTime(time)); refresh(); drawOverlay(); return { playhead: apiNum(S.time) }; },
+  add_text(a) {
+    const anim = a.animation ?? 'none';
+    if (!API_FIELDS.anim.includes(anim)) throw new Error(`animation must be one of: ${API_FIELDS.anim.join(', ')}.`);
+    return apiStep(() => {
+      const L = newLayer('text', { name: 'Text', text: String(a.text ?? 'Text').slice(0, 2000), start: S.time, dur: 3, font: a.font || 'Anton',
+        color: a.color != null ? apiColor(a.color, 'color') : '#ffffff', strokeColor: '#000000', stroke: a.outline !== false, anim });
+      L.p.size = 140; apiPlace(L, a); insertLayer(L); S.sel = L.id;
+      return { id: L.id, name: L.name };
+    });
+  },
+  add_shape(a) {
+    const shape = a.shape || 'rect', names = SHAPES.map(s => s[0]);
+    if (!names.includes(shape)) throw new Error(`shape must be one of: ${names.join(', ')}.`);
+    const fill = a.fill != null ? apiColor(a.fill, 'fill') : null;
+    return apiStep(() => {
+      addShape(shape); const L = selLayer();
+      if (fill) { L.fill = fill; L.filled = true; }
+      apiPlace(L, a);
+      return { id: L.id, name: L.name };
+    });
+  },
+  add_solid(a) {
+    const color = apiColor(a.color ?? '#000000', 'color');
+    return apiStep(() => {
+      const L = newLayer('shape', { name: a.name ? String(a.name) : 'Solid', shape: 'rect', start: S.time, dur: Math.max(3, duration() - S.time), filled: true, fill: color, strokeColor: color });
+      Object.assign(L.p, { w: W(), h: H(), strokeW: 0 });
+      apiPlace(L, a); insertLayer(L); S.sel = L.id;
+      return { id: L.id, name: L.name };
+    });
+  },
+  set_property({ id, property, value }) {
+    const L = apiLocked(apiLayer(id));
+    if (apiAnimatable(L, property)) {
+      const v = apiNumber(value, property);
+      return apiStep(() => { setProp(L, property, v); return { id: L.id, property, value: apiNum(val(L, property)), keyframed: !!L.keys[property]?.length }; });
+    }
+    const kind = API_FIELDS[property];
+    if (!kind) throw new Error(`"${property}" can't be set. Use a number property from get_layer's properties (x, y, scale, rotation, opacity…) or one of: ${Object.keys(API_FIELDS).join(', ')}.`);
+    let v = value;
+    if (kind === 'color') v = apiColor(value, property);
+    else if (kind === 'boolean') { if (typeof value !== 'boolean') throw new Error(`${property} must be true or false.`); }
+    else if (kind === 'string') v = String(value).slice(0, 2000);
+    else if (!kind.includes(value)) throw new Error(`${property} must be one of: ${kind.join(', ')}.`);
+    return apiStep(() => { L[property] = v; return { id: L.id, property, value: L[property] }; });
+  },
+  set_keyframe({ id, property, time, value, ease, remove }) {
+    const L = apiLocked(apiLayer(id)), t = time == null ? S.time : apiTime(time);
+    if (!apiAnimatable(L, property)) throw new Error(`"${property}" can't have keyframes. Use a number property from get_layer's properties (x, y, scale, rotation, opacity…).`);
+    if (ease != null && !['smooth', 'linear', 'hold'].includes(ease)) throw new Error('ease must be smooth, linear or hold.');
+    if (remove) {
+      const k = keyAt(L, property, t); if (!k) throw new Error(`Layer ${L.id} has no ${property} keyframe at ${t}s.`);
+      return apiStep(() => {
+        L.keys[property] = L.keys[property].filter(x => x !== k);
+        if (!L.keys[property].length) { L.p[property] = k.v; delete L.keys[property]; }
+        return { id: L.id, property, keyframes: (L.keys[property] || []).length };
+      });
+    }
+    const v = apiNumber(value, 'value');
+    return apiStep(() => {
+      upsertKey(L, property, v, t); if (ease) keyAt(L, property, t).ease = ease;
+      return { id: L.id, property, time: apiNum(t), keyframes: L.keys[property].map(q => ({ t: apiNum(q.t + L.start), v: apiNum(q.v), ease: q.ease })) };
+    });
+  },
+  move({ id, start, order }) {
+    const L = apiLocked(apiLayer(id));
+    return apiStep(() => {
+      if (start != null) { const d = apiTime(start, 'start') - L.start, M = linkMate(L); L.start += d; if (M) M.start = Math.max(0, M.start + d); }
+      if (order != null) { const i = clamp(Math.round(apiNumber(order, 'order')), 0, S.layers.length - 1); S.layers.splice(S.layers.indexOf(L), 1); S.layers.splice(i, 0, L); }
+      S.sel = L.id;
+      return { id: L.id, start: apiNum(L.start), end: apiNum(endOf(L)), order: S.layers.indexOf(L) };
+    });
+  },
+  trim({ id, start, end }) {
+    const L = apiLocked(apiLayer(id));
+    if (start == null && end == null) throw new Error('Give start, end or both (timeline seconds).');
+    return apiStep(() => {
+      for (const X of [L, linkMate(L)].filter(Boolean)) {
+        if (start != null) trimHead(clipState(X), apiTime(start, 'start'), false);
+        if (end != null) trimEnd(clipState(X), apiTime(end, 'end'));
+      }
+      return { id: L.id, start: apiNum(L.start), end: apiNum(endOf(L)), length: apiNum(len(L)) };
+    });
+  },
+  split({ id, time }) {
+    const L = apiLocked(apiLayer(id)), t = time == null ? S.time : apiTime(time);
+    if (!(t > L.start + .05 && t < endOf(L) - .05)) throw new Error(`${t}s is not inside layer ${L.id} (${apiNum(L.start)}s to ${apiNum(endOf(L))}s).`);
+    return apiStep(() => { const B = splitAt(L, t, false); S.sel = B.id; return { first: L.id, second: B.id }; });
+  },
+  delete_layer({ id }) {
+    const L = apiLocked(apiLayer(id));
+    return apiStep(() => {
+      RT[L.id]?.el?.pause?.(); delete RT[L.id];
+      S.layers = S.layers.filter(x => x !== L); tidyLinks(); if (S.sel === L.id) S.sel = null; clearMulti();
+      return { deleted: L.id, layersLeft: S.layers.length };
+    });
+  },
+  add_effect({ id, effect }) {
+    const L = apiLocked(apiLayer(id));
+    if (!FX[effect]) throw new Error(`There is no effect with id "${effect}". list_effects shows them.`);
+    return apiStep(() => { addFX(L, effect); return { id: L.id, index: L.fx.length - 1, effect, name: FX[effect].name }; });
+  },
+  set_effect({ id, index, settings, on }) {
+    const L = apiLocked(apiLayer(id)), f = apiEffect(L, index), D = FX[f.id], put = [];
+    for (const [k, v] of Object.entries(settings || {})) {
+      const d = D.params.find(p => p.id === k && p.type !== 'btn');
+      if (!d) throw new Error(`${D.name} has no setting "${k}". list_effects with id "${f.id}" shows its settings.`);
+      if (!d.type) put.push(() => setProp(L, fxKey(f, k), apiNumber(v, k)));
+      else if (d.type === 'pt') { if (!Array.isArray(v) || v.length !== 2) throw new Error(`${k} must be [x, y].`); const [x, y] = v.map(n => apiNumber(n, k)); put.push(() => { setProp(L, fxKey(f, k + 'X'), x); setProp(L, fxKey(f, k + 'Y'), y); }); }
+      else if (d.type === 'check') { if (typeof v !== 'boolean') throw new Error(`${k} must be true or false.`); put.push(() => f[k] = v); }
+      else if (d.type === 'color') { const c = apiColor(v, k); put.push(() => f[k] = c); }
+      else if (d.type === 'text') { const t = String(v).slice(0, 2000); put.push(() => f[k] = t); }
+      else if (d.type !== 'pick') throw new Error(`${D.name}'s "${k}" can't be set by Claude yet (it is a ${d.type}). Set it in Effect Controls.`);
+      else {
+        const opts = typeof d.opts === 'function' ? d.opts(L) : d.opts;
+        if (Array.isArray(opts) && !opts.some(o => (Array.isArray(o) ? o[0] : o) === v)) throw new Error(`${k} must be one of: ${opts.map(o => JSON.stringify(Array.isArray(o) ? o[0] : o)).join(', ')}.`);
+        put.push(() => f[k] = v);
+      }
+    }
+    if (on != null && typeof on !== 'boolean') throw new Error('on must be true or false.');
+    return apiStep(() => { put.forEach(p => p()); if (on != null) f.on = on; fxRegister(L); return API_TOOLS.get_layer({ id: L.id }).effects[+index]; });
+  },
+  remove_effect({ id, index }) {
+    const L = apiLocked(apiLayer(id)), f = apiEffect(L, index);
+    return apiStep(() => { delFX(L, +index); return { id: L.id, removed: f.id, effectsLeft: (L.fx || []).length }; });
+  },
+  undo() { const can = undoStack.length > 1; undo(); return { undone: can, canUndo: undoStack.length > 1, canRedo: redoStack.length > 0 }; },
+  redo() { const can = redoStack.length > 0; redo(); return { redone: can, canUndo: undoStack.length > 1, canRedo: redoStack.length > 0 }; }
+});
 window.LuminaAPI = {
-  version: 1,
+  version: 2,
   tools: Object.keys(API_TOOLS),
   async call(name, args) {
     if (!Object.hasOwn(API_TOOLS, name)) return { ok: false, error: `Lumina has no tool called "${name}".` };
