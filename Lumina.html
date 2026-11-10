@@ -2339,7 +2339,7 @@ FXG.ready = (async () => {
     FXG.blit = await dev.createRenderPipelineAsync({ layout: 'auto', vertex: { module: bm, entryPoint: 'vs' }, fragment: { module: bm, entryPoint: 'fs', targets: [{ format: FXG.fmt }] } });
     dev.lost.then(i => { FXG.dev = null; FXG.failed = 'the graphics card stopped responding (' + (i.message || i.reason) + ')'; });
     FXG.dev = dev;
-    if (S.layers.some(fxOn)) { await fxWarmAll(); render(); }
+    if (S.layers.some(fxOn)) { await fxWarmUsed(); render(); }
     if (selLayer()) inspector();
   } catch (e) { FXG.failed = e.message || String(e); console.warn('effects:', e); }
 })();
@@ -2353,7 +2353,10 @@ function fxPipe(fam, entry) {
   return p;
 }
 const fxWarm = id => Promise.all((FX[id]?.kernels || []).map(([f, e]) => fxPipe(f, e)?.wait));
-async function fxWarmAll() { await FXG.ready; if (FXG.dev) await Promise.all([...new Set(S.layers.flatMap(L => (L.fx || []).map(f => f.id)))].map(fxWarm)); }
+// every effect in use has its GPU kernels built. (FXG.ready itself uses fxWarmUsed, not fxWarmAll: awaiting FXG.ready from
+// inside FXG.ready would wait for itself forever, and every export after it would hang.)
+const fxWarmUsed = () => Promise.all([...new Set(S.layers.flatMap(L => (L.fx || []).map(f => f.id)))].map(fxWarm));
+async function fxWarmAll() { await FXG.ready; if (FXG.dev) await fxWarmUsed(); }
 const fxOn = L => !!L.fx?.some(f => f.on !== false && FX[f.id]);
 const fxKey = (f, p) => `fx${f.uid}_${p}`;
 // the 256-byte parameter block every kernel reads: u = 4 rows of 4 u32, f = 12 rows of 4 f32
@@ -8767,8 +8770,107 @@ Object.assign(API_TOOLS, {
   undo() { const can = undoStack.length > 1; undo(); return { undone: can, canUndo: undoStack.length > 1, canRedo: redoStack.length > 0 }; },
   redo() { const can = redoStack.length > 0; redo(); return { redone: can, canUndo: undoStack.length > 1, canRedo: redoStack.length > 0 }; }
 });
+// ---------- M4: output and Image mode ----------
+// a file to write: a full path whose extension names one of `formats`; an existing file is only replaced with overwrite: true
+async function apiOutPath(p, overwrite, formats, what) {
+  if (typeof p !== 'string' || !/^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p)) throw new Error(`path must be a full path for the new ${what}, like "C:\\Users\\Me\\Videos\\edit.mp4".`);
+  const ext = (p.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase();
+  const F = formats.find(f => f[2].split(',').map(x => x.trim().slice(1).toLowerCase()).includes(ext));
+  if (!F) throw new Error(`The ${what} must end in one of: ${formats.flatMap(f => f[2].split(',').map(x => x.trim())).join(' ')}.`);
+  if (!overwrite && (await lumina.exists([p]))[0]) throw new Error(`${p} already exists. Choose another name, or send overwrite: true to replace it (ask the person first).`);
+  return F[0];
+}
+const apiStill = () => { if (!isStill()) throw new Error('This works in Image mode. Use image_mode with on: true first (or new_image).'); };
+const apiSize = (v, what) => { const n = Math.round(apiNumber(v, what)); if (n < 1 || n > MAX_SIDE) throw new Error(`${what} must be 1 to ${MAX_SIDE} pixels.`); return n; };
+const apiImageInfo = () => ({ mode: isStill() ? 'image' : 'video', width: W(), height: H() });
+Object.assign(API_TOOLS, {
+  async save_project({ path, overwrite }) {
+    if (!window.lumina?.saveProject) throw new Error('Saving projects works in the desktop app.');
+    let p = path ?? PROJ.path;
+    if (!p) throw new Error('This project has never been saved. Give a full path ending in .lumina.');
+    if (path != null) {
+      if (!/^([a-zA-Z]:[\\/]|\\\\|\/).*\.lumina$/i.test(path)) throw new Error('path must be a full path ending in .lumina, like "C:\\Users\\Me\\Documents\\My edit.lumina".');
+      if (!overwrite && path !== PROJ.path && (await lumina.exists([path]))[0]) throw new Error(`${path} already exists. Choose another name, or send overwrite: true to replace it (ask the person first).`);
+    }
+    const out = await lumina.saveProject(projectJSON(), p, false);
+    PROJ.path = out; PROJ.dirty = true; markDirty(false);
+    return { saved: out, name: projectName() };
+  },
+  async save_image({ path, time, quality, transparent, overwrite }) {
+    if (!S.layers.length) throw new Error('There is nothing in the project to save yet.');
+    const fmt = await apiOutPath(path, overwrite, IMAGE_FORMATS, 'picture');
+    const q = quality == null ? 90 : clamp(Math.round(apiNumber(quality, 'quality')), 1, 100), t0 = S.time;
+    if (time != null && !isStill()) { seek(apiTime(time)); refresh(); }
+    try {
+      const out = await saveFrameImage(fmt, { quality: q, alpha: !!transparent }, path);
+      if (!out) throw new Error('The picture could not be saved.');
+      return { saved: out, format: fmt, width: W(), height: H(), time: isStill() ? null : apiNum(S.time) };
+    } finally { if (S.time !== t0) { seek(t0); refresh(); } }
+  },
+  async export_video({ path, overwrite }) {
+    if (!window.lumina?.convertExport) throw new Error('Exporting to a file works in the desktop app.');
+    if (isStill()) throw new Error('This is an image. Use save_image, or image_mode with on: false first.');
+    if (!S.layers.length) throw new Error('There is nothing in the project to export yet.');
+    if (S.exporting) throw new Error('Lumina is already exporting.');
+    const fmt = await apiOutPath(path, overwrite, EXPORT_FORMATS, 'video');
+    window.__lastExport = null;
+    // Lumina records the edit by playing it once in real time, so this takes as long as the edit (plus saving)
+    await startExport(fmt);
+    const t0 = performance.now(), limit = (duration() * 3 + 120) * 1000;
+    while (S.exporting || !window.__lastExport) {
+      if (!S.exporting && $('#modal').hidden) throw new Error('The export was cancelled in Lumina.');
+      if (performance.now() - t0 > limit) throw new Error('The export took too long. Is the Lumina window hidden? Exports pause while it is.');
+      await new Promise(r => setTimeout(r, 250));
+    }
+    const blob = window.__lastExport;
+    $('#mTitle').textContent = 'Saving the video…'; $('#mRow').innerHTML = '';
+    lumina.onExportProgress(f => { $('#mBar').style.width = (f * 100).toFixed(1) + '%'; });
+    const out = await lumina.convertExport({ data: await blob.arrayBuffer(), name: projectName(), fmt, src: blob.type, duration: duration(), w: W(), h: H(), fps: S.fps, filePath: path });
+    $('#mTitle').textContent = 'Video saved'; $('#mText').textContent = out; $('#mBar').style.width = '100%';
+    $('#mRow').innerHTML = '<button class="primary" id="mShow">Show in folder</button><button id="mOk">Close</button>';
+    $('#mShow').onclick = () => lumina.showInFolder(out); $('#mOk').onclick = () => $('#modal').hidden = true;
+    return { saved: out, format: fmt, seconds: apiNum(duration()), width: W(), height: H() };
+  },
+  new_image({ width, height, background, discard_unsaved }) {
+    if (PROJ.dirty && !discard_unsaved) throw new Error('The open project has unsaved changes. Save it first (save_project), or send discard_unsaved: true if the person said to throw them away.');
+    const w = apiSize(width ?? 1920, 'width'), h = apiSize(height ?? 1080, 'height');
+    if (w * h > MAX_AREA) throw new Error(`That's too many pixels (most is ${MAX_AREA / 1e6} million).`);
+    const bg = background ?? 'white';
+    if (!['white', 'black', 'transparent'].includes(bg) && !/^#[0-9a-f]{6}$/i.test(bg)) throw new Error('background must be white, black, transparent or a colour like "#ff8800".');
+    blankImage(w, h, bg === 'transparent' ? 'none' : bg.startsWith('#') ? 'color' : bg, bg.startsWith('#') ? bg.toLowerCase() : '#ffffff');
+    return { ...apiImageInfo(), background: bg, note: 'A new, empty image. Add layers with add_text, add_shape, add_solid or import_media.' };
+  },
+  image_mode({ on }) {
+    if (typeof on !== 'boolean') throw new Error('on must be true (Image mode) or false (back to video editing).');
+    return apiStep(() => { setStill(on); return apiImageInfo(); });
+  },
+  image_size({ width, height }) {
+    apiStill(); const w = apiSize(width, 'width'), h = apiSize(height, 'height');
+    return apiStep(() => { resizeImage(w, h); return apiImageInfo(); });
+  },
+  canvas_size({ width, height, anchor }) {
+    apiStill(); const w = apiSize(width, 'width'), h = apiSize(height, 'height');
+    const A = { 'top-left': [0, 0], top: [.5, 0], 'top-right': [1, 0], left: [0, .5], center: [.5, .5], right: [1, .5], 'bottom-left': [0, 1], bottom: [.5, 1], 'bottom-right': [1, 1] };
+    const a = A[anchor ?? 'center']; if (!a) throw new Error(`anchor must be one of: ${Object.keys(A).join(', ')}.`);
+    return apiStep(() => { resizeCanvas(w, h, a); return apiImageInfo(); });
+  },
+  crop({ x, y, width, height }) {
+    apiStill();
+    const X = Math.round(apiNumber(x, 'x')), Y = Math.round(apiNumber(y, 'y')), w = apiSize(width, 'width'), h = apiSize(height, 'height');
+    if (X < 0 || Y < 0 || X + w > W() || Y + h > H()) throw new Error(`The crop box must fit inside the ${W()}×${H()} image.`);
+    return apiStep(() => { if (CROP) endCrop(false); reframe(w, h, { ax: [1, -X], ay: [1, -Y] }); return apiImageInfo(); });
+  },
+  rotate_canvas({ degrees }) {
+    apiStill(); if (![90, -90, 180].includes(degrees)) throw new Error('degrees must be 90 (clockwise), -90 or 180.');
+    return apiStep(() => { rotateCanvas(degrees); return apiImageInfo(); });
+  },
+  flip_canvas({ direction }) {
+    apiStill(); if (!['horizontal', 'vertical'].includes(direction)) throw new Error('direction must be horizontal or vertical.');
+    return apiStep(() => { flipCanvas(direction === 'horizontal' ? 'x' : 'y'); return apiImageInfo(); });
+  }
+});
 window.LuminaAPI = {
-  version: 2,
+  version: 4,
   tools: Object.keys(API_TOOLS),
   async call(name, args) {
     if (!Object.hasOwn(API_TOOLS, name)) return { ok: false, error: `Lumina has no tool called "${name}".` };

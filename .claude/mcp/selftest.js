@@ -132,7 +132,7 @@
     const tOn = await lumina.claudeTest();
     $('#ccTestBtn').click(); for (let i = 0; i < 50 && !/Working|can't|didn't/.test($('#ccTest').textContent); i++) await new Promise(r => setTimeout(r, 200));
     const shown = $('#ccTest').textContent; $('#mOk').click(); await setClaude(false);
-    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 24 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
+    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 34 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
       buttonSaysWorking: /Working/.test(shown), shown, closed: $('#modal').hidden });
     await TF({ name: 'claude-desktop', remove: true }); await TF({ name: 'claude-code.json', remove: true });
 
@@ -196,8 +196,8 @@
     const b = id => m2.replies.find(r => r.id === id), names = (b(2)?.result?.tools || []).map(t => t.name);
     const img2 = b(4)?.result?.content?.find(c => c.type === 'image'); let red = null;
     if (img2) { const im = new Image(); im.src = 'data:image/png;base64,' + img2.data; await im.decode(); const c2 = document.createElement('canvas'); c2.width = im.width; c2.height = im.height; const x2 = c2.getContext('2d'); x2.drawImage(im, 0, 0); red = [...x2.getImageData(4, 4, 1, 1).data].slice(0, 3); }
-    step('viaClaude', { tools: names.length === 24, toolNames: names.join(), editTools: names.includes('set_keyframe') && names.includes('undo'),
-      editsMarked: (b(2)?.result?.tools || []).filter(t => t.annotations?.readOnlyHint === false).length === 20,
+    step('viaClaude', { tools: names.length === 34, toolNames: names.join(), editTools: names.includes('set_keyframe') && names.includes('undo'),
+      editsMarked: (b(2)?.result?.tools || []).filter(t => t.annotations?.readOnlyHint === false).length === 30,
       added: !b(3)?.result?.isError, redFrame: !!red && red[0] > 200 && red[1] < 40 && red[2] < 40, red });
 
     // ---- 9. M3 media: files are copied into this test folder first, so edit copies land here, not in other suites
@@ -239,6 +239,48 @@
     const nL = S.layers.length; await C('undo', {}); const undone = S.layers.length === nL - 1;
     step('importUndo', { undone });
     S.layers = []; for (const k in RT) { RT[k].el?.pause?.(); delete RT[k]; } refresh(); await new Promise(r => setTimeout(r, 300));
+    await TF({ name: 'media', remove: true });
+
+    // ---- 10. M4 output: project, pictures and video go only where asked, and never over a file without overwrite
+    const OUT = HERE + 'out\\', has = async p => (await lumina.exists([p]))[0];
+    undoStack.length = 0; redoStack.length = 0; commit(); seek(0);
+    await C('add_solid', { color: '#ff0000', start: 0, duration: 2 }); await C('add_text', { text: 'OUT', start: 0, duration: 2 });
+    await TF({ name: 'media/out/taken.lumina', text: '{}' }); await TF({ name: 'media/out/taken.png', text: 'x' });
+    const sp1 = await C('save_project', { path: OUT + 'test.lumina' }), dirtyAfterSave = PROJ.dirty;
+    await C('set_property', { id: S.layers[0].id, property: 'text', value: 'OUT 2' }); const sp2 = await C('save_project', {});
+    const sp3 = await C('save_project', { path: OUT + 'taken.lumina' }), sp4 = await C('save_project', { path: OUT + 'taken.lumina', overwrite: true }), sp5 = await C('save_project', { path: OUT + 'test.txt' });
+    const saved = JSON.parse(await TF({ name: 'media/out/taken.lumina' }) || '{}');
+    step('saveProject', { saved: sp1.ok && await has(OUT + 'test.lumina') && PROJ.path === OUT + 'taken.lumina' && !dirtyAfterSave, again: sp2.ok && sp2.result.saved === OUT + 'test.lumina',
+      notOverwritten: !sp3.ok && /already exists/.test(sp3.error), overwrite: sp4.ok && saved.app === 'Lumina' && saved.layers?.[0]?.text === 'OUT 2', badName: !sp5.ok && /\.lumina/.test(sp5.error) });
+    const si1 = await C('save_image', { path: OUT + 'frame.png', time: 1 }), si2 = await C('save_image', { path: OUT + 'frame.jpg', quality: 80 });
+    const si3 = await C('save_image', { path: OUT + 'taken.png' }), si4 = await C('save_image', { path: OUT + 'frame.xyz' }); $('#modal').hidden = true;
+    step('saveImage', { png: si1.ok && si1.result.format === 'png' && await has(OUT + 'frame.png') && S.time === 0 || si1.error, jpg: si2.ok && await has(OUT + 'frame.jpg') || si2.error,
+      notOverwritten: !si3.ok && /already exists/.test(si3.error), badExt: !si4.ok && /must end in/.test(si4.error) });
+    // (a progress log and a time limit, so a stuck export says where it stopped instead of hanging the suite)
+    const exLog = [], tE = performance.now(), exTick = setInterval(() => exLog.push(`${((performance.now() - tE) / 1000).toFixed(0)}s exporting=${!!S.exporting} blob=${!!window.__lastExport} t=${S.time.toFixed(2)} playing=${S.playing} ${$('#mTitle').textContent}`), 2000);
+    const ev = await Promise.race([C('export_video', { path: OUT + 'edit.mp4' }), new Promise(r => setTimeout(() => r({ ok: false, error: 'TIMEOUT' }), 90000))]);
+    clearInterval(exTick); const exSecs = +((performance.now() - tE) / 1000).toFixed(1); R.exLog = exLog.slice(0, 50);
+    if (S.exporting) { S.exporting.cancelled = true; finishExport(); }
+    const ev2 = !ev.ok ? { ok: false, error: 'skipped' } : await C('export_video', { path: OUT + 'edit.mp4' }), ev3 = await C('export_video', { path: OUT + 'edit.xyz' }); $('#modal').hidden = true;
+    step('exportVideo', { saved: ev.ok && ev.result.format === 'mp4' && await has(OUT + 'edit.mp4') || ev.error, exSecs, notOverwritten: !ev2.ok && /already exists/.test(ev2.error), badExt: !ev3.ok && /must end in/.test(ev3.error) });
+    // Image mode: a new image refuses to throw away unsaved work, then the canvas tools
+    await C('set_property', { id: S.layers[0].id, property: 'text', value: 'unsaved' });
+    const ni0 = await C('new_image', { width: 800, height: 600 }), ni = await C('new_image', { width: 800, height: 600, background: '#00ff00', discard_unsaved: true });
+    const niNow = { still: isStill(), w: W(), h: H(), col: S.global.bgColor };
+    const notStill = await (async () => { await C('image_mode', { on: false }); const r = await C('crop', { x: 0, y: 0, width: 10, height: 10 }); await C('image_mode', { on: true }); return r; })();
+    await C('add_shape', { shape: 'rect', fill: '#0000ff', x: .25, y: .25, w: 100, h: 100 });
+    const is1 = await one('image_size', { width: 400, height: 300 }), cs1 = await one('canvas_size', { width: 500, height: 300, anchor: 'left' });
+    const cr0 = await C('crop', { x: 450, y: 0, width: 100, height: 100 }), cr1 = await one('crop', { x: 10, y: 20, width: 200, height: 100 });
+    const ro = await one('rotate_canvas', { degrees: 90 }), fl = await one('flip_canvas', { direction: 'horizontal' }), ro0 = await C('rotate_canvas', { degrees: 45 });
+    await C('undo', {}); await C('undo', {}); const afterUndo = [W(), H()];
+    const sim = await C('save_image', { path: OUT + 'image.png' }); $('#modal').hidden = true;
+    step('imageMode', { refusedUnsaved: !ni0.ok && /unsaved changes/.test(ni0.error), newImage: ni.ok && niNow.still && niNow.w === 800 && niNow.h === 600 && niNow.col === '#00ff00',
+      needsImageMode: !notStill.ok && /Image mode/.test(notStill.error),
+      imageSize: is1.ok && is1.result.width === 400 && is1.result.height === 300 && is1.steps === 1, canvasSize: cs1.ok && cs1.result.width === 500 && cs1.steps === 1,
+      cropOutside: !cr0.ok && /fit inside/.test(cr0.error), crop: cr1.ok && cr1.result.width === 200 && cr1.result.height === 100 && cr1.steps === 1,
+      rotate: ro.ok && ro.result.width === 100 && ro.result.height === 200, flip: fl.ok && fl.steps === 1, badDegrees: !ro0.ok,
+      undo: afterUndo[0] === 200 && afterUndo[1] === 100, savedImage: sim.ok && sim.result.width === 200 && await has(OUT + 'image.png') || sim.error });
+    await C('image_mode', { on: false });
     await TF({ name: 'media', remove: true });
 
     const flat = []; (function walk(o, p) { for (const [k, v] of Object.entries(o)) { if (v === false) flat.push(p + k); else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, p + k + '.'); } })(R.steps, '');

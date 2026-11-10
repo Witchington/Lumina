@@ -7,7 +7,7 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M4 (output + Image mode); ask the user which
+## ▶ Start here next: Round 12 (Keying II + mattes); the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
@@ -74,7 +74,7 @@ The beginner layout, for reference:
 - **B4 Welcome + tips (done):** first-run welcome (new, open, sizes like YouTube / TikTok / Square) and one-time tips pointing at
   key features, which can be turned off.
 
-### Claude control (MCP), asked for by the user 2026-11-08: M1, M1b, M2 and M3 done 2026-11-09, M4 (output + Image mode) next
+### Claude control (MCP), asked for by the user 2026-11-08: M1–M4 and M1b done 2026-11-09
 Goal: Claude edits a project in the running Lumina through tools (add clips, text, effects, keyframes, look at frames,
 export) instead of only writing Lumina's code.
 
@@ -171,7 +171,19 @@ export) instead of only writing Lumina's code.
     copied into `.claude\mcp\media` (git-ignored, removed afterwards), so edit copies never land in other suites' folders.
   - **Known:** a file Chromium can't read takes the full 15 s before the "couldn't read" answer.
 - **M3 Media (the plan):** `import_media` (a file path), `place_media` on the timeline, captions, `optimize`.
-- **M4 Output + Image mode:** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.
+- **M4 Output + Image mode: done 2026-11-09.** Ten tools (34 in all):
+  - Output: `save_project`, `save_image` (the extension picks the format; any time; quality, transparent) and
+    `export_video` (the extension picks the format; it records in real time, then FFmpeg; the wait is up to 3 hours).
+  - Image mode: `new_image` (refuses to throw away unsaved changes unless `discard_unsaved`), `image_mode`, `image_size`,
+    `canvas_size` (with an anchor), `crop`, `rotate_canvas` and `flip_canvas`.
+  - **Never overwrites:** an existing file is refused unless `overwrite: true`, and the tool description tells Claude to
+    ask the person first.
+  - **Bug found and fixed:** `FXG.ready` called `fxWarmAll()`, which awaits `FXG.ready`. When a layer had an effect
+    before the graphics card finished starting, Lumina waited for itself forever, and every export after that hung. For
+    example, opening a project with effects straight from a .lumina file. Now `FXG.ready` uses `fxWarmUsed()` instead.
+  - **Tests:** mcp-suite steps `saveProject`, `saveImage`, `exportVideo` and `imageMode`. The export test has a 90 s limit
+    and a progress log (`R.exLog`), so a stuck export can't freeze the suite again.
+- **M4 Output + Image mode (the plan):** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.
 - **Safety:** local only, key, off by default, every edit undoable, a status light in Lumina while Claude is connected.
 
 ### Setup replaces the old Lumina (asked for by the user 2026-11-08): done 2026-11-09

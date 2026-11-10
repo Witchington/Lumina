@@ -48,6 +48,7 @@ const PLACE = {
   scale: { type: 'number', description: '1 = 100%.' }, rotation: { type: 'number', description: 'Degrees.' }, opacity: { type: 'number', minimum: 0, maximum: 1 }
 };
 const PATH_ARG = { type: 'string', description: String.raw`The full path to the file on this computer, e.g. C:\Videos\clip.mp4.` };
+const OVERWRITE = { type: 'boolean', description: 'Replace a file that is already there (ask the person first).' };
 const SHAPE_NAMES = ['rect', 'ellipse', 'arrow', 'line', 'star', 'heart', 'triangle', 'hexagon', 'bubble', 'burst', 'blur', 'pixel', 'fill'];
 TOOLS.push(
   { name: 'seek', title: 'Move the playhead', description: 'Move the playhead to a time in seconds. New layers start at the playhead.',
@@ -93,7 +94,30 @@ TOOLS.push(
   { name: 'auto_captions', title: 'Make captions from speech', description: 'Turn the speech in a video or audio layer into a captions layer, on this computer. Only works once the person has downloaded the speech model in Lumina; it can take a minute or more.',
     inputSchema: obj({ id: ID, language: { type: 'string', description: 'auto (default), english, spanish, french, german, italian, portuguese, dutch, polish, russian, turkish, arabic, hindi, japanese, korean or chinese.' } }, ['id']), annotations: edit },
   { name: 'optimize', title: 'Make an edit copy', description: 'Start making an easy-to-edit copy of a video layer\'s file (saved next to the original, which is untouched), so jumping around in it is quick. Runs in the background; get_layer shows media.editCopy.',
-    inputSchema: obj({ id: ID }, ['id']), annotations: { ...edit, idempotentHint: true } }
+    inputSchema: obj({ id: ID }, ['id']), annotations: { ...edit, idempotentHint: true } },
+  // M4: output and Image mode. Nothing is written over an existing file unless overwrite is true.
+  { name: 'save_project', title: 'Save the project', description: 'Save the project as a .lumina file (default: where it was last saved).',
+    inputSchema: obj({ path: { type: 'string', description: String.raw`A full path ending in .lumina, e.g. C:\Users\Me\Documents\My edit.lumina.` }, overwrite: OVERWRITE }), annotations: { ...edit, idempotentHint: true } },
+  { name: 'save_image', title: 'Save a picture', description: 'Save the frame at a time (default: the playhead), or the image in Image mode, as a picture. The file extension picks the format: .png .jpg .webp .avif .gif .bmp .tif .psd (with layers) .pdf .svg .eps .ico and more.',
+    inputSchema: obj({ path: { type: 'string', description: String.raw`A full path, e.g. C:\Users\Me\Pictures\frame.png.` }, time: SEC('Timeline seconds (video mode).'), quality: { type: 'integer', minimum: 1, maximum: 100, description: 'For JPEG / WebP / AVIF (default 90).' },
+      transparent: { type: 'boolean', description: 'Keep see-through areas (formats that can).' }, overwrite: OVERWRITE }, ['path']), annotations: edit },
+  { name: 'export_video', title: 'Export the video', description: 'Export the edit as a video file. The extension picks the format: .mp4 .mov .mkv .avi .webm .flv .wmv .mts .vob .ogv. Lumina plays the edit once in real time to record it, so this takes as long as the edit, plus saving; the Lumina window must stay visible.',
+    inputSchema: obj({ path: { type: 'string', description: String.raw`A full path, e.g. C:\Users\Me\Videos\edit.mp4.` }, overwrite: OVERWRITE }, ['path']), annotations: edit },
+  { name: 'new_image', title: 'Start a new image', description: 'Start a new, empty picture in Image mode (this replaces the open project, so it refuses if that has unsaved changes).',
+    inputSchema: obj({ width: { type: 'integer', minimum: 1, maximum: 16384 }, height: { type: 'integer', minimum: 1, maximum: 16384 }, background: { type: 'string', description: 'white (default), black, transparent or a colour like "#ff8800".' },
+      discard_unsaved: { type: 'boolean', description: 'Only when the person said their unsaved changes can go.' } }), annotations: { ...edit, destructiveHint: true } },
+  { name: 'image_mode', title: 'Image mode on or off', description: 'Turn Image mode on (the project becomes one picture made of layers, no timeline) or off (back to video editing).',
+    inputSchema: obj({ on: { type: 'boolean' } }, ['on']), annotations: { ...edit, idempotentHint: true } },
+  { name: 'image_size', title: 'Resize the image', description: 'Image mode: scale the whole picture and its layers to a new size in pixels.',
+    inputSchema: obj({ width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, ['width', 'height']), annotations: edit },
+  { name: 'canvas_size', title: 'Change the canvas size', description: 'Image mode: make the canvas bigger or smaller without scaling the layers.',
+    inputSchema: obj({ width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 }, anchor: { type: 'string', enum: ['top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right'], description: 'Where the old picture stays (default center).' } }, ['width', 'height']), annotations: edit },
+  { name: 'crop', title: 'Crop the image', description: 'Image mode: keep only a box of the picture, in pixels from the top-left corner.',
+    inputSchema: obj({ x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, ['x', 'y', 'width', 'height']), annotations: edit },
+  { name: 'rotate_canvas', title: 'Rotate the image', description: 'Image mode: turn the whole picture.',
+    inputSchema: obj({ degrees: { type: 'integer', enum: [90, -90, 180], description: '90 = clockwise.' } }, ['degrees']), annotations: edit },
+  { name: 'flip_canvas', title: 'Flip the image', description: 'Image mode: mirror the whole picture.',
+    inputSchema: obj({ direction: { type: 'string', enum: ['horizontal', 'vertical'] } }, ['direction']), annotations: edit }
 );
 
 function callLumina(tool, args) {
@@ -101,7 +125,7 @@ function callLumina(tool, args) {
   if (!c.enabled || !c.port || !c.key) return Promise.resolve({ ok: false, error: OFF });
   const body = JSON.stringify({ tool, args });
   return new Promise(done => {
-    const req = http.request({ host: '127.0.0.1', port: c.port, path: '/call', method: 'POST', timeout: tool === 'auto_captions' ? 1800000 : 120000,
+    const req = http.request({ host: '127.0.0.1', port: c.port, path: '/call', method: 'POST', timeout: { auto_captions: 1800000, export_video: 10800000 }[tool] || 120000,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Lumina-Key': c.key } }, res => {
       let text = ''; res.setEncoding('utf8');
       res.on('data', d => text += d);
