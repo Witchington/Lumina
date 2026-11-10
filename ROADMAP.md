@@ -135,7 +135,9 @@ export) instead of only writing Lumina's code.
   - An entry for a Lumina in another folder shows as "older" with an Update button.
   - **Uninstaller:** `Lumina.exe --claude-check` (exit 1 = Claude's settings start this Lumina) and `--claude-forget`.
     `build/installer.nsh` asks "Take Lumina out of Claude's settings too?" on a real uninstall only (not on updates; a
-    quiet /S uninstall says No).
+    quiet /S uninstall says No). **Not tried in a real uninstall yet** (the user skipped it 2026-11-09); the flags are
+    tested in the suite. To try it: install into the scratchpad, run the uninstaller with APPDATA/LOCALAPPDATA pointing at a
+    pretend Claude settings folder, answer the question, check the file.
   - **Tests:** steps `connect` and `window` in `.claude\mcp`, using pretend settings files in the test folder.
   - **Keep in mind:** if Electron fuses are ever turned on, leave RunAsNode on, or friends' connections break.
 - **M2 Editing:** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
