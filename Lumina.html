@@ -2496,6 +2496,19 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 17 helpers ----
+// EffectCraft's ctx.seed: each layer has its own random pattern
+const fxSeed = E => Math.imul((E.L?.id | 0) + 1, 0x9e3779b1) >>> 0;
+// tables an effect worked out on the CPU, kept per effect until its settings change (Brush Strokes' cells)
+const FXC = new WeakMap();
+// util::guided_filter on every channel at once (fx_noise::guided_filter): guide g, input p, box radius r
+function fxGuided(E, g, p, r, eps) {
+  const bx = img => fxBoxPasses(E, img, [r], [r], true);
+  const gf = (mode, a, b, d, e = 0) => { const rw = d ? E.rows(d) : null; return E.run('fx_noise', 'fxn_gf', fxP({ 0: [mode, rw ? rw[1] : 0, 0, 0] }, { 0: [e, 0, 0, 0] }), a, b, null, rw ? rw[0] : null); };
+  const mg = bx(g), mp = bx(p), cgp = bx(gf(5, g, p)), cgg = bx(gf(6, g, g));
+  const cov = gf(0, cgp, mp, mg), vr = gf(1, cgg, mg), a = gf(2, cov, vr, null, eps), b = gf(3, a, mp, mg);
+  return gf(4, bx(a), bx(b), g);
+}
 // ---- Round 16 helpers ----
 // fx_distort::grid_warp: a grid of triangles, `dest` (frame pixels, where each vertex lands) and `srcp` (where it comes from),
 // (nx + 1) × (ny + 1) points; each output row gets the list of triangles that touch it
@@ -3285,6 +3298,154 @@ const FX = {
       // each tile reads the layer from its first to its last pixel centre, so no see-through seams show between copies
       return E.run('fx_stylize', 'fxs_motiontile', fxP({ 0: [E.w, q('hshift'), q('mirror'), 0] },
         { 0: [q('phase') / 360, Math.max(0, rw - 1), Math.max(0, rh - 1), 0], 1: [x0 + .5, y0 + .5, 0, 0] }), img, null, null, E.data(d));
+    } },
+  // ---- Round 17: Stylize I. EffectCraft's stylize2.rs; GPU host code from fx_stylize.rs (Brush Strokes, Roughen Edges,
+  //      Scatter, Texturize, the CC Thresholds: fxs_*) and fx_warp.rs (Color Emboss, Cartoon: fxw_*) ----
+  brushstrokes: { name: 'Brush Strokes', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_brush']], params: [
+      { id: 'angle', label: 'Stroke angle°', def: 135, min: -360, max: 360, dec: 0 },
+      { id: 'size', label: 'Brush size', def: 2, min: 0, max: 5, dec: 1 },
+      { id: 'length', label: 'Stroke length', def: 4, min: 0, max: 40, dec: 0 },
+      { id: 'density', label: 'Stroke density', def: 1, min: 0, max: 2, dec: 2 },
+      { id: 'randomness', label: 'Stroke randomness', def: 1, min: 0, max: 2, dec: 2 },
+      { id: 'surface', label: 'Paint surface', type: 'pick', def: 0, opts: [[0, 'Paint on original image'], [1, 'Paint on transparent'], [2, 'Paint on white'], [3, 'Paint on black']] },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // the frame is cut into cells of twice the brush size; each cell paints one stroke (its angle, length and sideways
+      // jitter from a hash), averaging the picture along it
+      const ang = q('angle'), size = Math.max(.5, q('size') * E.sc), len = q('length') * E.sc, dens = q('density'), rnd = q('randomness');
+      const seed = (fxSeed(E) ^ 0xb705) >>> 0, w = E.w, h = E.h, cell = Math.max(size * 2, 1), co = i => Math.floor(i / cell);
+      const ncx = co(w - 1) + 1, ncy = co(h - 1) + 1; if (ncx * ncy * 6 + w + h >= 1 << 24) return img;
+      const key = [ang, size, len, dens, rnd, seed, w, h].join(); let d = FXC.get(E.fx);
+      if (d?.key !== key) {
+        const t = new Float32Array(w + h + ncx * ncy * 6); let k = w + h;
+        for (let x = 0; x < w; x++) t[x] = co(x);
+        for (let y = 0; y < h; y++) t[w + y] = co(y);
+        const dn = Math.fround(Math.min(dens, 1));
+        for (let cy = 0; cy < ncy; cy++) for (let cx = 0; cx < ncx; cx++) {
+          const hh = j => fxHash((cx + Math.imul(j, 7919)) >>> 0, cy, seed), a = (ang + (hh(0) - .5) * rnd * 60) * Math.PI / 180, l = len * (.5 + hh(1));
+          t[k++] = Math.sin(a); t[k++] = -Math.cos(a); t[k++] = l; t[k++] = (hh(2) - .5) * size; t[k++] = clamp(Math.ceil(l), 1, 32); t[k++] = hh(3) < dn ? 1 : 0;
+        }
+        FXC.set(E.fx, d = { key, t });
+      }
+      return E.run('fx_stylize', 'fxs_brush', fxP({ 0: [w, ncx, q('surface'), h] }, { 0: [q('blend') / 100, 0, 0, 0] }), img, null, null, E.data(d.t));
+    } },
+  cartoon: { name: 'Cartoon', cat: 'Stylize', kernels: [['fx_warp', 'fxw_luma'], ['fx_warp', 'fxw_keep_alpha'], ['fx_warp', 'fxw_shock'], ['fx_warp', 'fxw_edges'], ['fx_warp', 'fxw_cartoon'],
+      ['fx_noise', 'fxn_gf'], ['fx_color', 'fxc_lerp'], ['fx_noise', 'fxn_morph'], ['lumina_key', 'lk_mix'], ...BLUR_K], params: [
+      { id: 'render', label: 'Render', type: 'pick', def: 2, opts: [[0, 'Fill'], [1, 'Edges'], [2, 'Fill & edges']] },
+      { id: 'radius', label: 'Detail radius', def: 8, min: 0, max: 50, dec: 1 },
+      { id: 'detail', label: 'Detail threshold %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'steps', label: 'Fill: shading steps', def: 8, min: 1, max: 64, dec: 1 },
+      { id: 'smooth', label: 'Fill: shading smoothness %', def: 70, min: 0, max: 100, dec: 1 },
+      { id: 'eThr', label: 'Edge: threshold', def: 1.5, min: 0, max: 5, dec: 2 },
+      { id: 'eWidth', label: 'Edge: width', def: 1.5, min: 0, max: 10, dec: 2 },
+      { id: 'eSoft', label: 'Edge: softness %', def: 60, min: 0, max: 100, dec: 1 },
+      { id: 'eOpacity', label: 'Edge: opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'enhance', label: 'Advanced: edge enhancement', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'black', label: 'Advanced: edge black level', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'eContrast', label: 'Advanced: edge contrast', def: .5, min: 0, max: 1, dec: 2 }],
+    run(E, img, q) {
+      // edge-preserving smoothing (a guided filter steered by the brightness), then the brightness cut into shading steps and
+      // Sobel edges drawn over it
+      const render = q('render'), r = Math.max(0, Math.round(q('radius') * E.sc)), thr = q('detail') / 100, et = q('eThr'), ew = q('eWidth') * E.sc, es = q('eSoft') / 100;
+      const black = clamp(q('black') / 100, 0, 1), con = Math.min(100, Math.tan(clamp(q('eContrast'), 0, .999) * Math.PI / 2));
+      let sm = img;
+      if (r > 0) sm = E.run('fx_warp', 'fxw_keep_alpha', fxP(), img, fxGuided(E, E.run('fx_warp', 'fxw_luma', fxP(), img), img, r, thr * thr * .25 + 1e-5));
+      const enh = q('enhance') / 100;
+      if (enh < 0) { const s = 1.5 * E.sc; sm = E.run('fx_color', 'fxc_lerp', fxP({}, { 0: [-enh, 0, 0, 0] }), sm, fxGauss(E, sm, s, s, true)); }
+      else if (enh > 0) sm = E.run('fx_warp', 'fxw_shock', fxP({}, { 0: [enh * 2 * E.sc, 0, 0, 0] }), sm, E.run('fx_warp', 'fxw_luma', fxP(), sm));
+      let ek = q('eOpacity') / 100, rows = null;
+      if (render >= 1) {
+        const t1 = et * .2, t0 = t1 * (1 - es * .9);
+        let edges = E.run('fx_warp', 'fxw_edges', fxP({}, { 0: [t0, Math.max(t1, t0 + 1e-4), 0, 0] }), E.run('fx_warp', 'fxw_luma', fxP(), sm));
+        if (ew > 1) edges = fxMorphFrac(E, edges, (ew - 1) * .5, true); else ek *= Math.max(ew, 0);
+        rows = E.rows(edges);
+      }
+      return E.run('fx_warp', 'fxw_cartoon', fxP({ 0: [0, render, rows ? rows[1] : 0, rows ? 1 : 0] }, { 0: [Math.max(1, q('steps')), q('smooth') / 100, ek, black], 1: [con, 0, 0, 0] }),
+        img, sm, null, rows ? rows[0] : null);
+    } },
+  coloremboss: { name: 'Color Emboss', cat: 'Stylize', kernels: [['fx_warp', 'fxw_coloremboss']], params: [
+      { id: 'direction', label: 'Direction°', def: 45, min: -360, max: 360, dec: 0 },
+      { id: 'relief', label: 'Relief', def: 1.5, min: 0, max: 10, dec: 2 },
+      { id: 'contrast', label: 'Contrast', def: 100, min: 0, max: 500, dec: 0 },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // Emboss that keeps the colours: each pixel plus the difference between its neighbours along the light direction
+      const a = q('direction') * Math.PI / 180, r = q('relief') * E.sc;
+      return E.run('fx_warp', 'fxw_coloremboss', fxP({}, { 0: [Math.cos(a) * r, -Math.sin(a) * r, q('contrast') / 100, q('blend') / 100] }), img);
+    } },
+  roughenedges: { name: 'Roughen Edges', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_roughen'], ...BLUR_K], params: [
+      { id: 'type', label: 'Edge type', type: 'pick', def: 0, opts: ['Roughen', 'Roughen color', 'Cut', 'Spiky', 'Rusty', 'Rusty color', 'Photocopy', 'Photocopy color'].map((n, i) => [i, n]) },
+      { id: 'color', label: 'Edge color', type: 'color', def: '#8c4d1a' },
+      { id: 'border', label: 'Border', def: 8, min: 0, max: 500, dec: 1 },
+      { id: 'sharpness', label: 'Edge sharpness', def: 1, min: 0, max: 10, dec: 2 },
+      { id: 'influence', label: 'Fractal influence', def: 1, min: 0, max: 1, dec: 2 },
+      { id: 'scale', label: 'Scale', def: 100, min: 10, max: 1000, dec: 1 },
+      { id: 'stretch', label: 'Stretch width or height', def: 0, min: -10, max: 10, dec: 2 },
+      { id: 'offset', label: 'Offset (turbulence)', type: 'pt', def: [0, 0] },
+      { id: 'complexity', label: 'Complexity', def: 2, min: 1, max: 10, dec: 0 },
+      { id: 'evolution', label: 'Evolution°', def: 0, min: -36000, max: 36000, dec: 0 },
+      { id: 'cycleOn', label: 'Cycle evolution', type: 'check', def: false },
+      { id: 'cycle', label: 'Cycle (in revolutions)', def: 1, min: 1, max: 1000, dec: 0 },
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 10000, dec: 0 }],
+    run(E, img, q) {
+      // the layer's alpha, blurred over the border, pushed in and out by fractal noise and sharpened back into an edge
+      const kind = q('type'), ec = q('color'), border = q('border') * E.sc, sharp = Math.max(.01, q('sharpness')), sc = Math.max(.5, q('scale') * E.sc * .1);
+      const [ox, oy] = q('offset'), st = q('stretch'), sx = 1 + Math.max(st, 0), sy = 1 + Math.max(-st, 0);
+      let evo = q('evolution') / 360, evoW = 0, c = 0; const cyc = q('cycleOn') ? Math.max(1, Math.round(q('cycle'))) : 0;
+      if (cyc) { evo = ((evo % cyc) + cyc) % cyc; evoW = evo / cyc; c = cyc; }
+      const [fm, im, sm, colored] = { 1: [1, 1, 1, 1], 2: [1, 1, 3, 0], 3: [3, 1, 1.5, 0], 4: [1.5, 1.5, 1, 0], 5: [1.5, 1.5, 1, 1], 6: [.6, 1.2, 2.5, 0], 7: [.6, 1.2, 2.5, 1] }[kind] || [1, 1, 1, 0];
+      const seed = (fxSeed(E) ^ 0x40f1 ^ Math.imul(Math.round(q('seed')) | 0, 0x9e3779b9)) >>> 0;
+      const d = border > .05 ? fxGauss(E, img, border * .5, border * .5, true) : img;
+      return E.run('fx_stylize', 'fxs_roughen', fxP({ 0: [seed, cyc ? 1 : 0, colored, 0] }, { 0: [ox, oy, sc * sx, sc * sy], 1: [fm, evo, c, evoW],
+        2: [q('complexity') + (kind === 4 || kind === 5 ? 1 : 0), q('influence'), im, sharp], 3: [ec[0], ec[1], ec[2], sm] }), img, d);
+    } },
+  scatter: { name: 'Scatter', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_scatter']], params: [
+      { id: 'amount', label: 'Scatter amount', def: 0, min: 0, max: 127, dec: 1 },
+      { id: 'grain', label: 'Grain', type: 'pick', def: 0, opts: [[0, 'Both'], [1, 'Horizontal'], [2, 'Vertical']] },
+      { id: 'everyFrame', label: 'Randomize every frame', type: 'check', def: false }],
+    run(E, img, q) {
+      // each pixel takes a neighbour's colour, up to Scatter Amount pixels away
+      const amt = q('amount') * E.sc; if (amt <= 0) return img;
+      let seed = fxSeed(E); if (q('everyFrame')) seed = (seed ^ Math.imul(Math.max(0, Math.trunc(E.t * 1000)) >>> 0, 0x9e3779b9)) >>> 0;
+      return E.run('fx_stylize', 'fxs_scatter', fxP({ 0: [q('grain'), seed, 0, 0] }, { 0: [amt, 0, 0, 0] }), img);
+    } },
+  texturize: { name: 'Texturize', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_tex_luma'], ['fx_stylize', 'fxs_texturize'], ...BLUR_K], params: [
+      { id: 'layer', label: 'Texture layer', type: 'pick', def: 0, opts: L => [[0, 'None'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'light', label: 'Light direction°', def: 135, min: -360, max: 360, dec: 0 },
+      { id: 'contrast', label: 'Texture contrast', def: 1, min: 0, max: 2, dec: 2 },
+      { id: 'placement', label: 'Texture placement', type: 'pick', def: 0, opts: [[0, 'Tile texture'], [1, 'Centre texture'], [2, 'Stretch texture to fit']] }],
+    run(E, img, q) {
+      // another layer's brightness as a height map, lit from Light Direction, shades the layer
+      const k = q('contrast'), M = q('layer') ? byId(q('layer')) : null; if (!k || !M || M === E.L || !DRAW[M.kind]) return img;
+      const c = layerCanvas('texz'), [a, b] = liveRange(M); if (E.T >= a && E.T < b) paintLayer(M, E.T, c.cx);
+      const up = E.upload(c.cv), r = RT[M.id]; if (!r?.m) return img;
+      // transition::place_layer in the two layers' own pixels (the texture as it sits in the frame)
+      const os = [r.box?.w || E.w, r.box?.h || E.h], ls = [E.bw, E.bh], [rx, ry, rw, rh] = E.rect, [ox, oy, ow, oh] = fxRectOf(r.m, os[0], os[1]), mode = q('placement');
+      const place = (v, i) => {
+        const p = i ? (v - ry) / rh * ls[1] : (v - rx) / rw * ls[0];
+        const t = mode === 0 && os[0] >= 1 && os[1] >= 1 ? ((p % os[i]) + os[i]) % os[i] : mode === 1 ? p + (os[i] - ls[i]) * .5 : ls[0] > 0 && ls[1] > 0 ? p * os[i] / ls[i] : p;
+        return i ? oy + t / os[1] * oh : ox + t / os[0] * ow;
+      };
+      const d = []; for (let x = 0; x < E.w; x++) d.push(place(x + .5, 0)); for (let y = 0; y < E.h; y++) d.push(place(y + .5, 1));
+      const s = .7 * E.sc, hgt = fxGauss(E, E.run('fx_stylize', 'fxs_tex_luma', fxP({ 0: [E.w, 0, 0, 0] }), img, up, null, E.data(d)), s, s, true), an = q('light') * Math.PI / 180;
+      return E.run('fx_stylize', 'fxs_texturize', fxP({}, { 0: [Math.cos(an), -Math.sin(an), k, 0] }), img, hgt);
+    } },
+  ccthreshold: { name: 'CC Threshold', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_point']], params: [
+      { id: 'threshold', label: 'Threshold', def: 127, min: 0, max: 255, dec: 0 },
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, opts: [[0, 'Luminance'], [1, 'RGB'], [2, 'Saturation'], [3, 'Alpha']] },
+      { id: 'invert', label: 'Invert', type: 'check', def: false },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) { return E.run('fx_stylize', 'fxs_point', fxP({ 0: [3, q('channel'), q('invert') ? 1 : 0, 0] }, { 0: [q('threshold') / 255, q('blend') / 100, 0, 0] }), img); } },
+  ccthresholdrgb: { name: 'CC Threshold RGB', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_point']], params: [
+      { id: 'red', label: 'Red threshold', def: 127, min: 0, max: 255, dec: 0 },
+      { id: 'green', label: 'Green threshold', def: 127, min: 0, max: 255, dec: 0 },
+      { id: 'blue', label: 'Blue threshold', def: 127, min: 0, max: 255, dec: 0 },
+      { id: 'invR', label: 'Invert red channel', type: 'check', def: false },
+      { id: 'invG', label: 'Invert green channel', type: 'check', def: false },
+      { id: 'invB', label: 'Invert blue channel', type: 'check', def: false },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      return E.run('fx_stylize', 'fxs_point', fxP({ 0: [4, q('invR') ? 1 : 0, q('invG') ? 1 : 0, q('invB') ? 1 : 0] }, { 0: [q('red') / 255, q('green') / 255, q('blue') / 255, q('blend') / 100] }), img);
     } },
   gradientramp: { name: 'Gradient Ramp', cat: 'Generate', kernels: [['kernels', 'pointwise']], params: [
       { id: 'start', label: 'Start', type: 'pt', def: [.5, 0] },

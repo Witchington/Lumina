@@ -1065,6 +1065,56 @@
     }
     step('round16speed', r16speed);
 
+    // ---- Round 17: Stylize I. Same patches
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0], W3 = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const changed = () => diff(plain, frame()).changed, same = () => diff(plain, frame()).max;
+      // each moves the card when on, and leaves it alone with its "off" setting; a flat patch's middle keeps its colour
+      const R = {};
+      for (const [id, fam, entry, on, off] of [['brushstrokes', 'fx_stylize', 'fxs_brush', {}, { blend: 100 }], ['coloremboss', 'fx_warp', 'fxw_coloremboss', {}, { relief: 0 }],
+        ['scatter', 'fx_stylize', 'fxs_scatter', { amount: 20 }, { amount: 0 }], ['cartoon', 'fx_warp', 'fxw_cartoon', {}, null]]) {
+        f = await only(id); { const e = await kerr(fam, entry); if (e) step(id + 'Kernel', e); }
+        for (const k in on) set(f, k, on[k]);
+        draw(); const r = { changed: changed(), red: px(K.RED, K.Y).join() };
+        if (off) { for (const k in off) set(f, k, off[k]); draw(); r.offMax = same(); }
+        R[id] = r;
+      }
+      step('stylizeMoves', { ...R, works: Object.values(R).every(r => r.changed > 1000 && (r.offMax == null || r.offMax <= 2)) && ['brushstrokes', 'coloremboss', 'scatter'].every(id => cl(R[id].red.split(',').map(Number), P0(K.RED, K.Y), 3)) });
+      // CC Threshold: luminance 127 makes red black and grey white; RGB thresholds each channel; Invert and Blend
+      f = await only('ccthreshold'); draw(); const thR = px(K.RED, K.Y), thG = px(K.GRY, K.Y); f.invert = true; draw(); const thI = px(K.RED, K.Y); f.invert = false; set(f, 'blend', 100); draw(); const thB = same();
+      f = await only('ccthresholdrgb'); draw(); const tr = px(K.RED, K.Y), tg = px(K.GRN, K.Y), tb = px(K.BLU, K.Y); f.invG = true; draw(); const tgI = px(K.RED, K.Y);
+      // Brush Strokes on white with no strokes: white
+      f = await only('brushstrokes'); f.surface = 2; set(f, 'density', 0); draw(); const bsW = px(K.RED, K.Y);
+      // Cartoon, no smoothing, two hard steps: red's brightness .31 → .5, so its colour × 1.63; Edges alone: a flat patch is white
+      f = await only('cartoon'); set(f, 'radius', 0); f.render = 0; set(f, 'steps', 2); set(f, 'smooth', 0); draw(); const ctR = px(K.RED, K.Y);
+      f.render = 1; draw(); const ctE = px(K.RED, K.Y), ctEdge = px(K.RED - 160, K.Y);
+      // Roughen Edges on the card at half size: the middle stays, the edges get bitten
+      L.p.scale = .5; while (L.fx?.length) delFX(L, 0); draw(); const half = frame();
+      f = await only('roughenedges'); { const e = await kerr('fx_stylize', 'fxs_roughen'); if (e) step('roughenKernel', e); }
+      draw(); const rgMid = px(880, 405), rgChanged = diff(half, frame()).changed; f.type = 2; draw(); const rgCut = diff(half, frame()).changed;
+      L.p.scale = 1;
+      // Texturize with a hidden white ellipse as the texture: its rim shades the card; contrast 0 leaves it
+      f = await only('texturize'); { const e = await kerr('fx_stylize', 'fxs_texturize'); if (e) step('texturizeKernel', e); }
+      draw(); const txNone = same();
+      addShape('ellipse'); const TX = selLayer(); Object.assign(TX, { fill: '#ffffff', visible: false, start: 0, dur: 6 }); f.layer = TX.id;
+      draw(); const txOn = changed(); set(f, 'contrast', 0); draw(); const txOff = same(); set(f, 'contrast', 1); f.placement = 2; draw(); const txStretch = changed();
+      S.layers = S.layers.filter(x => x !== TX); f.layer = 0; S.sel = L.id;
+      step('stylizeDetails', { thRed: thR.join(), thGrey: thG.join(), thInvert: thI.join(), thBlend: thB, rgbRed: tr.join(), rgbGreen: tg.join(), rgbBlue: tb.join(), rgbGreenInv: tgI.join(), brushWhite: bsW.join(),
+        cartoonFill: ctR.join(), cartoonEdgesFlat: ctE.join(), cartoonEdgeLine: ctEdge.join(), roughenMid: rgMid.join(), roughenChanged: rgChanged, roughenCut: rgCut, textureNone: txNone, textureOn: txOn, textureOff: txOff, textureStretch: txStretch,
+        works: cl(thR, z) && cl(thG, W3) && cl(thI, W3) && thB <= 2 && cl(tr, [255, 0, 0]) && cl(tg, [0, 255, 0]) && cl(tb, [0, 0, 255]) && cl(tgI, [255, 255, 0]) && cl(bsW, W3)
+          && cl(ctR, [255, 65, 65], 6) && cl(ctE, W3) && lum(ctEdge) < 128 && cl(rgMid, P0(K.RED, K.Y), 3) && rgChanged > 500 && rgCut > 300 && txNone <= 2 && txOn > 1000 && txOff <= 2 && txStretch > 1000 });
+      const menuS = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Stylize');
+      step('stylizeMenu17', { count: menuS?.children.length, works: menuS?.children.length === 16 });
+    }
+    const r17speed = {};
+    for (const [id, vals] of [['brushstrokes', {}], ['cartoon', {}], ['coloremboss', {}], ['roughenedges', {}], ['scatter', { amount: 20 }], ['ccthreshold', {}], ['ccthresholdrgb', {}]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]);
+      draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r17speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round17speed', r17speed);
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }

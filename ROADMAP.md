@@ -7,17 +7,17 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 17 (Stylize I); Round 16 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 18 (Stylize II, CC); Round 17 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 16 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 17 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section).
-Rounds 8–16 and the Round 6 leftovers are done. **Round 17 is next, Stylize I** (WORKPLAN.md's round table): Brush
-Strokes, Cartoon, Color Emboss, Roughen Edges, Scatter, Texturize, CC Threshold, CC Threshold RGB. Most are `fx_stylize`
-(`fxs_brush`, `fxs_roughen`, `fxs_scatter`, `fxs_texturize`, `fxs_point` for the thresholds) and `fx_warp` (`fxw_cartoon`,
-`fxw_coloremboss`); host code in EffectCraft's crates/gpu/src/fx_stylize.rs and fx_warp.rs. Texturize needs a texture
-layer (use the paint-another-layer pattern). **Stage 1 decision (2026-11-10, the user):** Round 16's effects went first;
+Rounds 8–17 and the Round 6 leftovers are done. **Round 18 is next, Stylize II (CC)** (WORKPLAN.md's round table):
+CC Block Load, CC Burn Film, CC Glass, CC HexTile, CC Kaleida, CC Mr. Smoothie, CC Plastic, CC RepeTile. Kaleida and
+RepeTile are in EffectCraft's crates/gpu/src/fx_stylize.rs (`kaleida`, `fxs_repetile`); find the others' host code in
+crates/gpu/src (check `IDS` lists) first. Round 17's helpers: `fxSeed(E)` (a layer's own random seed, EffectCraft's
+ctx.seed), `FXC` (a WeakMap for per-effect CPU tables) and `fxGuided` (fx_noise::guided_filter). **Stage 1 decision (2026-11-10, the user):** Round 16's effects went first;
 parenting and precomps stay in After Effects Round A1 (blend modes and track mattes were already in Lumina). Round 16's
 helpers: `fxGridWarp` (fx_distort::grid_warp → `dst_mesh`), `fxBez`, `BEZ_PTS`, `SRC_NAMES`. Round 15 added the `fx_warp`
 and `fx_transition` kernel families and `fxSplit`. Round 14's helpers: `m3mul` / `m3inv` / `m3t` / `m3s` / `m3r` / `m3of` /
@@ -237,7 +237,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 17 (Stylize I)**.
+EffectCraft carries on at **Round 18 (Stylize II, CC)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -259,8 +259,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–16 and the Round 6 leftovers are done; Round 17 (Stylize I) is next.** About 169
-   effects are left, in Rounds 17–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–17 and the Round 6 leftovers are done; Round 18 (Stylize II, CC) is next.** About 161
+   effects are left, in Rounds 18–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -347,6 +347,18 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 17 done (2026-11-10): Stylize I.** Stylize gets **Brush Strokes**, **Cartoon**, **Color Emboss**,
+  **Roughen Edges**, **Scatter**, **Texturize**, **CC Threshold** and **CC Threshold RGB** (16 in the group now).
+  - All EffectCraft's own kernels: `fx_stylize`'s `fxs_brush`, `fxs_roughen`, `fxs_scatter`, `fxs_tex_luma`,
+    `fxs_texturize` and `fxs_point` modes 3 and 4; `fx_warp`'s `fxw_coloremboss`, `fxw_luma`, `fxw_keep_alpha`,
+    `fxw_shock`, `fxw_edges` and `fxw_cartoon`. Cartoon's smoothing is `fxGuided` (fx_noise's `fxn_gf` and box passes).
+    No new WGSL.
+  - Brush Strokes works out its stroke cells on the CPU (as EffectCraft does) and keeps them until a setting changes.
+  - Texturize's Texture Layer is any other layer, as it sits in the frame (tiled, centred or stretched in the two
+    layers' own pixels; exact for layers that aren't rotated).
+  - Random patterns (Scatter, Brush Strokes, Roughen Edges) differ per layer, from the layer's id, like EffectCraft's
+    per-layer seed. Roughen Edges at its defaults bites about a pixel into the edge, as EffectCraft's does.
+  - Speeds 4.4–8.5 ms a frame.
 - **EffectCraft Round 16 done (2026-11-10): Distort III (warps).** Distort gets **Warp**, **Bezier Warp**, **Mesh Warp**,
   **Displacement Map**, **Twirl (Legacy)** and **Detail-preserving Upscale** (34 in the group now).
   - Warp is `fx_warp`'s `fxw_warp`; Bezier and Mesh Warp build a triangle grid in JS (`fxGridWarp`) for `fx_distort`'s
