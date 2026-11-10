@@ -42,9 +42,9 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 11 ✅ | Keying I | Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key |
 | 12 ✅ | Keying II + mattes | Keylight, Spill Suppressor, Advanced Spill, Key Cleaner, Unmult, Screen, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard/Soft Matte |
 | 13 ✅ | Blur & Sharpen rest | Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross/Radial/Radial Fast/Vector Blur, Reduce Flicker (Camera-Shake Deblur moved to 25) |
-| 14 | Distort I | Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation, Smear |
-| 15 | Distort II (CC) | CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, Smear, Split, Split 2, Tiler, Power Pin |
-| 16 | Distort III (warps) | Bezier Warp, Mesh Warp, Warp, Reshape, Twirl (legacy), Rolling Shutter Repair, Upscale, Displacement Map* |
+| 14 ✅ | Distort I | Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation (Smear moved to 16) |
+| 15 | Distort II (CC) | CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, CC Smear, Split, Split 2, Tiler, Power Pin |
+| 16 | Distort III (warps) | Bezier Warp, Mesh Warp, Warp, Reshape, Smear, Twirl (legacy), Rolling Shutter Repair, Upscale, Displacement Map* |
 | 17 | Stylize I | Brush Strokes, Cartoon, Color Emboss, Roughen Edges, Scatter, Texturize, CC Threshold, CC Threshold RGB |
 | 18 | Stylize II (CC) | CC Block Load, Burn Film, Glass, HexTile, Kaleida, Mr. Smoothie, Plastic, RepeTile |
 | 19 | Generate I (shapes & fills) | Fill, Circle, Ellipse, Checkerboard, Cell Pattern, Stroke, Write-on, Scribble, Vegas, Paint Bucket, Eyedropper Fill, Radio Waves |

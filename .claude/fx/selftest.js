@@ -914,6 +914,70 @@
     }
     step('round13speed', r13speed);
 
+    // ---- Round 14: Distort I. Same patches (black 0-320, white -640, red -960, green -1280, blue -1600, grey -1920 above y 540)
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0], W3 = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const BLUE = P0(K.BLU, K.Y), RED = P0(K.RED, K.Y), GREEN = P0(K.GRN, K.Y), GREY = P0(K.GRY, K.Y);
+      const at = (g, id, x, y) => { set(g, id + 'X', x / 1920); set(g, id + 'Y', y / 1080); };
+      // Spherize round the middle of the white patch, radius 200: 180 px out (on black) it shows white from nearer the middle;
+      // outside the radius nothing moves
+      f = await only('spherize'); { const e = await kerr('fx_stylize', 'fxs_warp'); if (e) step('warpKernel', e); }
+      at(f, 'center', K.WHT, K.Y); draw(); const spIn = px(300, K.Y), spOut = px(250, K.Y), spC = px(K.WHT, K.Y);
+      step('spherize', { inside: spIn.join(), outside: spOut.join(), centre: spC.join(), works: cl(spIn, W3) && cl(spOut, z) && cl(spC, W3) });
+      // Polar Coordinates, Rect to polar: the top row is the frame's outer ring (x 240 looks up-right of the middle: blue);
+      // Polar to rect after it undoes it (blue comes back at the blue patch)
+      f = await only('polar'); draw(); const poTop = px(240, 1);
+      f.conversion = 0; const g = await add('polar'); g.conversion = 1; draw(); const poBack = px(K.BLU, K.Y);
+      step('polar', { topRow: poTop.join(), roundTrip: poBack.join(), works: cl(poTop, BLUE, 3) && cl(poBack, BLUE, 3) });
+      // Mirror at the middle, angle 0: the right half shows the left (blue → white); 180°: the left shows the right
+      f = await only('mirror'); draw(); const miR = px(K.BLU, K.Y), miL = px(K.WHT, K.Y);
+      set(f, 'angle', 180); draw(); const miFlip = px(K.WHT, K.Y);
+      step('mirror', { right: miR.join(), left: miL.join(), flipped: miFlip.join(), works: cl(miR, W3) && cl(miL, W3) && cl(miFlip, BLUE) });
+      // Offset, centre shifted to 75%: everything moves 480 px right and wraps (black's place shows grey); blend 50% halves it
+      f = await only('offset'); { const e = await kerr('fx_stylize', 'fxs_table'); if (e) step('tableKernel', e); }
+      set(f, 'shiftX', .75); draw(); const ofA = px(960, K.Y), ofWrap = px(K.BLK, K.Y);
+      set(f, 'blend', 50); draw(); const ofHalf = px(K.BLK, K.Y);
+      step('offset', { moved: ofA.join(), wrapped: ofWrap.join(), blend50: ofHalf.join(), works: cl(ofA, W3) && cl(ofWrap, GREY) && cl(ofHalf, GREY.map(v => v / 2), 2) });
+      // Magnify ×2 round the white patch's middle, size 200: a black pixel 180 px out shows white from 90 px out; with None
+      // only the magnified circle is left
+      f = await only('magnify'); { const e = await kerr('fx_stylize', 'fxs_magnify'); if (e) step('magnifyKernel', e); }
+      at(f, 'center', K.WHT, K.Y); set(f, 'size', 200); draw(); const mgIn = px(300, K.Y), mgOut = px(K.BLU, K.Y);
+      f.mode = 0; draw(); const mgNone = px(K.BLU, K.Y), mgNoneIn = px(300, K.Y);
+      step('magnify', { inside: mgIn.join(), outside: mgOut.join(), noneOutside: mgNone.join(), noneInside: mgNoneIn.join(), works: cl(mgIn, W3) && cl(mgOut, BLUE) && cl(mgNone, z) && cl(mgNoneIn, W3) });
+      // Corner Pin: the right corners pulled to the middle squeezes the layer into the left half (240 shows white from 480;
+      // the right half is empty)
+      f = await only('cornerpin'); { const e = await kerr('kernels', 'warp_blend'); if (e) step('warpBlendKernel', e); }
+      draw(); const cpSame = diff(plain, frame()).max;
+      set(f, 'urX', .5); set(f, 'lrX', .5); draw(); const cpL = px(240, K.Y), cpR = px(K.BLU, K.Y);
+      set(f, 'urY', .25); draw(); const cpPersp = px(940, 100);
+      step('cornerpin', { unchanged: cpSame, squeezedLeft: cpL.join(), emptyRight: cpR.join(), perspectiveCorner: cpPersp.join(), works: cpSame <= 2 && cl(cpL, W3) && cl(cpR, z) && cl(cpPersp, z) });
+      // Transform: 50% shows the whole card in the middle quarter (720,270 is the white patch's top left part); 180° puts the
+      // white patch where the ramp was; position 75% moves green to 1440; 50% opacity; Shutter angle 180 without motion stays sharp
+      f = await only('transform'); draw(); const trSame = diff(plain, frame()).max;
+      set(f, 'scaleH', 50); draw(); const trHalf = px(720, K.Y), trOut = px(100, 100);
+      set(f, 'scaleH', 100); set(f, 'rotation', 180); draw(); const trRot = px(K.BLU, 810);
+      set(f, 'rotation', 0); set(f, 'positionX', .75); draw(); const trPos = px(K.BLU, K.Y); set(f, 'positionX', .5);
+      set(f, 'opacity', 50); draw(); const trOp = px(K.WHT, K.Y); set(f, 'opacity', 100);
+      f.compShutter = false; set(f, 'shutter', 180); draw(); const trBlur = diff(plain, frame()).max;
+      step('transform', { unchanged: trSame, half: trHalf.join(), outside: trOut.join(), rotated: trRot.join(), moved: trPos.join(), opacity50: trOp.join(), shutterStill: trBlur,
+        works: trSame <= 2 && cl(trHalf, W3) && cl(trOut, z) && cl(trRot, W3) && cl(trPos, GREEN) && cl(trOp, [128, 128, 128], 2) && trBlur <= 3 });
+      // Optics Compensation, 60° wide: the middle is pulled out, so red reaches 630 (just left of the white|red edge);
+      // reversed it pushes in, so white reaches 650
+      f = await only('opticscomp'); set(f, 'fov', 60); draw(); const ocA = px(630, K.Y), ocC = px(K.WHT, K.Y);
+      f.reverse = true; draw(); const ocR = px(650, K.Y);
+      step('opticscomp', { forward630: ocA.join(), white: ocC.join(), reverse650: ocR.join(), works: cl(ocA, RED) && cl(ocC, W3) && cl(ocR, W3) });
+      const menuD = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Distort');
+      step('distortMenu', { items: menuD ? [...menuD.children].map(o => o.value) : null, works: menuD?.children.length === 15 });
+    }
+    const r14speed = {};
+    for (const [id, vals, opts] of [['spherize', {}], ['polar', {}], ['mirror', {}], ['offset', { shiftX: .7 }], ['magnify', {}], ['cornerpin', { urX: .8, lrY: .9 }],
+      ['transform', { rotation: 30, scaleH: 80 }], ['opticscomp', { fov: 60 }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r14speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round14speed', r14speed);
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }

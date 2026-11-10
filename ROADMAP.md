@@ -7,15 +7,19 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 14 (Distort I); Round 13 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 15 (Distort II, CC); Round 14 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 13 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 14 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section).
-Rounds 8–13 and the Round 6 leftovers are done. **Round 14 is next, Distort I** (WORKPLAN.md's round table):
-Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation, Smear (Smear is listed
-in Round 15 too; do it once). Round 13's helpers: `fxGaussPlane` (util::gauss_plane, `fp2_box`), `fxEdgePreserve`
+Rounds 8–14 and the Round 6 leftovers are done. **Round 15 is next, Distort II (CC)** (WORKPLAN.md's round table):
+CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, CC Smear, Split, Split 2, Tiler,
+Power Pin. Most are `fx_stylize`'s `fxs_warp` modes (4 Slant, 5 CC Smear, 6 Split, 11 Ripple Pulse, 12 Power Pin) or
+`fxs_griddler` / `fxs_flomotion` / `fxs_table` (Tiler); Bend It and Page Turn are `fx_warp`'s; host code in EffectCraft's
+crates/gpu/src/fx_stylize.rs and fx_warp.rs. Round 14's helpers: `m3mul` / `m3inv` / `m3t` / `m3s` / `m3r` / `m3of` /
+`m3quad` (3 × 3 matrices, Mat3::square_to_quad) and `fxWarp(E, img, m, {dst, opacity, sampling, acc})` (ops::warp
+through `warp_blend`; m maps frame pixels, source → output). Round 13's helpers: `fxGaussPlane` (util::gauss_plane, `fp2_box`), `fxEdgePreserve`
 (blur2::edge_preserving), `fxRectOf(m, w, h)` (a layer's on-screen box) and `E.rows(img)` (a working image as a data
 table, EffectCraft's image_rows; working images now allow copying out). Round 12's helpers: `fxAlphaPlane`, `fxMatteView`, `fxSetAlpha` (util::set_alpha), `fxRefine`,
 `keyPrimary` / `klPrimary`; Round 11's: `fxThinFeather`, `fxMorphFrac` (`fxn_morph`), `fxKeyApply`, `E.upload(canvas)`.
@@ -230,7 +234,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 14 (Distort I)**.
+EffectCraft carries on at **Round 15 (Distort II, CC)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -252,8 +256,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–13 and the Round 6 leftovers are done; Round 14 (Distort I) is next.** About 196
-   effects are left, in Rounds 14–31+.
+   **Where we left off: Rounds 1–14 and the Round 6 leftovers are done; Round 15 (Distort II, CC) is next.** About 188
+   effects are left, in Rounds 15–31+.
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -340,6 +344,20 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 14 done (2026-11-10): Distort I.** Distort gets **Spherize**, **Polar Coordinates**, **Mirror**,
+  **Offset**, **Magnify**, **Corner Pin**, **Transform** and **Optics Compensation** (15 in the group now).
+  - Mirror, Spherize, Polar and Optics are `fx_stylize`'s `fxs_warp` modes 1, 2, 3, 7; Offset is `fxs_table`, Magnify
+    `fxs_magnify` (its 18 blending modes in `MAGNIFY_MODES`). Corner Pin and Transform draw through `kernels.wgsl`'s
+    `warp_blend`, with the matrices built in JS (`m3*` helpers). No new WGSL.
+  - Transform works in the layer's own axes (it turns with the layer). Its motion blur uses Shutter angle with 16 samples
+    when "Use the comp's shutter angle" is off; with it on it renders sharp, since Lumina has no comp motion-blur switch
+    yet (Round A3). Only checked on a still layer so far (it stays sharp); an animated check would need keyframes.
+  - Polar Coordinates works in a box starting at (0, 0), so a layer elsewhere is shifted there and back by whole pixels.
+  - Settings that only grow EffectCraft's buffer (Optics' Resize, Magnify's Resize Layer) are left out: Lumina's
+    working image is already frame-sized.
+  - **Smear moved to Round 16**: it needs two masks on the layer, which comes with Reshape there. Round 15's "Smear" is
+    CC Smear.
+  - Speeds 5.3–6.0 ms a frame.
 - **EffectCraft Round 13 done (2026-11-10): Blur & Sharpen II.** Blur & Sharpen gets **Bilateral Blur**, **Smart Blur**,
   **Fast Box Blur**, **Channel Blur**, **Compound Blur**, **CC Cross Blur**, **CC Radial Blur**, **CC Radial Fast Blur** and
   **CC Vector Blur** (15 in the group now); **Reduce Interlace Flicker** sits in a new **Obsolete** group, as in EffectCraft.
