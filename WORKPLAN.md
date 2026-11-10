@@ -41,7 +41,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | — ✅ | Finish Round 6 leftovers | Hue/Sat per-colour ranges, per-channel Levels, a draggable Curves graph (also for Lumetri's curves) |
 | 11 ✅ | Keying I | Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key |
 | 12 ✅ | Keying II + mattes | Keylight, Spill Suppressor, Advanced Spill, Key Cleaner, Unmult, Screen, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard/Soft Matte |
-| 13 | Blur & Sharpen rest | Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross/Radial/Radial Fast/Vector Blur, Reduce Flicker, Camera-Shake Deblur |
+| 13 ✅ | Blur & Sharpen rest | Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross/Radial/Radial Fast/Vector Blur, Reduce Flicker (Camera-Shake Deblur moved to 25) |
 | 14 | Distort I | Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation, Smear |
 | 15 | Distort II (CC) | CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, Smear, Split, Split 2, Tiler, Power Pin |
 | 16 | Distort III (warps) | Bezier Warp, Mesh Warp, Warp, Reshape, Twirl (legacy), Rolling Shutter Repair, Upscale, Displacement Map* |
@@ -53,7 +53,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 22 | Perspective | Drop Shadow, Radial Shadow, Bevel Alpha, Bevel Edges, 3D Glasses, CC Cylinder, CC Sphere, CC Spotlight, CC Environment |
 | 23 | Transitions | Block Dissolve, Card Wipe, Gradient Wipe*, Iris/Linear/Radial Wipe, Venetian Blinds, CC Glass/Grid/Image/Light/Radial Scale/Scale Wipe, CC Jaws, Line Sweep, Twister, WarpoMatic |
 | 24 | Channel* | Arithmetic, Blend, Calculations, CC Composite, Channel Combiner, Compound Arithmetic, Invert, Minimax, Remove Color Matting, Set Channels, Set Matte, Shift Channels, Solid Composite |
-| 25 | Time* | Echo, Posterize Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time |
+| 25 | Time* | Echo, Posterize Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time, Camera-Shake Deblur |
 | 26–28 | Simulation | Particles (CC Particle World, Particle Systems II, Particle Playground), weather (Rainfall, Snowfall, Drizzle, Bubbles), Shatter, Card Dance, Caustics, Foam, Wave World, Ball Action, Hair, Mr. Mercury, Pixel Polly, Scatterize, Star Burst |
 | 29 | Utility & Text | Apply LUT, Cineon, Color Profile Converter, HDR Compander/Compression, CC Overbrights, Grow Bounds, Numbers, Timecode |
 | 30 | Audio-driven | Audio Spectrum, Audio Waveform |

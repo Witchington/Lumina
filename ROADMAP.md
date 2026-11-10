@@ -7,16 +7,17 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 13 (Blur & Sharpen II); Round 12 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 14 (Distort I); Round 13 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 12 is committed (2026-11-09; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 13 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section).
-Rounds 8–12 and the Round 6 leftovers are done. **Round 13 is next, Blur & Sharpen II** (WORKPLAN.md's round table):
-Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross / Radial / Radial Fast / Vector Blur, Reduce
-Flicker, Camera-Shake Deblur. Ones that need other frames or a second layer (Compound Blur's blur layer, Reduce Flicker,
-Camera-Shake Deblur) may have to wait for the foundations; decide at the start of the round. Round 12's helpers: `fxAlphaPlane`, `fxMatteView`, `fxSetAlpha` (util::set_alpha), `fxRefine`,
+Rounds 8–13 and the Round 6 leftovers are done. **Round 14 is next, Distort I** (WORKPLAN.md's round table):
+Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation, Smear (Smear is listed
+in Round 15 too; do it once). Round 13's helpers: `fxGaussPlane` (util::gauss_plane, `fp2_box`), `fxEdgePreserve`
+(blur2::edge_preserving), `fxRectOf(m, w, h)` (a layer's on-screen box) and `E.rows(img)` (a working image as a data
+table, EffectCraft's image_rows; working images now allow copying out). Round 12's helpers: `fxAlphaPlane`, `fxMatteView`, `fxSetAlpha` (util::set_alpha), `fxRefine`,
 `keyPrimary` / `klPrimary`; Round 11's: `fxThinFeather`, `fxMorphFrac` (`fxn_morph`), `fxKeyApply`, `E.upload(canvas)`.
 - **The user's goal now includes Premiere Pro:** everything After Effects *and* Premiere Pro have, and every effect they
   offer ("screen effects"). EffectCraft covers After Effects' effects. Premiere Pro's own extras (its video effects and
@@ -229,7 +230,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 13 (Blur & Sharpen II)**.
+EffectCraft carries on at **Round 14 (Distort I)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -251,8 +252,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–12 and the Round 6 leftovers are done; Round 13 (Blur & Sharpen II) is next.** About 206
-   effects are left, in Rounds 12–31+.
+   **Where we left off: Rounds 1–13 and the Round 6 leftovers are done; Round 14 (Distort I) is next.** About 196
+   effects are left, in Rounds 14–31+.
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -339,6 +340,19 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 13 done (2026-11-10): Blur & Sharpen II.** Blur & Sharpen gets **Bilateral Blur**, **Smart Blur**,
+  **Fast Box Blur**, **Channel Blur**, **Compound Blur**, **CC Cross Blur**, **CC Radial Blur**, **CC Radial Fast Blur** and
+  **CC Vector Blur** (15 in the group now); **Reduce Interlace Flicker** sits in a new **Obsolete** group, as in EffectCraft.
+  - All of it runs EffectCraft's own kernels: `fx_noise`'s `fxn_edge`, `fxn_smart_edges`, `fxn_pick`, `fxn_cblur_out`,
+    `fxn_cb_map`, `fxn_cb_level`; `fx_pixel2`'s `fp2_cross`, `fp2_radial`, `fp2_plane`, `fp2_box`, `fp2_vector`;
+    `fx_generate`'s `gen_ccradialfast`. Fast Box's fractional radius uses `lumina_key`'s `lk_mix`. No new WGSL.
+  - Compound Blur's Blur Layer is any other layer (like Color Link's source): Stretch map to fit lays that layer's box
+    over this one's, otherwise the map sits where the layer is.
+  - **Camera-Shake Deblur moved to Round 25 (Time)**: it swaps in sharper patches from neighbouring frames, which needs
+    the other-frames access that round builds.
+  - Lumina doesn't grow the layer's buffer as EffectCraft does (`b.pad`): the frame-sized working image already has
+    room around a layer, so only streaks past the frame's edge are cut.
+  - Speeds 5.8–10.2 ms a frame; Compound Blur 17.4 ms (five blur levels).
 - **EffectCraft Round 12 done (2026-11-09): Keying II + mattes.** Keying gets **Key Light**, **Screen Key**, **Spill
   Suppressor**, **Advanced Spill Suppressor**, **Key Cleaner**, **Unmult** and **CC Simple Wire Removal**; a new **Matte**
   group has **Simple Choker**, **Matte Choker**, **Refine Soft Matte** and **Refine Hard Matte**. 15 Keying + 4 Matte now.

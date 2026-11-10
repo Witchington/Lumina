@@ -829,6 +829,91 @@
     }
     step('round12speed', r12speed);
 
+    // ---- Round 13: Blur & Sharpen II. Same patches (black|white edge at x 320, white|red at 640, grey 1600-1920; the ramp below y 540)
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 1) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0], W3 = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const changed = () => diff(plain, frame()).changed;
+      // Bilateral Blur: black and white are far apart in colour, so the edge stays sharp (a Gaussian of the same size greys it);
+      // inside the white patch nothing changes; Colorize off turns red grey
+      f = await only('bilateral'); { const e = await kerr('fx_noise', 'fxn_edge'); if (e) step('edgeKernel', e); }
+      set(f, 'radius', 10); draw(); const blEdge = px(316, K.Y), blIn = px(K.WHT, K.Y);
+      f.colorize = false; draw(); const blGrey = px(K.RED, K.Y); f.colorize = true;
+      f = await only('blur'); set(f, 'blurriness', 20); draw(); const gEdge = px(316, K.Y);
+      step('bilateral', { edge: blEdge.join(), gaussianEdge: gEdge.join(), inside: blIn.join(), grey: blGrey.join(),
+        works: blEdge[0] < 6 && gEdge[0] > 30 && cl(blIn, W3) && blGrey[0] === blGrey[1] && blGrey[1] === blGrey[2] && blGrey[0] > 60 && blGrey[0] < 120 });
+      // Smart Blur: the edge stays (black stays black beside it); Edge Only: the edge white, flat white black; Overlay: edge white, flat kept
+      f = await only('smartblur'); { const e = await kerr('fx_noise', 'fxn_smart_edges'); if (e) step('smartKernel', e); }
+      draw(); const sbEdge = px(318, K.Y), sbIn = px(K.WHT, K.Y);
+      f.mode = 1; draw(); const sbEO = px(320, K.Y), sbEOflat = px(K.WHT, K.Y);
+      f.mode = 2; draw(); const sbOV = px(640, K.Y), sbOVflat = px(K.RED, K.Y);
+      step('smartblur', { edge: sbEdge.join(), inside: sbIn.join(), edgeOnly: sbEO.join(), edgeOnlyFlat: sbEOflat.join(), overlay: sbOV.join(), overlayFlat: sbOVflat.join(),
+        works: cl(sbEdge, z) && cl(sbIn, W3) && cl(sbEO, W3) && cl(sbEOflat, z) && cl(sbOV, W3) && cl(sbOVflat, P0(K.RED, K.Y)) });
+      // Fast Box Blur, 1 iteration, horizontal: 10 px left of the black|white edge one of 21 pixels is white (12); radius 11 gives 2 of 23
+      // (22); 10.5 lands between; Vertical leaves that pixel alone
+      f = await only('fastbox'); set(f, 'iterations', 1); f.dims = 1; draw(); const fb10 = px(310, K.Y);
+      set(f, 'radius', 11); draw(); const fb11 = px(310, K.Y); set(f, 'radius', 10.5); draw(); const fbHalf = px(310, K.Y);
+      f.dims = 2; draw(); const fbVert = px(310, K.Y);
+      step('fastbox', { r10: fb10.join(), r11: fb11.join(), r10half: fbHalf.join(), vertical: fbVert.join(),
+        works: cl(fb10, [12, 12, 12], 2) && cl(fb11, [22, 22, 22], 2) && fbHalf[0] > fb10[0] + 2 && fbHalf[0] < fb11[0] - 2 && cl(fbVert, z) });
+      // Channel Blur: red only, so beside the black|white edge only red rises; Alpha blurriness thins the frame's edge (grey darkens
+      // over black) unless Repeat edge pixels is on
+      f = await only('channelblur'); { const e = await kerr('fx_noise', 'fxn_cblur_out'); if (e) step('cblurKernel', e); }
+      set(f, 'red', 20); draw(); const cbEdge = px(316, K.Y), cbIn = px(K.WHT, K.Y);
+      set(f, 'red', 0); set(f, 'alpha', 20); draw(); const cbA = px(1919, K.Y);
+      f.repeat = true; draw(); const cbRep = px(1919, K.Y); f.repeat = false;
+      step('channelblur', { edge: cbEdge.join(), inside: cbIn.join(), alphaEdge: cbA.join(), repeated: cbRep.join(),
+        works: cbEdge[0] > 30 && cbEdge[1] === 0 && cbEdge[2] === 0 && cl(cbIn, W3) && cbA[0] < 110 && cl(cbRep, P0(1919, K.Y), 2) });
+      // Compound Blur with no blur layer: the layer's own brightness is the map, so black stays sharp beside the edge and white blurs;
+      // Invert swaps them. A hidden black ellipse as the map blurs nothing; a white one blurs where it is
+      f = await only('compoundblur'); { const e = await kerr('fx_noise', 'fxn_cb_level'); if (e) step('cbKernel', e); }
+      draw(); const coB = px(316, K.Y), coW = px(324, K.Y);
+      f.invert = true; draw(); const coIB = px(316, K.Y), coIW = px(324, K.Y); f.invert = false;
+      addShape('ellipse'); const CM = selLayer(); Object.assign(CM, { fill: '#000000', visible: false, start: 0, dur: 6 }); f.layer = CM.id;
+      draw(); const coBlackMap = changed();
+      CM.fill = '#ffffff'; draw(); const coWhiteMap = changed(); f.stretch = false; draw(); const coPlaced = changed(); f.stretch = true;
+      S.layers = S.layers.filter(x => x !== CM); f.layer = 0; S.sel = L.id;
+      step('compoundblur', { black: coB.join(), white: coW.join(), invertBlack: coIB.join(), invertWhite: coIW.join(), blackMapChanged: coBlackMap, whiteMapChanged: coWhiteMap, notStretched: coPlaced,
+        works: cl(coB, z) && coW[0] < 235 && coIB[0] > 15 && cl(coIW, W3) && coBlackMap === 0 && coWhiteMap > 1000 && coPlaced > 1000 });
+      // CC Cross Blur, X only: Blend averages the horizontal blur with the layer, Lighten keeps the white side white and lifts black
+      f = await only('crossblur'); { const e = await kerr('fx_pixel2', 'fp2_cross'); if (e) step('crossKernel', e); }
+      set(f, 'ry', 0); draw(); const crB = px(322, K.Y), crIn = px(K.WHT, K.Y);
+      f.mode = 3; draw(); const crLW = px(322, K.Y), crLB = px(316, K.Y);
+      step('crossblur', { blend: crB.join(), inside: crIn.join(), lightenWhite: crLW.join(), lightenBlack: crLB.join(),
+        works: crB[0] > 150 && crB[0] < 250 && cl(crIn, W3) && cl(crLW, W3) && crLB[0] > 30 });
+      // CC Radial Blur around the middle of the white patch: the centre stays white, the rest smears
+      f = await only('ccradial'); { const e = await kerr('fx_pixel2', 'fp2_radial'); if (e) step('radialKernel', e); }
+      set(f, 'centerX', K.WHT / 1920); set(f, 'centerY', K.Y / 1080); set(f, 'amount', 40); draw(); const rcC = px(K.WHT, K.Y), rcN = changed();
+      f.type = 3; draw(); const rcRotC = px(K.WHT, K.Y), rcRotN = changed();
+      step('ccradial', { centre: rcC.join(), changed: rcN, rotateCentre: rcRotC.join(), rotateChanged: rcRotN, works: cl(rcC, W3) && rcN > 20000 && cl(rcRotC, W3) && rcRotN > 20000 });
+      // CC Radial Fast Blur, same centre: 180 px left of it (on black) the streak reaches the white: Brightest makes it white,
+      // Standard grey, Darkest leaves it black
+      f = await only('ccradialfast'); { const e = await kerr('fx_generate', 'gen_ccradialfast'); if (e) step('rfastKernel', e); }
+      set(f, 'centerX', K.WHT / 1920); set(f, 'centerY', K.Y / 1080); draw(); const rfS = px(300, K.Y), rfC = px(K.WHT, K.Y);
+      f.zoom = 1; draw(); const rfB = px(300, K.Y); f.zoom = 2; draw(); const rfD = px(300, K.Y);
+      step('ccradialfast', { standard: rfS.join(), centre: rfC.join(), brightest: rfB.join(), darkest: rfD.join(),
+        works: rfS[0] > 20 && rfS[0] < 230 && cl(rfC, W3) && cl(rfB, W3) && cl(rfD, z) });
+      // CC Vector Blur: flat areas don't move; Natural streaks along the black|white edge (the white pixel beside it stays white),
+      // Perpendicular streaks across it
+      f = await only('vectorblur'); { const e = await kerr('fx_pixel2', 'fp2_vector'); if (e) step('vectorKernel', e); }
+      draw(); const vbIn = px(K.WHT, K.Y), vbNat = px(321, K.Y);
+      f.type = 2; draw(); const vbPerp = px(321, K.Y);
+      step('vectorblur', { inside: vbIn.join(), natural: vbNat.join(), perpendicular: vbPerp.join(), works: cl(vbIn, W3) && vbNat[0] > 245 && vbPerp[0] < 240 });
+      // Reduce Interlace Flicker blurs up and down only: the black|white edge stays, the grey patch's bottom edge (y 540) softens
+      f = await only('reduceflicker'); set(f, 'softness', 5); draw(); const rfEdge = px(316, K.Y), rfRow = px(K.GRY, 537), rfRow0 = P0(K.GRY, 537);
+      step('reduceflicker', { edge: rfEdge.join(), row: rfRow.join(), plainRow: rfRow0.join(), works: cl(rfEdge, z) && Math.abs(rfRow[0] - rfRow0[0]) > 5 });
+      const menuBlur = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Blur & Sharpen'), menuOld = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Obsolete');
+      step('blurMenu', { items: menuBlur ? [...menuBlur.children].map(o => o.value) : null, obsolete: menuOld ? [...menuOld.children].map(o => o.value) : null,
+        works: menuBlur?.children.length === 15 && menuOld?.children.length === 1 });
+    }
+    const r13speed = {};
+    for (const [id, vals, opts] of [['bilateral', {}], ['smartblur', {}], ['fastbox', {}], ['channelblur', { red: 10, alpha: 4 }], ['compoundblur', {}], ['crossblur', {}],
+      ['ccradial', {}], ['ccradialfast', {}], ['vectorblur', {}], ['reduceflicker', {}]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r13speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round13speed', r13speed);
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }

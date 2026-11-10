@@ -2390,7 +2390,7 @@ function fxApply(L, t, lc) {
   let used = 0, slot = 0;
   // working images are reused from frame to frame (the queue runs everything in order, so that's safe)
   const tex = () => FXG.pool[used++] || (FXG.pool[used - 1] = dev.createTexture({ size: [w, h], format: 'rgba32float',
-    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT }));
+    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT }));
   const m = r.m, sc = Math.hypot(m.a, m.b) || 1, bw = r.box?.w || w, bh = r.box?.h || h;
   const temp = [];   // this frame's odd-sized images and data tables, freed once the card is done with them
   if (FXG.cv.width !== w || FXG.cv.height !== h) { FXG.cv.width = w; FXG.cv.height = h; }
@@ -2408,14 +2408,17 @@ function fxApply(L, t, lc) {
     t: t - (L.start || 0),                        // seconds into the layer, for effects that move on their own
     T: t,                                         // the timeline time (beat and impact triggers use it)
     // the layer's on-screen box (x, y, w, h in frame pixels): where edge pinning and mosaic tiles line up
-    rect: (() => { const c = [[-.5, -.5], [.5, -.5], [-.5, .5], [.5, .5]].map(([u, v]) => m.transformPoint(new DOMPoint(u * bw, v * bh)));
-      const x0 = Math.min(...c.map(p => p.x)), y0 = Math.min(...c.map(p => p.y));
-      return [x0, y0, Math.max(1, Math.max(...c.map(p => p.x)) - x0), Math.max(1, Math.max(...c.map(p => p.y)) - y0)]; })(),
+    rect: fxRectOf(m, bw, bh),
     // a float table for the kernel's `data` binding
     data(arr) {
       const a = Float32Array.from(arr.length ? arr : [0]);
       const b = dev.createBuffer({ size: Math.max(16, Math.ceil(a.byteLength / 4) * 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       dev.queue.writeBuffer(b, 0, a); temp.push(b); return b;
+    },
+    // a working image as a data table: RGBA float rows of `row` pixels (each row padded to 256 bytes); returns [table, row]
+    rows(img) {
+      const row = Math.ceil(w / 16) * 16, b = dev.createBuffer({ size: row * 16 * h, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      enc.copyTextureToBuffer({ texture: img }, { buffer: b, bytesPerRow: row * 16 }, [w, h]); temp.push(b); return [b, row];
     },
     tex(tw, th) {
       const x = dev.createTexture({ size: [tw, th], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
@@ -2465,6 +2468,12 @@ function fxApply(L, t, lc) {
   if (clip) { c.globalCompositeOperation = 'destination-in'; c.setTransform(m); c.fillStyle = '#fff'; c.fillRect(-bw / 2, -bh / 2, bw, bh); }
   c.restore();
 }
+// a layer's on-screen box (x, y, w, h in frame pixels) from its matrix and box size
+function fxRectOf(m, bw, bh) {
+  const c = [[-.5, -.5], [.5, -.5], [-.5, .5], [.5, .5]].map(([u, v]) => m.transformPoint(new DOMPoint(u * bw, v * bh)));
+  const x0 = Math.min(...c.map(p => p.x)), y0 = Math.min(...c.map(p => p.y));
+  return [x0, y0, Math.max(1, Math.max(...c.map(p => p.x)) - x0), Math.max(1, Math.max(...c.map(p => p.y)) - y0)];
+}
 // blurs: raster::blur's three box passes per axis (EffectCraft's effects.rs)
 function fxBoxRadii(sigma, n) {
   if (sigma <= 0) return Array(n).fill(0);
@@ -2482,6 +2491,18 @@ function fxBoxPasses(E, img, rx, ry, repeat) {
   return cur;
 }
 const fxGauss = (E, img, sx, sy, repeat) => fxBoxPasses(E, img, sx > .05 ? fxBoxRadii(sx, 3) : [], sy > .05 ? fxBoxRadii(sy, 3) : [], repeat);
+// util::gauss_plane: three box passes per axis, edges repeated, each window summed directly (fx_pixel2's fp2_box)
+function fxGaussPlane(E, img, sx, sy) {
+  let cur = img;
+  for (const [vert, sg] of [[0, sx], [1, sy]]) if (sg > .05) for (const r of fxBoxRadii(sg, 3)) if (r) cur = E.run('fx_pixel2', 'fp2_box', fxP({ 0: [r, vert, 0, 0] }), cur);
+  return cur;
+}
+// blur2::edge_preserving (Bilateral, Smart Blur): Gaussian space × colour-distance weights, or (hard) a box with a brightness
+// range test; big radii sample on a stride. grey: Bilateral with Colorize off
+function fxEdgePreserve(E, img, r, range, hard, grey) {
+  const ss = 2 * Math.max(r / 2, .5) ** 2, sr = 2 * Math.max(range, 1e-3) ** 2;
+  return E.run('fx_noise', 'fxn_edge', fxP({ 0: [Math.ceil(r), Math.max(1, Math.ceil(r / 6)), hard, Math.floor(r * r + .5)], 1: [grey, 0, 0, 0] }, { 0: [ss, sr, range, 0] }), img);
+}
 const FX_DIMS = [[0, 'Both ways'], [1, 'Horizontal'], [2, 'Vertical']];
 const fxDims = d => d === 1 ? [1, 0] : d === 2 ? [0, 1] : [1, 1];
 const BLUR_K = [['kernels', 'box_h'], ['kernels', 'box_v']];
@@ -3971,6 +3992,129 @@ const FX = {
     } },
   refinesoft: { name: 'Refine Soft Matte', cat: 'Matte', kernels: MATTE_K, params: refineParams(false), run: (E, img, q) => fxRefine(E, img, q, false) },
   refinehard: { name: 'Refine Hard Matte', cat: 'Matte', kernels: MATTE_K, params: refineParams(true), run: (E, img, q) => fxRefine(E, img, q, true) },
+  // ---- Round 13: Blur & Sharpen II (EffectCraft's blur2.rs, blur3.rs and misc.rs; GPU host code from fx_noise.rs and
+  //      fx_pixel2.rs). Bilateral and Smart Blur run fx_noise's fxn_edge, Channel and Compound Blur fxn_pick / fxn_cb_*,
+  //      the CC blurs fx_pixel2's fp2_* and fx_generate's gen_ccradialfast ----
+  bilateral: { name: 'Bilateral Blur', cat: 'Blur & Sharpen', kernels: [['fx_noise', 'fxn_edge']], params: [
+      { id: 'radius', label: 'Radius', def: 5, min: 0, max: 200, dec: 1 },
+      { id: 'threshold', label: 'Threshold %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'colorize', label: 'Colorize', type: 'check', def: true }],
+    run(E, img, q) {
+      const r = q('radius') * E.sc;
+      return r < .5 ? img : fxEdgePreserve(E, img, r, q('threshold') / 100, false, !q('colorize'));
+    } },
+  smartblur: { name: 'Smart Blur', cat: 'Blur & Sharpen', kernels: [['fx_noise', 'fxn_edge'], ['fx_noise', 'fxn_smart_edges']], params: [
+      { id: 'radius', label: 'Radius', def: 3, min: 0, max: 100, dec: 1 },
+      { id: 'threshold', label: 'Threshold %', def: 25, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Mode', type: 'pick', def: 0, opts: [[0, 'Normal'], [1, 'Edge only'], [2, 'Overlay edge']] }],
+    run(E, img, q) {
+      const r = q('radius') * E.sc, thr = q('threshold') / 100, mode = q('mode');
+      const bl = r >= .5 ? fxEdgePreserve(E, img, r, thr, true, false) : img;
+      return mode ? E.run('fx_noise', 'fxn_smart_edges', fxP({ 0: [mode, 0, 0, 0] }, { 0: [Math.max(thr, .01) * .5, 0, 0, 0] }), bl) : bl;
+    } },
+  fastbox: { name: 'Fast Box Blur', cat: 'Blur & Sharpen', kernels: [...BLUR_K, ['lumina_key', 'lk_mix']], params: [
+      { id: 'radius', label: 'Blur radius', def: 10, min: 0, max: 3000, dec: 1 },
+      { id: 'iterations', label: 'Iterations', def: 3, min: 1, max: 50, dec: 0 },
+      { id: 'dims', label: 'Direction', type: 'pick', def: 0, opts: FX_DIMS },
+      { id: 'repeat', label: 'Repeat edge pixels', type: 'check', def: false }],
+    run(E, img, q) {
+      // a fractional radius blends the two whole radii either side, so the blur grows smoothly
+      const rad = Math.max(0, q('radius') * E.sc), r = Math.floor(rad), fr = rad - r < 1e-4 ? 0 : rad - r;
+      if (!r && !fr) return img;
+      const it = clamp(Math.round(q('iterations')), 1, 50), [kx, ky] = fxDims(q('dims')), rep = q('repeat');
+      const pass = R => fxBoxPasses(E, img, Array(it).fill(R * kx), Array(it).fill(R * ky), rep), lo = pass(r);
+      return fr ? E.run('lumina_key', 'lk_mix', fxP({}, { 0: [fr, 0, 0, 0] }), lo, pass(r + 1)) : lo;
+    } },
+  channelblur: { name: 'Channel Blur', cat: 'Blur & Sharpen', kernels: [...BLUR_K, ['fx_noise', 'fxn_pick'], ['fx_noise', 'fxn_cblur_out']], params: [
+      { id: 'red', label: 'Red blurriness', def: 0, min: 0, max: 3000, dec: 1 },
+      { id: 'green', label: 'Green blurriness', def: 0, min: 0, max: 3000, dec: 1 },
+      { id: 'blue', label: 'Blue blurriness', def: 0, min: 0, max: 3000, dec: 1 },
+      { id: 'alpha', label: 'Alpha blurriness', def: 0, min: 0, max: 3000, dec: 1 },
+      { id: 'repeat', label: 'Repeat edge pixels', type: 'check', def: false },
+      { id: 'dims', label: 'Direction', type: 'pick', def: 0, opts: FX_DIMS }],
+    run(E, img, q) {
+      const sig = ['red', 'green', 'blue', 'alpha'].map(c => Math.max(0, q(c)) * .5 * E.sc);
+      if (sig.every(v => v < .05)) return img;
+      const [kx, ky] = fxDims(q('dims')), rep = q('repeat');
+      const pick = (acc, from, mask, alpha) => E.run('fx_noise', 'fxn_pick', fxP({ 0: [alpha, 0, 0, 0], 1: mask }), acc, from);
+      // n: each colour blurred by its own amount; a: the alpha blurred the same way (its divisor), alpha = Alpha Blurriness
+      let n = img, a = pick(img, img, [1, 1, 1, 1], 1);
+      for (const v of new Set(sig.filter(v => v >= .05))) {
+        const bl = fxGauss(E, img, v * kx, v * ky, rep), on = c => sig[c] === v;
+        n = pick(n, bl, [on(0), on(1), on(2), 0], 0); a = pick(a, bl, [on(0), on(1), on(2), on(3)], 1);
+      }
+      return E.run('fx_noise', 'fxn_cblur_out', fxP(), n, a);
+    } },
+  compoundblur: { name: 'Compound Blur', cat: 'Blur & Sharpen', kernels: [...BLUR_K, ['fx_noise', 'fxn_cb_map'], ['fx_noise', 'fxn_cb_level']], params: [
+      { id: 'layer', label: 'Blur layer', type: 'pick', def: 0, opts: L => [[0, 'None (this layer)'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'maximum', label: 'Maximum blur', def: 20, min: 0, max: 1000, dec: 1 },
+      { id: 'stretch', label: 'Stretch map to fit', type: 'check', def: true },
+      { id: 'invert', label: 'Invert blur', type: 'check', def: false }],
+    run(E, img, q) {
+      const ms = Math.max(0, q('maximum')) * .5 * E.sc; if (ms < .05) return img;
+      const inv = q('invert'), M = q('layer') ? byId(q('layer')) : null;
+      // the blur map: the Blur Layer's brightness (its box stretched over this layer's, or where it sits), else the layer's own
+      let map;
+      if (M && M !== E.L && DRAW[M.kind]) {
+        const c = layerCanvas('cblur'), [a, b] = liveRange(M); if (E.T >= a && E.T < b) paintLayer(M, E.T, c.cx);
+        const up = E.upload(c.cv), r = RT[M.id];
+        if (q('stretch') && r?.m) {
+          const [rx, ry, rw, rh] = E.rect, [ox, oy, ow, oh] = fxRectOf(r.m, r.box?.w || E.w, r.box?.h || E.h), d = [];
+          for (let x = 0; x < E.w; x++) d.push(ox + (x + .5 - rx) / rw * ow);
+          for (let y = 0; y < E.h; y++) d.push(oy + (y + .5 - ry) / rh * oh);
+          map = E.run('fx_noise', 'fxn_cb_map', fxP({ 0: [1, inv, 0, 0], 1: [E.w, 0, 0, 0] }), up, null, null, E.data(d));
+        } else map = E.run('fx_noise', 'fxn_cb_map', fxP({ 0: [0, inv, 0, 0] }), up);
+      } else map = E.run('fx_noise', 'fxn_cb_map', fxP({ 0: [0, inv, 0, 0] }), img);
+      // five levels of blur; each pixel blends the two its map value falls between
+      const lv = [img]; for (let k = 1; k < 5; k++) { const v = ms * k / 4; lv.push(fxGauss(E, img, v, v, false)); }
+      const [rows, row] = E.rows(map), out = E.tex(E.w, E.h);
+      for (let k = 0; k < 4; k++) E.into('fx_noise', 'fxn_cb_level', fxP({ 0: [k, row, 0, 0] }), lv[k], lv[k + 1], out, null, rows);
+      return out;
+    } },
+  crossblur: { name: 'CC Cross Blur', cat: 'Blur & Sharpen', kernels: [...BLUR_K, ['fx_pixel2', 'fp2_cross']], params: [
+      { id: 'rx', label: 'Radius X', def: 10, min: 0, max: 500, dec: 1 },
+      { id: 'ry', label: 'Radius Y', def: 10, min: 0, max: 500, dec: 1 },
+      { id: 'mode', label: 'Transfer mode', type: 'pick', def: 0, opts: [[0, 'Blend'], [1, 'Add'], [2, 'Screen'], [3, 'Lighten']] }],
+    run(E, img, q) {
+      const rx = Math.round(Math.max(0, q('rx')) * E.sc), ry = Math.round(Math.max(0, q('ry')) * E.sc);
+      if (!rx && !ry) return img;
+      const hz = fxBoxPasses(E, img, [rx, rx, rx], [], false), vt = fxBoxPasses(E, img, [], [ry, ry, ry], false);
+      return E.run('fx_pixel2', 'fp2_cross', fxP({ 0: [q('mode'), 0, 0, 0] }), hz, vt);
+    } },
+  ccradial: { name: 'CC Radial Blur', cat: 'Blur & Sharpen', kernels: [['fx_pixel2', 'fp2_radial']], params: [
+      { id: 'type', label: 'Type', type: 'pick', def: 1, opts: [[0, 'Straight zoom'], [1, 'Fading zoom'], [2, 'Centered'], [3, 'Rotate'], [4, 'Rotate fading']] },
+      { id: 'amount', label: 'Amount', def: 10, min: -100, max: 100, dec: 1 },
+      { id: 'quality', label: 'Quality', def: 50, min: 1, max: 100, dec: 1 },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] }],
+    run(E, img, q) {
+      // zoom: a fraction of each pixel's distance to the centre; rotate: degrees of arc
+      const amt = q('amount'); if (!amt) return img;
+      const [cx, cy] = q('center');
+      return E.run('fx_pixel2', 'fp2_radial', fxP({ 0: [q('type'), 0, 0, 0] }, { 0: [cx, cy, clamp(amt / 100, -1, 1) * .5, amt * Math.PI / 180 * .25], 1: [clamp(q('quality'), 1, 100), 0, 0, 0] }), img);
+    } },
+  ccradialfast: { name: 'CC Radial Fast Blur', cat: 'Blur & Sharpen', kernels: [['fx_generate', 'gen_ccradialfast']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'amount', label: 'Amount', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'zoom', label: 'Zoom', type: 'pick', def: 0, opts: [[0, 'Standard'], [1, 'Brightest'], [2, 'Darkest']] }],
+    run(E, img, q) {
+      const v = clamp(q('amount') / 100, 0, 1) * .5; if (v <= 0) return img;
+      const [cx, cy] = q('center');
+      return E.run('fx_generate', 'gen_ccradialfast', fxP({ 0: [q('zoom'), 0, 0, 0] }, { 0: [cx, cy, v, 0] }), img);
+    } },
+  vectorblur: { name: 'CC Vector Blur', cat: 'Blur & Sharpen', kernels: [['fx_pixel2', 'fp2_plane'], ['fx_pixel2', 'fp2_box'], ['fx_pixel2', 'fp2_vector']], params: [
+      { id: 'type', label: 'Type', type: 'pick', def: 0, opts: [[0, 'Natural'], [1, 'Constant length'], [2, 'Perpendicular'], [3, 'Direction center'], [4, 'Direction fading']] },
+      { id: 'amount', label: 'Amount', def: 10, min: 0, max: 500, dec: 1 },
+      { id: 'offset', label: 'Angle offset°', def: 0, min: -360, max: 360, dec: 0 },
+      { id: 'soft', label: 'Map softness', def: 15, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // the streaks follow the layer's own softened brightness: along its contours, across them, or by its value
+      const amt = Math.max(0, q('amount')) * E.sc; if (amt < .5) return img;
+      const soft = Math.max(0, q('soft')) * .5 * E.sc, map = fxGaussPlane(E, E.run('fx_pixel2', 'fp2_plane', fxP({ 0: [0, 0, 0, 0] }), img), soft, soft);
+      return E.run('fx_pixel2', 'fp2_vector', fxP({ 0: [q('type'), 0, 0, 0] }, { 0: [amt, q('offset') * Math.PI / 180, 0, 0] }), img, map);
+    } },
+  reduceflicker: { name: 'Reduce Interlace Flicker', cat: 'Obsolete', kernels: BLUR_K, params: [
+      { id: 'softness', label: 'Softness', def: 1, min: 0, max: 100, dec: 2 }],
+    run(E, img, q) { const v = Math.max(0, q('softness')) * E.sc; return v < .05 ? img : fxGauss(E, img, 0, v, true); } },
   // ---- C4: anime VFX (Lumina's own shaders, shaders/lumina_vfx.wgsl), each can fire on beats, impacts or bookmarks ----
   rgbsplit: { name: 'RGB Split', cat: 'Anime VFX', kernels: VFX_K('lvx_rgbsplit'), params: [
       { id: 'amount', label: 'Amount (px)', def: 12, min: 0, max: 120, dec: 1 },
