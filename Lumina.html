@@ -8414,7 +8414,47 @@ function claudeLight(busy) {
 async function setClaude(on) {
   try { CLAUDE_ON = !!(await lumina.claudeSet(!!on)).enabled; } catch (e) { toast('Could not change Claude control: ' + (e.message || e)); }
   claudeLight();
-  notice(CLAUDE_ON ? 'Claude can now look at Lumina. Only Claude Code on this computer can connect, with Lumina\'s own key.' : 'Claude control is off. Nothing can connect to Lumina.');
+  notice(CLAUDE_ON ? 'Claude can now look at Lumina. Only Claude on this computer can connect, with Lumina\'s own key.' : 'Claude control is off. Nothing can connect to Lumina.');
+  if (!$('#modal').hidden && $('#ccBox')) claudeBox();
+}
+// Help › Connect Claude… (M1b): everything a friend needs to let their Claude reach their Lumina, in one window
+async function claudeBox(testResult) {
+  let I; try { I = await lumina.claudeSetup(); } catch (e) { return toast('Connect Claude is only in the desktop app.'); }
+  CLAUDE_ON = I.enabled; claudeLight();
+  const D = I.desktop, has = D.some(d => d.has), current = D.length && D.filter(d => d.has).every(d => d.current) && has, bad = D.find(d => d.unreadable);
+  const appState = !D.length ? 'The Claude app isn\'t on this computer.' : bad ? 'Claude\'s settings file couldn\'t be read, so Lumina leaves it alone.'
+    : current ? '✓ The Claude app is set up to reach this Lumina.' : has ? 'The Claude app has an older Lumina entry (Lumina moved or was reinstalled).' : 'Not set up yet.';
+  const codeState = I.code.current ? '✓ Claude Code already has this Lumina.' : I.code.has ? 'Claude Code has an older Lumina entry: run the remove line, then the add line.' : 'Not set up yet (or set up for one folder only).';
+  const sec = (n, title, body) => `<div style="margin:0 0 14px"><b>${n}. ${title}</b><div style="margin:4px 0 0 18px">${body}</div></div>`;
+  $('#mTitle').textContent = 'Connect Claude'; $('#mBarWrap').hidden = true;
+  $('#mText').innerHTML = `<div id="ccBox" style="text-align:left;max-width:640px">
+    <p style="margin:0 0 12px">Let Claude look at the project open in Lumina. Claude can only connect from <b>this computer</b>, with Lumina's own key, and for now it can only look, not change anything.</p>
+    ${sec(1, 'Turn it on', `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ccOn" ${I.enabled ? 'checked' : ''}> Allow Claude to control Lumina</label>
+      <small style="opacity:.75">Also in Edit. While it's on, the Claude light shows in the menu bar.</small>`)}
+    ${sec(2, 'The Claude app', `<div id="ccApp">${esc(appState)}</div>
+      ${D.length && !bad ? `<small style="opacity:.75;display:block;margin:4px 0">${current ? 'Remove takes the' : 'This adds one entry,'} “lumina”${current ? ' entry out of' : ', to'} Claude's settings file and changes nothing else. A copy of the file is kept first, next to it (…before-lumina). Restart the Claude app afterwards.</small>
+      <div style="display:flex;gap:6px">${current ? '' : `<button id="ccAdd" class="primary">${has ? 'Update Lumina in Claude' : 'Add Lumina to Claude'}</button>`}${has ? '<button id="ccRemove">Remove Lumina from Claude</button>' : ''}</div>` : ''}`)}
+    ${sec(3, 'Claude Code (the command line)', `<div>${esc(codeState)}</div>
+      <small style="opacity:.75;display:block;margin:4px 0">Paste this into a terminal once. It works in every folder:</small>
+      <div style="display:flex;gap:6px"><input id="ccLine" readonly value="${esc(I.codeLine)}" style="flex:1;font:12px monospace"><button id="ccCopy">Copy</button></div>
+      <small style="opacity:.75;display:block;margin-top:4px">To take it out again: <code>${esc(I.codeRemove)}</code></small>`)}
+    ${sec(4, 'Check it', `<div id="ccTest">${testResult ? esc(testResult) : 'Test the connection the way Claude starts it.'}</div>`)}
+  </div>`;
+  $('#mRow').innerHTML = '<button id="ccTestBtn">Test the connection</button><button id="mOk" class="primary">Close</button>';
+  $('#modal').hidden = false; $('#mOk').onclick = () => $('#modal').hidden = true;
+  $('#ccOn').onchange = e => setClaude(e.target.checked);
+  $('#ccCopy').onclick = async () => { try { await lumina.clipWrite({ text: I.codeLine }); notice('Copied. Paste it into a terminal and press Enter.'); } catch { $('#ccLine').select(); notice('Select the line and press Ctrl+C.'); } };
+  const edit = async add => { try { await lumina.claudeDesktop(add); notice(add ? 'Lumina is in Claude\'s settings. Restart the Claude app to use it.' : 'Lumina was taken out of Claude\'s settings.'); } catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method [^:]+: (Error: )?/, '')); } claudeBox(); };
+  if ($('#ccAdd')) $('#ccAdd').onclick = () => edit(true);
+  if ($('#ccRemove')) $('#ccRemove').onclick = () => edit(false);
+  $('#ccTestBtn').onclick = async () => {
+    $('#ccTest').textContent = 'Testing…';
+    const r = await lumina.claudeTest();
+    const msg = !r.started ? 'Lumina\'s Claude connection didn\'t start. ' + (r.stderr || '')
+      : !r.reached ? `It starts and offers ${r.tools.length} tools, but can't reach Lumina: ${CLAUDE_ON ? r.message : 'turn on step 1 first.'}`
+      : `✓ Working: Claude can start it, sees ${r.tools.length} tools and can look at this project.`;
+    $('#ccTest').textContent = msg;
+  };
 }
 if (window.lumina?.claudeGet) lumina.claudeGet().then(s => { CLAUDE_ON = !!s.enabled; claudeLight(); }).catch(() => { });
 const apiNum = v => typeof v === 'number' && isFinite(v) ? +v.toFixed(4) : v;
@@ -8533,7 +8573,7 @@ const MENUS = {
     ['Effects & Presets', '', () => { if (!PANELS.project) { PANELS.project = true; applyPanels(); } setLeftTab('fxp'); }, true, PANELS.project && LTAB === 'fxp']],
   Help: () => [{ head: 'Lumina ~ An editor for everything.', text: ABOUT }, '-', ['Welcome screen…', '', () => showWelcome()],
     ['Show tips again', '', () => { tipsReset(); notice('Tips are back on. They show up as you use Lumina.'); tipNext(); }], '-',
-    ['Keyboard shortcuts', '', () => toast(SHORTCUTS)], ['Send feedback…', '', feedbackBox], '-', ['About Lumina', '', aboutBox]],
+    ['Keyboard shortcuts', '', () => toast(SHORTCUTS)], ['Connect Claude…', '', () => claudeBox(), !!window.lumina?.claudeSetup], ['Send feedback…', '', feedbackBox], '-', ['About Lumina', '', aboutBox]],
 };
 let menuRun = [];
 function menuItems(name) {

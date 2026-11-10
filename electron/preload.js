@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('lumina', {
   claudeGet: () => ipcRenderer.invoke('claude:get'),
   claudeSet: on => ipcRenderer.invoke('claude:set', on),
   claudeProbe: opts => ipcRenderer.invoke('claude:probe', opts),   // self tests only (main.js refuses it otherwise)
+  claudeSetup: () => ipcRenderer.invoke('claude:setup'),
+  claudeDesktop: add => ipcRenderer.invoke('claude:desktop', add),
+  claudeTest: () => ipcRenderer.invoke('claude:test'),
+  claudeTestFile: opts => ipcRenderer.invoke('claude:testfile', opts),   // self tests only
+  claudeCli: flag => ipcRenderer.invoke('claude:cli', flag),              // self tests only
   setDirty: v => ipcRenderer.send('dirty', v),
   setTitle: t => ipcRenderer.send('title', t),
   closeNow: () => ipcRenderer.send('close-now'),

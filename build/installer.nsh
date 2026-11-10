@@ -34,6 +34,14 @@
 !macro customUnInstall
   ; Only on a real uninstall. During an update the new setup registers the file type again.
   ${IfNot} ${isUpdated}
+    ; If the Claude app was set up (Help > Connect Claude...) to start this Lumina, offer to take that entry out of
+    ; Claude's settings. Lumina.exe itself does the checking and the editing (it keeps a copy of Claude's file first).
+    ; A quiet uninstall (/S) leaves Claude's settings alone.
+    ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --claude-check' $R1
+    ${If} $R1 == 1
+      MessageBox MB_YESNO|MB_ICONQUESTION "The Claude app on this computer is set up to connect to Lumina.$\r$\n$\r$\nTake Lumina out of Claude's settings too? Nothing else in them changes, and a copy of the file is kept next to it." /SD IDNO IDNO +2
+      ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --claude-forget'
+    ${EndIf}
     ReadRegStr $R0 SHELL_CONTEXT "Software\Classes\.lumina" ""
     ; Only if it still points at Lumina's own type, so another app's .lumina setting is never touched.
     ${If} $R0 == "Lumina Project"

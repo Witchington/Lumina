@@ -121,6 +121,23 @@ export) instead of only writing Lumina's code.
     For friends: `claude mcp add lumina -e ELECTRON_RUN_AS_NODE=1 -- "<install>\Lumina.exe" "<install>\resources\app.asar\electron\mcp.js"`.
 - **M1 Bridge + looking (the plan):** the door, the MCP server, the Settings switch, and read-only tools: `get_project` (size, fps,
   length, layers), `get_layer`, `list_effects`, `snapshot` (the frame at a time, as a picture Claude can see).
+- **M1b Connect Claude on a friend's PC (asked for by the user 2026-11-09): done 2026-11-09.**
+  - **Help › Connect Claude…** has four steps:
+    1. The switch.
+    2. **The Claude app:** the "Add / Update / Remove Lumina" buttons change only `mcpServers.lumina`, after copying the file
+       to `…json.before-lumina`. Lumina refuses a file it can't read.
+    3. **Claude Code:** the `claude mcp add lumina --scope user -e ELECTRON_RUN_AS_NODE=1 -- "<exe>" "<…app.asar\electron\mcp.js>"`
+       line with Copy, plus the remove line. Lumina only reads `~/.claude.json`, to say whether it's set up or out of date.
+    4. **Test the connection:** starts mcp.js the way Claude does, then calls get_project.
+  - **Where the Claude app keeps its settings:** Lumina looks in `%APPDATA%\Claude`, `%LOCALAPPDATA%\Claude-Data\*` (this
+    PC's Claude app keeps them there) and `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude`. On Mac and Linux it
+    looks in the usual folders.
+  - An entry for a Lumina in another folder shows as "older" with an Update button.
+  - **Uninstaller:** `Lumina.exe --claude-check` (exit 1 = Claude's settings start this Lumina) and `--claude-forget`.
+    `build/installer.nsh` asks "Take Lumina out of Claude's settings too?" on a real uninstall only (not on updates; a
+    quiet /S uninstall says No).
+  - **Tests:** steps `connect` and `window` in `.claude\mcp`, using pretend settings files in the test folder.
+  - **Keep in mind:** if Electron fuses are ever turned on, leave RunAsNode on, or friends' connections break.
 - **M2 Editing:** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
   `delete_layer`, `add_effect`, `set_effect`, `undo` / `redo`.
 - **M3 Media:** `import_media` (a file path), `place_media` on the timeline, captions, `optimize`.

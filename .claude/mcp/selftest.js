@@ -92,6 +92,50 @@
     step('offAgain', { switchOff: (await lumina.claudeGet()).enabled === false, lightHidden: $('#claudeLight').hidden === true,
       refused: f2?.result?.isError === true && /Allow Claude to control Lumina/.test(f2.result.content[0].text) });
 
+    // ---- 7. M1b, Help › Connect Claude…: pretend Claude settings files in this test folder (never the real ones)
+    const TF = lumina.claudeTestFile, CF = 'claude-desktop/claude_desktop_config.json';
+    await TF({ name: 'claude-desktop', remove: true }); await TF({ name: 'claude-code.json', remove: true });
+    const noApp = await lumina.claudeSetup();
+    const seed = JSON.stringify({ mcpServers: { Other: { command: 'other.exe', args: ['x'] } }, preferences: { keep: 1 } }, null, 2);
+    await TF({ name: CF, text: seed });
+    const before1 = await lumina.claudeSetup(), added = await lumina.claudeDesktop(true);
+    const cfg = JSON.parse(await TF({ name: CF })), backup = await TF({ name: CF + '.before-lumina' }), lu = cfg.mcpServers?.lumina;
+    const checkOn = await lumina.claudeCli('--claude-check');
+    // an entry from a Lumina in another folder: shown as older, and not "ours" for the uninstaller
+    await TF({ name: CF, text: JSON.stringify({ ...cfg, mcpServers: { ...cfg.mcpServers, lumina: { command: 'C:\\Old\\Lumina.exe', args: ['C:\\Old\\mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1' } } } }) });
+    const stale = await lumina.claudeSetup(), checkStale = await lumina.claudeCli('--claude-check');
+    const forgetStale = await lumina.claudeCli('--claude-forget'), stillThere = !!JSON.parse(await TF({ name: CF })).mcpServers.lumina;
+    await lumina.claudeDesktop(true); const forget = await lumina.claudeCli('--claude-forget');
+    const afterForget = JSON.parse(await TF({ name: CF })), checkOff = await lumina.claudeCli('--claude-check');
+    // a settings file Lumina can't read is left exactly as it was
+    await TF({ name: CF, text: '{ not json' }); let unreadMsg = '';
+    try { await lumina.claudeDesktop(true); } catch (e) { unreadMsg = String(e.message || e); }
+    const unread = await TF({ name: CF });
+    await TF({ name: 'claude-code.json', text: JSON.stringify({ mcpServers: { lumina: { command: noApp.exe, args: [noApp.script] } } }) });
+    const codeOk = (await lumina.claudeSetup()).code;
+    step('connect', {
+      noClaudeApp: noApp.desktop.length === 0, codeNotYet: noApp.code.has === false,
+      codeLine: noApp.codeLine.includes('--scope user') && noApp.codeLine.includes('ELECTRON_RUN_AS_NODE=1') && noApp.codeLine.includes(noApp.exe) && /mcp\.js"$/.test(noApp.codeLine),
+      foundApp: before1.desktop.length === 1 && before1.desktop[0].has === false,
+      added: added.files.length === 1 && lu?.command === noApp.exe && lu?.args?.[0] === noApp.script && lu?.env?.ELECTRON_RUN_AS_NODE === '1',
+      keptOthers: cfg.mcpServers.Other?.command === 'other.exe' && cfg.preferences?.keep === 1, backupIsOld: backup === seed,
+      nowCurrent: added.desktop[0].current === true, checkSaysOurs: checkOn === 1,
+      staleShown: stale.desktop[0].has === true && stale.desktop[0].current === false, staleNotOurs: checkStale === 0,
+      forgetLeavesOthers: forgetStale === 0 && stillThere,
+      forgot: forget === 0 && !afterForget.mcpServers.lumina && afterForget.mcpServers.Other?.command === 'other.exe' && afterForget.preferences?.keep === 1, checkAfter: checkOff === 0,
+      unreadableLeftAlone: /couldn't be read/.test(unreadMsg) && unread === '{ not json', codeSeen: codeOk.has && codeOk.current
+    });
+    // the window, and its test button the way a friend would press it
+    await TF({ name: CF, text: seed });
+    await claudeBox(); const box = { open: !$('#modal').hidden && !!$('#ccBox'), line: $('#ccLine')?.value === noApp.codeLine, addBtn: !!$('#ccAdd'), helpItem: MENUS.Help().some(it => Array.isArray(it) && it[0] === 'Connect Claude…') };
+    const tOff = await lumina.claudeTest(); $('#ccOn').checked = true; $('#ccOn').onchange({ target: $('#ccOn') }); await new Promise(r => setTimeout(r, 300));
+    const tOn = await lumina.claudeTest();
+    $('#ccTestBtn').click(); for (let i = 0; i < 50 && !/Working|can't|didn't/.test($('#ccTest').textContent); i++) await new Promise(r => setTimeout(r, 200));
+    const shown = $('#ccTest').textContent; $('#mOk').click(); await setClaude(false);
+    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 4 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
+      buttonSaysWorking: /Working/.test(shown), shown, closed: $('#modal').hidden });
+    await TF({ name: 'claude-desktop', remove: true }); await TF({ name: 'claude-code.json', remove: true });
+
     const flat = []; (function walk(o, p) { for (const [k, v] of Object.entries(o)) { if (v === false) flat.push(p + k); else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, p + k + '.'); } })(R.steps, '');
     R.falses = flat;
   } catch (e) { R.error = String(e.stack || e); }

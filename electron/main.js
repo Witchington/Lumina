@@ -831,23 +831,108 @@ function closeDoor(keepSwitch) {
 ipcMain.handle('claude:get', () => ({ enabled: !!door, port: door ? door.address().port : null }));
 ipcMain.handle('claude:set', async (e, on) => { if (on) await openDoor(); else closeDoor(false); return { enabled: !!door, port: door ? door.address().port : null }; });
 app.on('will-quit', () => { if (door) closeDoor(true); });
-// self tests only: start electron/mcp.js the way Claude Code would, send it lines, and hand back what it answered
-if (SELFTEST) ipcMain.handle('claude:probe', (e, { lines, want, env = {} }) => new Promise(done => {
-  if (env.wrongKey) { const f = CTRL_FILE().replace(/\.json$/, '-wrong.json'); fs.writeFileSync(f, JSON.stringify({ ...readCtrl(), key: '0'.repeat(64) })); env = { LUMINA_CONTROL_FILE: f }; }
-  const p = require('child_process').spawn(process.execPath, [path.join(__dirname, 'mcp.js')],
-    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMINA_CONTROL_FILE: CTRL_FILE(), ...env }, windowsHide: true });
-  let out = '', err = '', got = [];
-  const finish = () => { clearTimeout(timer); try { p.kill(); } catch { } done({ replies: got, stderr: err.slice(0, 4000), rest: out.slice(0, 2000) }); };
-  const timer = setTimeout(finish, 30000);
-  p.stderr.on('data', d => err += d);
-  p.stdout.on('data', d => {
-    out += d; let i;
-    while ((i = out.indexOf('\n')) >= 0) { const line = out.slice(0, i); out = out.slice(i + 1); try { got.push(JSON.parse(line)); } catch { got.push({ notJson: line.slice(0, 300) }); } }
-    if (got.length >= want) finish();
+// start electron/mcp.js the way Claude starts it (this very Lumina.exe in Node mode), send it lines, hand back the answers
+const MCP_SCRIPT = () => path.join(__dirname, 'mcp.js');   // inside resources\app.asar once installed; Node mode reads it there
+function runMcp(lines, want, env = {}) {
+  return new Promise(done => {
+    const p = require('child_process').spawn(process.execPath, [MCP_SCRIPT()],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...(SELFTEST ? { LUMINA_CONTROL_FILE: CTRL_FILE() } : {}), ...env }, windowsHide: true });
+    let out = '', err = '', got = [], over = false;
+    const finish = () => { if (over) return; over = true; clearTimeout(timer); try { p.kill(); } catch { } done({ replies: got, stderr: err.slice(0, 4000), rest: out.slice(0, 2000) }); };
+    const timer = setTimeout(finish, 30000);
+    p.on('error', e => { err += String(e.message || e); finish(); });
+    p.stderr.on('data', d => err += d);
+    p.stdout.on('data', d => {
+      out += d; let i;
+      while ((i = out.indexOf('\n')) >= 0) { const line = out.slice(0, i); out = out.slice(i + 1); try { got.push(JSON.parse(line)); } catch { got.push({ notJson: line.slice(0, 300) }); } }
+      if (got.length >= want) finish();
+    });
+    p.on('exit', finish);
+    for (const l of lines) p.stdin.write((typeof l === 'string' ? l : JSON.stringify(l)) + '\n');
   });
-  p.on('exit', finish);
-  for (const l of lines) p.stdin.write((typeof l === 'string' ? l : JSON.stringify(l)) + '\n');
-}));
+}
+// self tests only: any conversation with mcp.js (wrongKey: a copy of the control file with a wrong key)
+if (SELFTEST) ipcMain.handle('claude:probe', (e, { lines, want, env = {} }) => {
+  if (env.wrongKey) { const f = CTRL_FILE().replace(/\.json$/, '-wrong.json'); fs.writeFileSync(f, JSON.stringify({ ...readCtrl(), key: '0'.repeat(64) })); env = { LUMINA_CONTROL_FILE: f }; }
+  return runMcp(lines, want, env);
+});
+// self tests only: read / write / delete a file inside the test folder, and run Lumina.exe with an uninstaller flag
+if (SELFTEST) ipcMain.handle('claude:testfile', (e, { name, text, remove }) => {
+  const dir = process.env.LUMINA_TESTDIR, f = path.resolve(dir, name);
+  if (!dir || !f.startsWith(path.resolve(dir) + path.sep)) throw new Error('Only files in the test folder.');
+  if (remove) { fs.rmSync(f, { recursive: true, force: true }); return null; }
+  if (text != null) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); return null; }
+  return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null;
+});
+if (SELFTEST) ipcMain.handle('claude:cli', (e, flag) => require('child_process').spawnSync(process.execPath, ['--selftest', flag], { env: process.env, timeout: 60000, windowsHide: true }).status);
+
+// ---------- Help › Connect Claude… (M1b): set Claude up on a friend's computer ----------
+// What Claude needs to start Lumina's MCP server on this computer: this Lumina.exe, in Node mode, with mcp.js.
+const luminaEntry = () => ({ command: process.execPath, args: [MCP_SCRIPT()], env: { ELECTRON_RUN_AS_NODE: '1' } });
+const q = s => `"${s}"`;
+const codeLine = () => `claude mcp add lumina --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${q(process.execPath)} ${q(MCP_SCRIPT())}`;
+const samePath = (a, b) => process.platform === 'win32' ? String(a || '').toLowerCase() === String(b || '').toLowerCase() : a === b;
+const isOurs = s => !!s && samePath(s.command, process.execPath);
+const isCurrent = s => isOurs(s) && samePath(s.args?.[0], MCP_SCRIPT()) && s.env?.ELECTRON_RUN_AS_NODE === '1';
+// the Claude app keeps its settings in different places depending on how it was installed; look in all of them
+function desktopConfigs() {
+  const H = require('os').homedir(), name = 'claude_desktop_config.json', list = [];
+  let main;
+  if (SELFTEST && process.env.LUMINA_TESTDIR) list.push(main = path.join(process.env.LUMINA_TESTDIR, 'claude-desktop', name));
+  else if (process.platform === 'win32') {
+    const ad = process.env.APPDATA || path.join(H, 'AppData', 'Roaming'), la = process.env.LOCALAPPDATA || path.join(H, 'AppData', 'Local');
+    main = path.join(ad, 'Claude', name); list.push(main);
+    const sub = (dir, pick, ...rest) => { try { for (const d of fs.readdirSync(dir)) if (pick(d)) list.push(path.join(dir, d, ...rest)); } catch { } };
+    sub(path.join(la, 'Claude-Data'), () => true, name);
+    sub(path.join(la, 'Packages'), d => /^Claude_/i.test(d), 'LocalCache', 'Roaming', 'Claude', name);
+  } else main = path.join(process.platform === 'darwin' ? path.join(H, 'Library', 'Application Support') : process.env.XDG_CONFIG_HOME || path.join(H, '.config'), 'Claude', name), list.push(main);
+  const found = list.filter(f => fs.existsSync(f));
+  // no settings file yet, but the Claude app is there: it reads the usual place
+  return found.length ? found : fs.existsSync(path.dirname(main)) ? [main] : [];
+}
+const readJson = f => JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, ''));
+function desktopState() {
+  return desktopConfigs().map(file => {
+    if (!fs.existsSync(file)) return { file, exists: false, has: false };
+    try { const s = readJson(file).mcpServers?.lumina; return { file, exists: true, has: !!s, ours: isOurs(s), current: isCurrent(s) }; }
+    catch { return { file, exists: true, unreadable: true, has: false }; }
+  });
+}
+// change only mcpServers.lumina, after keeping a copy of the file as it was (…json.before-lumina)
+function desktopEdit(add, onlyOurs) {
+  const done = [];
+  for (const file of desktopConfigs()) {
+    let j = {};
+    if (fs.existsSync(file)) {
+      try { j = readJson(file); } catch { throw new Error(`Claude's settings file couldn't be read, so it was left alone:\n${file}`); }
+      if (!add && !(j.mcpServers?.lumina && (!onlyOurs || isOurs(j.mcpServers.lumina)))) continue;
+      fs.copyFileSync(file, file + '.before-lumina');
+    } else if (!add) continue;
+    j.mcpServers ||= {};
+    if (add) j.mcpServers.lumina = luminaEntry(); else delete j.mcpServers.lumina;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(j, null, 2));
+    done.push(file);
+  }
+  return done;
+}
+// Claude Code's own list (read only: Lumina never edits it; the window gives the line to paste instead)
+function codeState() {
+  const f = SELFTEST && process.env.LUMINA_TESTDIR ? path.join(process.env.LUMINA_TESTDIR, 'claude-code.json') : path.join(require('os').homedir(), '.claude.json');
+  try { const s = readJson(f).mcpServers?.lumina; return { has: !!s, current: !!s && samePath(s.command, process.execPath) && samePath(s.args?.[0], MCP_SCRIPT()) }; }
+  catch { return { has: false, current: false }; }
+}
+const setupInfo = () => ({ enabled: !!door, exe: process.execPath, script: MCP_SCRIPT(), codeLine: codeLine(), codeRemove: 'claude mcp remove lumina --scope user', code: codeState(), desktop: desktopState() });
+ipcMain.handle('claude:setup', () => setupInfo());
+ipcMain.handle('claude:desktop', (e, add) => { const files = desktopEdit(!!add, false); return { files, ...setupInfo() }; });
+// "Test the connection": the same start-up Claude does, then one look at the project
+ipcMain.handle('claude:test', async () => {
+  const r = await runMcp([{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lumina-test', version: '1' } } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list' }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_project', arguments: {} } }], 3);
+  const a = id => r.replies.find(x => x.id === id), call = a(3)?.result;
+  return { started: a(1)?.result?.serverInfo?.name === 'lumina', tools: (a(2)?.result?.tools || []).map(t => t.name), reached: !!call && !call.isError,
+    message: call?.isError ? call.content?.[0]?.text : '', stderr: r.stderr };
+});
 
 // ---------- self test (npm run selftest): drives the editor and writes results to selftest.json ----------
 async function runSelftest() {
@@ -870,7 +955,14 @@ async function runSelftest() {
 }
 
 // ---------- app lifecycle ----------
-if (!SELFTEST && !app.requestSingleInstanceLock()) app.quit();
+// for the uninstaller: --claude-check exits 1 when the Claude app's settings start this Lumina, --claude-forget takes it out
+const CLAUDE_CLI = process.argv.find(a => a === '--claude-check' || a === '--claude-forget');
+if (CLAUDE_CLI) {
+  let code = 0;
+  try { if (CLAUDE_CLI === '--claude-check') code = desktopState().some(d => d.ours) ? 1 : 0; else desktopEdit(false, true); } catch { code = 2; }
+  app.exit(code);
+}
+else if (!SELFTEST && !app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', (e, argv) => {
     const p = projectArg(argv);
