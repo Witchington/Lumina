@@ -2413,7 +2413,7 @@ function fxApply(L, t, lc) {
     rect: fxRectOf(m, bw, bh),
     // a float table for the kernel's `data` binding
     data(arr) {
-      const a = Float32Array.from(arr.length ? arr : [0]);
+      const a = arr instanceof Float32Array && arr.length ? arr : Float32Array.from(arr.length ? arr : [0]);
       const b = dev.createBuffer({ size: Math.max(16, Math.ceil(a.byteLength / 4) * 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       dev.queue.writeBuffer(b, 0, a); temp.push(b); return b;
     },
@@ -2496,6 +2496,47 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 18 helpers ----
+// util::layer_or_self: another layer as it sits in the frame, as a working image, or this layer's own picture
+function fxLayerOr(E, img, id, name) {
+  const M = id ? byId(id) : null; if (!M || M === E.L || !DRAW[M.kind]) return img;
+  const c = layerCanvas(name), [a, b] = liveRange(M); if (E.T >= a && E.T < b) paintLayer(M, E.T, c.cx);
+  return E.upload(c.cv);
+}
+const fxLayerPick = (id, label) => ({ id, label, type: 'pick', def: 0, opts: L => [[0, 'None (this layer)'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] });
+// stylize3's effect light and surface (CC Glass, CC Plastic)
+const BUMP_PROPS = [[0, 'Red'], [1, 'Green'], [2, 'Blue'], [3, 'Alpha'], [4, 'Luminance'], [5, 'Lightness']];
+const fxBumpLight = (amb, dif, spec, rough, metal) => [
+  { id: 'intensity', label: 'Light intensity %', def: 100, min: 0, max: 400, dec: 1 },
+  { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+  { id: 'lightType', label: 'Light type', type: 'pick', def: 0, opts: [[0, 'Distant light'], [1, 'Point light']] },
+  { id: 'lightHeight', label: 'Light height', def: 50, min: -100, max: 100, dec: 1 },
+  { id: 'lightPos', label: 'Light position', type: 'pt', def: [.25, .25] },
+  { id: 'lightDir', label: 'Light direction°', def: -45, min: -360, max: 360, dec: 0 },
+  { id: 'ambient', label: 'Ambient %', def: amb, min: 0, max: 200, dec: 1 },
+  { id: 'diffuse', label: 'Diffuse %', def: dif, min: 0, max: 200, dec: 1 },
+  { id: 'specular', label: 'Specular %', def: spec, min: 0, max: 200, dec: 1 },
+  { id: 'roughness', label: 'Roughness', def: rough, min: .001, max: .5, dec: 3 },
+  { id: 'metal', label: 'Metal %', def: metal, min: 0, max: 100, dec: 1 }];
+// fx_pixel2::bump: the height field (a property of the bump layer, softened) lights the layer; Glass also refracts it
+function fxBump(E, img, q, glass) {
+  const soft = Math.max(0, q('softness')) * E.sc * .5, height = q('height') / 100;
+  let hf = fxGaussPlane(E, E.run('fx_pixel2', 'fp2_plane', fxP({ 0: [1, q('property'), 0, 0] }), fxLayerOr(E, img, q('bump'), 'bump')), soft, soft), disp = 0;
+  if (glass) disp = q('displacement') * E.sc * .25;
+  else {
+    const lo = q('cutMin') / 100, hi = q('cutMax') / 100;
+    if (lo > 0 || hi < 1) hf = E.run('fx_pixel2', 'fp2_plane', fxP({ 0: [3, 0, 0, 0] }, { 0: [Math.min(lo, hi), Math.max(lo, hi), 0, 0] }), hf);
+  }
+  // BumpLight::from: the distant light's direction turns with the layer
+  const elev = clamp(q('lightHeight'), -100, 100) / 100 * Math.PI / 2, az = q('lightDir') * Math.PI / 180 + E.rot, lp = q('lightPos');
+  const dir = [Math.sin(az) * Math.cos(elev), -Math.cos(az) * Math.cos(elev), Math.sin(elev)], lc = q('lightColor');
+  const lh = q('lightHeight') / 100 * Math.max(E.bw, E.bh) * E.sc * .5, rough = clamp(q('roughness'), .001, 1);
+  return E.run('fx_pixel2', 'fp2_bump', fxP({ 0: [glass ? 1 : 0, q('lightType') === 1 ? 1 : 0, 0, 0] }, {
+    0: [height * 25, disp, height !== 0 ? 1 : 0, lh], 1: [q('intensity') / 100, q('ambient') / 100, q('diffuse') / 100, q('specular') / 100],
+    2: [1 / rough, q('metal') / 100, lp[0], lp[1]], 3: [lc[0], lc[1], lc[2], 0], 4: [dir[0], dir[1], dir[2], 0] }), img, hf);
+}
+// f64::round (halves away from zero)
+const fxRound = v => v < 0 ? -Math.round(-v) : Math.round(v);
 // ---- Round 17 helpers ----
 // EffectCraft's ctx.seed: each layer has its own random pattern
 const fxSeed = E => Math.imul((E.L?.id | 0) + 1, 0x9e3779b1) >>> 0;
@@ -3446,6 +3487,122 @@ const FX = {
       { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
     run(E, img, q) {
       return E.run('fx_stylize', 'fxs_point', fxP({ 0: [4, q('invR') ? 1 : 0, q('invG') ? 1 : 0, q('invB') ? 1 : 0] }, { 0: [q('red') / 255, q('green') / 255, q('blue') / 255, q('blend') / 100] }), img);
+    } },
+  // ---- Round 18: Stylize II (CC). EffectCraft's stylize3.rs and stylize2.rs; GPU host code from fx_pixel2.rs (Block Load,
+  //      Burn Film, Glass, HexTile, Mr. Smoothie, Plastic: fp2_*) and fx_stylize.rs (Kaleida's fxs_warp, RepeTile) ----
+  ccblockload: { name: 'CC Block Load', cat: 'Stylize', kernels: [['fx_pixel2', 'fp2_block_means'], ['fx_pixel2', 'fp2_block_load']], params: [
+      { id: 'completion', label: 'Completion %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'scan', label: 'Scanlines', type: 'check', def: true },
+      { id: 'smooth', label: 'Smoothing', type: 'check', def: true },
+      { id: 'cleared', label: 'Start cleared', type: 'check', def: true },
+      { id: 'bilinear', label: 'Bilinear', type: 'check', def: false }],
+    run(E, img, q) {
+      // the picture loads in ever-smaller blocks (each level halves them), like an image arriving over a slow line
+      const c = clamp(q('completion') / 100, 0, 1); if (c >= 1) return img;
+      const w = E.w, h = E.h, nlev = Math.ceil(Math.log2(Math.max(w, h, 2))), lp = c * (nlev + 1), done = Math.floor(lp), frac = lp - done;
+      const size = k => 2 ** (nlev - Math.min(k, nlev));
+      const means = s => {
+        const gw = Math.max(1, Math.ceil(w / s)), gh = Math.max(1, Math.ceil(h / s)), g = E.tex(gw, gh);
+        E.into('fx_pixel2', 'fp2_block_means', fxP({ 0: [s, 0, 0, 0] }), img, null, g, [Math.ceil(gw / 16), Math.ceil(gh / 16)]); return g;
+      };
+      const sN = size(done), grid = means(sN), old = done > 0 ? [size(done - 1), means(size(done - 1))] : null;
+      const flags = (q('scan') ? 1 : 0) | (q('smooth') ? 2 : 0) | (q('bilinear') ? 4 : 0) | (old ? 8 : 0) | (q('cleared') ? 16 : 0);
+      return E.run('fx_pixel2', 'fp2_block_load', fxP({ 0: [sN, old ? old[0] : 1, flags, 0] }, { 0: [frac, Math.ceil(h / sN), 0, 0] }), grid, old ? old[1] : null);
+    } },
+  ccburnfilm: { name: 'CC Burn Film', cat: 'Stylize', kernels: [['fx_pixel2', 'fp2_burn']], params: [
+      { id: 'burn', label: 'Burn %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 10000, dec: 0 }],
+    run(E, img, q) {
+      // holes burn out from the centre through noise, with a charred rim and a hot orange edge
+      const burn = clamp(q('burn') / 100, 0, 1); if (burn <= 0) return img;
+      const [cx, cy] = q('center'), seed = Math.max(0, q('seed')) >>> 0, diag = Math.max(1, Math.hypot(E.bw, E.bh) * E.sc), feat = Math.max(1e-3, 60 * E.sc);
+      return E.run('fx_pixel2', 'fp2_burn', fxP({ 0: [(seed + 17) >>> 0, 0, 0, 0] }, { 0: [cx, cy, diag, feat], 1: [1 - burn * 1.25, .12 * Math.min(burn * 10, 1), 0, 0] }), img);
+    } },
+  ccglass: { name: 'CC Glass', cat: 'Stylize', kernels: [['fx_pixel2', 'fp2_plane'], ['fx_pixel2', 'fp2_box'], ['fx_pixel2', 'fp2_bump']], params: [
+      fxLayerPick('bump', 'Bump map'),
+      { id: 'property', label: 'Property', type: 'pick', def: 3, opts: BUMP_PROPS },
+      { id: 'softness', label: 'Softness', def: 10, min: 0, max: 200, dec: 1 },
+      { id: 'height', label: 'Height', def: 50, min: -100, max: 100, dec: 1 },
+      { id: 'displacement', label: 'Displacement', def: 100, min: -500, max: 500, dec: 1 },
+      ...fxBumpLight(75, 32, 26, .05, 100)],
+    run: (E, img, q) => fxBump(E, img, q, true) },
+  cchextile: { name: 'CC HexTile', cat: 'Stylize', kernels: [['fx_pixel2', 'fp2_hextile']], params: [
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: [[0, 'Normal'], [1, 'Mirrored'], [2, 'Rotated']] },
+      { id: 'radius', label: 'Radius', def: 50, min: 1, max: 4000, dec: 1 },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'rotate', label: 'Rotate°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'smear', label: 'Smearing %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // every hexagon shows the one around the centre (mirrored or turned on every other cell); the per-pixel source
+      // positions are worked out on the CPU in double precision, as EffectCraft does, and kept until a setting changes
+      const r = Math.max(.5, q('radius') * E.sc), [cx, cy] = q('center'), rot = q('rotate') * Math.PI / 180 + E.rot, sm = clamp(q('smear') / 100, 0, 1), mode = q('render');
+      const w = E.w, h = E.h, key = [r, cx, cy, rot, sm, mode, w, h].join(); let d = FXC.get(E.fx);
+      if (d?.key !== key) {
+        const sn = Math.sin(rot), cs = Math.cos(rot), S3 = Math.sqrt(3), t = new Float32Array(2 * w * h);
+        for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i += 2) {
+          const dx = x + .5 - cx, dy = y + .5 - cy, u = dx * cs + dy * sn, v = -dx * sn + dy * cs;
+          // stylize3::hex_cell: the pointy-top cell around (u, v), by cube rounding
+          const qx = (S3 / 3 * u - v / 3) / r, qz = (2 / 3 * v) / r, qy = (-S3 / 3 * u - v / 3) / r;
+          let rx = fxRound(qx), ry = fxRound(qy), rz = fxRound(qz);
+          const ex = Math.abs(rx - qx), ey = Math.abs(ry - qy), ez = Math.abs(rz - qz);
+          if (ex > ey && ex > ez) rx = -ry - rz; else if (ey <= ez) rz = -rx - ry;
+          let lu = u - r * S3 * (rx + rz / 2), lv = v - r * 1.5 * rz;
+          if (mode && (((rx + rz) % 2) + 2) % 2 === 1) { lu = -lu; if (mode === 2) lv = -lv; }
+          const tx = cx + lu * cs - lv * sn, ty = cy + lu * sn + lv * cs;
+          t[i] = tx + (x + .5 - tx) * sm; t[i + 1] = ty + (y + .5 - ty) * sm;
+        }
+        FXC.set(E.fx, d = { key, t });
+      }
+      return E.run('fx_pixel2', 'fp2_hextile', fxP(), img, null, null, E.data(d.t));
+    } },
+  cckaleida: { name: 'CC Kaleida', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_warp']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'size', label: 'Size %', def: 100, min: 1, max: 1000, dec: 1 },
+      { id: 'mirroring', label: 'Mirroring', type: 'pick', def: 0, opts: [[0, 'Flower'], [1, 'Starlish'], [2, 'Unfold'], [3, 'Wheel'], [4, 'Triangles']] },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 }],
+    run(E, img, q) {
+      // a kaleidoscope: one wedge around the centre repeats (and, but for Wheel, mirrors) all the way round
+      const [cx, cy] = q('center'), mode = q('mirroring'), n = [6, 8, 4, 12, 3][Math.min(mode, 4)];
+      return E.run('fx_stylize', 'fxs_warp', fxP({ 0: [8, mode !== 3 ? 1 : 0, 0, 0] }, { 0: [cx, cy, Math.max(1, q('size')) / 100, q('rotation') * Math.PI / 180 + E.rot], 1: [2 * Math.PI / n, 0, 0, 0] }), img);
+    } },
+  ccmrsmoothie: { name: 'CC Mr. Smoothie', cat: 'Stylize', kernels: [['fx_pixel2', 'fp2_plane'], ['fx_pixel2', 'fp2_box'], ['fx_pixel2', 'fp2_smoothie']], params: [
+      fxLayerPick('flow', 'Flow layer'),
+      { id: 'property', label: 'Property', type: 'pick', def: 4, opts: [[0, 'Red'], [1, 'Green'], [2, 'Blue'], [3, 'Alpha'], [4, 'Luminance'], [5, 'Lightness'], [6, 'Hue'], [7, 'Saturation']] },
+      { id: 'smoothness', label: 'Smoothness', def: 20, min: 0, max: 200, dec: 1 },
+      { id: 'sampleA', label: 'Sample A', type: 'pt', def: [.25, .5] },
+      { id: 'sampleB', label: 'Sample B', type: 'pt', def: [.75, .5] },
+      { id: 'phase', label: 'Phase°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'loop', label: 'Color loop', type: 'pick', def: 0, opts: [[0, '1x'], [1, '2x'], [2, '3x'], [3, '4x']] }],
+    run(E, img, q) {
+      // the colours along the line from Sample A to Sample B repaint the layer, following the flow layer's property
+      const sm = Math.max(0, q('smoothness')) * E.sc * .5, [ax, ay] = q('sampleA'), [bx, by] = q('sampleB');
+      const pl = fxGaussPlane(E, E.run('fx_pixel2', 'fp2_plane', fxP({ 0: [2, q('property'), 0, 0] }), fxLayerOr(E, img, q('flow'), 'flow')), sm, sm);
+      return E.run('fx_pixel2', 'fp2_smoothie', fxP({}, { 0: [ax, ay, bx, by], 1: [q('phase') / 360, q('loop') + 1, 0, 0] }), img, pl);
+    } },
+  ccplastic: { name: 'CC Plastic', cat: 'Stylize', kernels: [['fx_pixel2', 'fp2_plane'], ['fx_pixel2', 'fp2_box'], ['fx_pixel2', 'fp2_bump']], params: [
+      fxLayerPick('bump', 'Bump layer'),
+      { id: 'property', label: 'Property', type: 'pick', def: 3, opts: BUMP_PROPS },
+      { id: 'softness', label: 'Softness', def: 10, min: 0, max: 200, dec: 1 },
+      { id: 'height', label: 'Height', def: 25, min: -100, max: 100, dec: 1 },
+      { id: 'cutMin', label: 'Cut min %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'cutMax', label: 'Cut max %', def: 100, min: 0, max: 100, dec: 1 },
+      ...fxBumpLight(100, 70, 50, .05, 50)],
+    run: (E, img, q) => fxBump(E, img, q, false) },
+  ccrepetile: { name: 'CC RepeTile', cat: 'Stylize', kernels: [['fx_stylize', 'fxs_repetile']], params: [
+      { id: 'right', label: 'Expand right', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'left', label: 'Expand left', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'down', label: 'Expand down', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'up', label: 'Expand up', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'tiling', label: 'Tiling', type: 'pick', def: 0, opts: [[0, 'Repeat'], [1, 'Unfold'], [2, 'Checker flip H'], [3, 'Checker flip V'], [4, 'Checker flip']] }],
+    run(E, img, q) {
+      // copies of the layer grow out from its sides (its box, as it sits in the frame); past the grown edges stays clear
+      const s = E.sc, R = Math.max(0, q('right')) * s, Lf = Math.max(0, q('left')) * s, D = Math.max(0, q('down')) * s, U = Math.max(0, q('up')) * s;
+      const [x0, y0, w, h] = E.rect; if (R + Lf + D + U < .5 || w < 1 || h < 1) return img;
+      const d = [], tile = (v, lo, hi, size) => { if (v < -lo || v > size + hi) { d.push(0, -1e7); return; } const i = Math.floor(v / size); d.push(i, v - i * size); };
+      for (let x = 0; x < E.w; x++) tile(x + .5 - x0, Lf, R, w);
+      for (let y = 0; y < E.h; y++) tile(y + .5 - y0, U, D, h);
+      return E.run('fx_stylize', 'fxs_repetile', fxP({ 0: [E.w, q('tiling'), 0, 0] }, { 0: [x0, y0, w, h] }), img, null, null, E.data(d));
     } },
   gradientramp: { name: 'Gradient Ramp', cat: 'Generate', kernels: [['kernels', 'pointwise']], params: [
       { id: 'start', label: 'Start', type: 'pt', def: [.5, 0] },

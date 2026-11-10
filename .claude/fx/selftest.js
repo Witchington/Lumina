@@ -1105,7 +1105,7 @@
         works: cl(thR, z) && cl(thG, W3) && cl(thI, W3) && thB <= 2 && cl(tr, [255, 0, 0]) && cl(tg, [0, 255, 0]) && cl(tb, [0, 0, 255]) && cl(tgI, [255, 255, 0]) && cl(bsW, W3)
           && cl(ctR, [255, 65, 65], 6) && cl(ctE, W3) && lum(ctEdge) < 128 && cl(rgMid, P0(K.RED, K.Y), 3) && rgChanged > 500 && rgCut > 300 && txNone <= 2 && txOn > 1000 && txOff <= 2 && txStretch > 1000 });
       const menuS = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Stylize');
-      step('stylizeMenu17', { count: menuS?.children.length, works: menuS?.children.length === 16 });
+      step('stylizeMenu17', { count: menuS?.children.length, works: menuS?.children.length >= 16 });
     }
     const r17speed = {};
     for (const [id, vals] of [['brushstrokes', {}], ['cartoon', {}], ['coloremboss', {}], ['roughenedges', {}], ['scatter', { amount: 20 }], ['ccthreshold', {}], ['ccthresholdrgb', {}]]) {
@@ -1114,6 +1114,62 @@
       const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r17speed[id] = +((performance.now() - t0) / 10).toFixed(1);
     }
     step('round17speed', r17speed);
+
+    // ---- Round 18: Stylize II (CC). Same patches
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t);
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const changed = () => diff(plain, frame()).changed, same = () => diff(plain, frame()).max;
+      // each moves the card when on, and leaves it alone with its "off" setting
+      const R = {};
+      for (const [id, fam, entry, on, off] of [['ccblockload', 'fx_pixel2', 'fp2_block_load', { completion: 50 }, { completion: 100 }], ['ccburnfilm', 'fx_pixel2', 'fp2_burn', { burn: 50 }, { burn: 0 }],
+        ['ccglass', 'fx_pixel2', 'fp2_bump', {}, { intensity: 0 }], ['ccplastic', 'fx_pixel2', 'fp2_bump', {}, { intensity: 0 }], ['cchextile', 'fx_pixel2', 'fp2_hextile', {}, { smear: 100 }],
+        ['cckaleida', 'fx_stylize', 'fxs_warp', {}, null], ['ccmrsmoothie', 'fx_pixel2', 'fp2_smoothie', {}, null]]) {
+        f = await only(id); { const e = await kerr(fam, entry); if (e) step(id + 'Kernel', e); }
+        for (const k in on) set(f, k, on[k]);
+        draw(); const r = { changed: changed() };
+        if (off) { for (const k in off) set(f, k, off[k]); draw(); r.offMax = same(); }
+        R[id] = r;
+      }
+      step('stylize2Moves', { ...R, works: Object.values(R).every(r => r.changed > 1000 && (r.offMax == null || r.offMax <= 2)) });
+      // Block Load: at 0% (not cleared) the whole card is one block's mean colour; cleared, it is gone; near 100% the rows are loaded
+      f = await only('ccblockload'); f.cleared = false; draw(); const bl0 = [px(K.RED, K.Y), px(K.BLU, K.Y), px(800, 900)];
+      f.cleared = true; draw(); const blC = [px(K.RED, K.Y), px(K.BLU, K.Y)]; set(f, 'completion', 99.9); draw(); const blHi = px(K.RED, K.Y);
+      // Burn Film at 100%: burnt right through
+      f = await only('ccburnfilm'); set(f, 'burn', 100); draw(); const bfAll = [px(K.RED, K.Y), px(K.GRN, K.Y), px(K.WHT, K.Y)];
+      // HexTile with a huge radius: the whole frame is the centre cell, so nothing moves
+      f = await only('cchextile'); set(f, 'radius', 4000); draw(); const hxBig = same();
+      // Kaleida (Unfold) mirrors left and right of its centre, even over the ramp
+      f = await only('cckaleida'); f.mirroring = 2; draw(); const kL = px(760, 640), kR = px(1160, 640);
+      // Mr. Smoothie with both samples on the red patch paints the whole card red
+      f = await only('ccmrsmoothie'); for (const [k, v] of [['sampleAX', K.RED / 1920], ['sampleAY', K.Y / 1080], ['sampleBX', K.RED / 1920], ['sampleBY', K.Y / 1080]]) set(f, k, v);
+      draw(); const msBlue = px(K.BLU, K.Y), msWhite = px(K.WHT, K.Y);
+      // Plastic with a hidden white ellipse as its bump layer: the ellipse's rim shades the card
+      f = await only('ccplastic'); draw(); const plFlat = frame();
+      addShape('ellipse'); const TX = selLayer(); Object.assign(TX, { fill: '#ffffff', visible: false, start: 0, dur: 6 }); S.sel = L.id; f.bump = TX.id;
+      draw(); const plBump = diff(plFlat, frame()).changed;
+      f = await only('ccglass'); draw(); const glFlat = frame(); f.bump = TX.id; draw(); const glBump = diff(glFlat, frame()).changed;
+      S.layers = S.layers.filter(x => x !== TX); S.sel = L.id;
+      // RepeTile on the card at half size: a copy grows out to the right; the left stays clear
+      L.p.scale = .5; while (L.fx?.length) delFX(L, 0); draw(); const half = frame(), hp = (x, y) => { const i = (y * 1920 + x) * 4; return [half[i], half[i + 1], half[i + 2]]; };
+      f = await only('ccrepetile'); { const e = await kerr('fx_stylize', 'fxs_repetile'); if (e) step('repetileKernel', e); }
+      set(f, 'right', 960); draw(); const rtCopy = px(1840, 405), rtLeft = px(200, 405), rtMid = px(880, 405);
+      L.p.scale = 1;
+      step('stylize2Details', { block0: bl0.map(String), blockCleared: blC.map(String), blockHigh: blHi.join(), burnAll: bfAll.map(String), hexBig: hxBig, kalLeft: kL.join(), kalRight: kR.join(),
+        smoothieBlue: msBlue.join(), smoothieWhite: msWhite.join(), plasticBump: plBump, glassBump: glBump, repeCopy: rtCopy.join(), repeLeft: rtLeft.join(), repeHalfLeft: hp(200, 405).join(),
+        works: cl(bl0[0], bl0[1], 3) && cl(bl0[0], bl0[2], 3) && !cl(bl0[0], P0(K.RED, K.Y), 10) && cl(blC[0], blC[1]) && !cl(blC[0], P0(K.RED, K.Y), 10) && cl(blHi, P0(K.RED, K.Y), 3)
+          && cl(bfAll[0], bfAll[1]) && cl(bfAll[0], bfAll[2]) && hxBig <= 2 && cl(kL, kR, 3) && cl(msBlue, P0(K.RED, K.Y), 4) && cl(msWhite, P0(K.RED, K.Y), 4)
+          && plBump > 1000 && glBump > 1000 && cl(rtCopy, P0(K.RED, K.Y), 4) && cl(rtLeft, hp(200, 405)) && cl(rtMid, P0(K.RED, K.Y), 4) });
+      const menuS = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Stylize');
+      step('stylizeMenu18', { count: menuS?.children.length, works: menuS?.children.length === 24 });
+    }
+    const r18speed = {};
+    for (const [id, vals] of [['ccblockload', { completion: 50 }], ['ccburnfilm', { burn: 50 }], ['ccglass', {}], ['cchextile', {}], ['cckaleida', {}], ['ccmrsmoothie', {}], ['ccplastic', {}], ['ccrepetile', { right: 200 }]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]);
+      draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r18speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round18speed', r18speed);
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
