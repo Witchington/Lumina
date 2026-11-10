@@ -40,7 +40,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 10 ✅ | Lumetri Color | The all-in-one grading panel: basic, creative, curves, colour wheels, HSL secondary, vignette |
 | — ✅ | Finish Round 6 leftovers | Hue/Sat per-colour ranges, per-channel Levels, a draggable Curves graph (also for Lumetri's curves) |
 | 11 ✅ | Keying I | Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key |
-| 12 | Keying II + mattes | Keylight, Spill Suppressor, Advanced Spill, Key Cleaner, Unmult, Screen, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard/Soft Matte |
+| 12 ✅ | Keying II + mattes | Keylight, Spill Suppressor, Advanced Spill, Key Cleaner, Unmult, Screen, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard/Soft Matte |
 | 13 | Blur & Sharpen rest | Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross/Radial/Radial Fast/Vector Blur, Reduce Flicker, Camera-Shake Deblur |
 | 14 | Distort I | Spherize, Polar Coordinates, Mirror, Offset, Magnify, Corner Pin, Transform, Optics Compensation, Smear |
 | 15 | Distort II (CC) | CC Bend It, Bender, Blobbylize, Flo Motion, Griddler, Page Turn, Ripple Pulse, Slant, Smear, Split, Split 2, Tiler, Power Pin |

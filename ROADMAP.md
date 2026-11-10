@@ -7,23 +7,17 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 12 (Keying II + mattes); the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 13 (Blur & Sharpen II); Round 12 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 11 is committed (2026-11-09; all eleven suites pass, after fixing a name clash: Round 11's mask
-shape helper is `maskShapePath`, because the stickers already have a `shapePath`). The setup that replaces the old Lumina
-is done too (see its section). Round 12's code and tests are drafted in `.claude\round12-draft\` (r12.py edits Lumina.html and
-appends r12_shader.wgsl to shaders\lumina_key.wgsl; r12test.py adds the fx tests; its SP path points at the old
-scratchpad, so fix that first). Not applied yet.
-Rounds 8–11 and the Round 6 leftovers are done. Round 12 is next, Keying II + mattes: Keylight, Spill Suppressor, Advanced
-Spill Suppressor, Key Cleaner, Unmult, Screen Key, CC Simple Wire Removal, Simple Choker, Matte Choker, Refine Hard / Soft
-Matte. Most are ops of `fx_key.wgsl`'s `fxk_point` (Lumina's `fx_key` family, built with `fx_distort`): 7 Spill Suppressor,
-8 Advanced Spill (with `fxk_reduce`), 10 Unmult, 22/23 Screen Key, 25 Key Cleaner, 26 Matte Choker, 29–35 Refine Matte;
-Keylight is in `fx_color.wgsl` ("Key Light"), CC Simple Wire Removal is `fx_pixel2`'s `fp2_wire`. The CPU versions (the
-reference for each op's settings) are EffectCraft's `crates/effects/src/keying.rs`, `keying2.rs`, `keylight.rs` and `matte.rs`
-(copies in the scratchpad's `ec-ref/effects-crate`). Round 11's helpers: `fxThinFeather`, `fxMorphFrac` (`fxn_morph`),
-`fxKeyApply`, `E.upload(canvas)`.
+OK (never push). Round 12 is committed (2026-11-09; all twelve suites pass). The setup that replaces the old Lumina
+is done too (see its section).
+Rounds 8–12 and the Round 6 leftovers are done. **Round 13 is next, Blur & Sharpen II** (WORKPLAN.md's round table):
+Bilateral, Fast Box, Channel Blur, Smart Blur, Compound Blur, CC Cross / Radial / Radial Fast / Vector Blur, Reduce
+Flicker, Camera-Shake Deblur. Ones that need other frames or a second layer (Compound Blur's blur layer, Reduce Flicker,
+Camera-Shake Deblur) may have to wait for the foundations; decide at the start of the round. Round 12's helpers: `fxAlphaPlane`, `fxMatteView`, `fxSetAlpha` (util::set_alpha), `fxRefine`,
+`keyPrimary` / `klPrimary`; Round 11's: `fxThinFeather`, `fxMorphFrac` (`fxn_morph`), `fxKeyApply`, `E.upload(canvas)`.
 - **The user's goal now includes Premiere Pro:** everything After Effects *and* Premiere Pro have, and every effect they
   offer ("screen effects"). EffectCraft covers After Effects' effects. Premiere Pro's own extras (its video effects and
   transitions list, Lumetri scopes, Essential Sound/Graphics, multicam, auto reframe, proxies, nested sequences…) need a
@@ -235,7 +229,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 12 (Keying II + mattes)**.
+EffectCraft carries on at **Round 13 (Blur & Sharpen II)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -257,7 +251,7 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–11 and the Round 6 leftovers are done; Round 12 (Keying II + mattes) is next.** About 217
+   **Where we left off: Rounds 1–12 and the Round 6 leftovers are done; Round 13 (Blur & Sharpen II) is next.** About 206
    effects are left, in Rounds 12–31+.
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
@@ -345,6 +339,22 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 12 done (2026-11-09): Keying II + mattes.** Keying gets **Key Light**, **Screen Key**, **Spill
+  Suppressor**, **Advanced Spill Suppressor**, **Key Cleaner**, **Unmult** and **CC Simple Wire Removal**; a new **Matte**
+  group has **Simple Choker**, **Matte Choker**, **Refine Soft Matte** and **Refine Hard Matte**. 15 Keying + 4 Matte now.
+  - Spill Suppressor, Advanced Spill, Unmult, Screen Key and the chokers are `fx_key.wgsl`'s `fxk_point` ops (7, 8, 10,
+    22/23, 24, 26, 28–34); Key Light is `fx_color.wgsl`'s `fxc_kl_*` kernels; Wire Removal is `fx_pixel2`'s `fp2_wire`.
+    Key Cleaner, set_alpha, Refine's guided filter and decontamination are Lumina's own `lumina_key.wgsl` kernels
+    (`lk_pairs`, `lk_setalpha`, `lk_clean`, `lk_decon`, `lk_rpack`, `lk_refine`).
+  - Key Light's long list of settings is split by a **Show** menu (Main, Screen matte, Foreground / Edge color correction,
+    Source crops). Like EffectCraft, it always despills, even at Screen Gain 0.
+  - Advanced Spill's Standard method finds the key channel itself from the picture (read back at 320 px).
+  - Left out (they need other frames): Refine Matte's Reduce Chatter and motion blur; Wire Removal's Frame Offset works as
+    Displace.
+  - Tests (`.claude\fx`, steps `spillsuppressor` … `wireremoval`, `round12speed`): e.g. Spill Suppressor on blue turns the
+    blue patch (40, 60, 60); Unmult makes grey half see-through; Screen Key and Key Light take out the green patch and keep
+    red; Key Cleaner at 200 % alpha contrast pushes a 25/60 alpha to 1/3; Wire Removal fades a black|white edge to grey on
+    the line. About 4.5–7.3 ms a 1080p frame each.
 - **EffectCraft Round 11 done (2026-11-08): Keying I**, a new Keying group in the Effects menu:
   - **Color Key**, **Luma Key**, **Color Range**, **Extract**, **Difference Matte** and **Color Difference Key** run in
     EffectCraft's `fx_key.wgsl` (`fxk_point` ops 1, 2, 3, 4, 6 and 9, then op 5 to apply the matte); **Linear Color Key**

@@ -736,7 +736,9 @@
           && cl(ioInv, P0(K.GRN, K.Y)) && ioOrig === 0 && ioRows && ioRowsGone });
       // the Effects menu has a Keying group with all eight
       const menuKeying = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Keying');
-      step('keyingMenu', { items: menuKeying ? [...menuKeying.children].map(o => o.value) : null, works: menuKeying?.children.length === 8 });
+      const menuMatte = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Matte');
+      step('keyingMenu', { items: menuKeying ? [...menuKeying.children].map(o => o.value) : null, matte: menuMatte ? [...menuMatte.children].map(o => o.value) : null,
+        works: menuKeying?.children.length === 15 && menuMatte?.children.length === 4 });
     }
     const r11speed = {};
     for (const [id, vals, opts] of [['colorkey', { tolerance: 20, feather: 10, thin: 1.5 }, { key: '#dc2828' }], ['lumakey', { threshold: 80, feather: 5 }], ['linearcolorkey', {}], ['colorrange', { fuzz: 40 }],
@@ -745,6 +747,87 @@
       const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r11speed[id] = +((performance.now() - t0) / 10).toFixed(1);
     }
     step('round11speed', r11speed);
+
+    // ---- Round 12: Keying II + mattes. Same patches; "alpha" readings put Simple Choker's Matte view after the effect
+    {
+      const K = { BLK: 160, WHT: 480, RED: 800, GRN: 1120, BLU: 1440, GRY: 1760, Y: 270 }, cl = (a, b, t = 1) => a.every((v, k) => Math.abs(v - b[k]) <= t), z = [0, 0, 0], W3 = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const matteAfter = async () => { const g = await add('simplechoker'); g.view = 1; return g; };
+      // Spill Suppressor on blue, Faster: the blue patch's blue drops to its larger other channel (40, 60, 60); red stays.
+      // Better: the blue patch loses the part of its colour along blue's direction from grey
+      f = await only('spillsuppressor'); draw(); const ssBlue = px(K.BLU, K.Y), ssRed = px(K.RED, K.Y);
+      f.accuracy = 1; draw(); const ssBetter = px(K.BLU, K.Y);
+      const bc = P0(K.BLU, K.Y).map(v => v / 255), bg = (bc[0] + bc[1] + bc[2]) / 3, dir = [-1, -1, 2].map(v => v / Math.sqrt(6)), proj = bc.reduce((a, v, i) => a + (v - bg) * dir[i], 0);
+      const ssWant = bc.map((v, i) => Math.round((v - proj * dir[i]) * 255));
+      step('spillsuppressor', { blue: ssBlue.join(), red: ssRed.join(), better: ssBetter.join(), betterWant: ssWant.join(), works: cl(ssBlue, [40, 60, 60]) && cl(ssRed, P0(K.RED, K.Y)) && cl(ssBetter, ssWant, 2) });
+      // Advanced Spill Suppressor, Standard: red has the most excess on the card, so red is the key: the red patch goes grey (40, 40, 40);
+      // Ultra on green: the green patch's green drops a lot, red stays
+      f = await only('advancedspill'); draw(); const asRed = px(K.RED, K.Y), asGreen = px(K.GRN, K.Y);
+      f.method = 1; draw(); const asUGreen = px(K.GRN, K.Y), asURed = px(K.RED, K.Y);
+      step('advancedspill', { standardRed: asRed.join(), standardGreen: asGreen.join(), ultraGreen: asUGreen.join(), ultraRed: asURed.join(),
+        works: cl(asRed, [40, 40, 40]) && cl(asGreen, P0(K.GRN, K.Y)) && asUGreen[1] < 90 && cl(asURed, P0(K.RED, K.Y)) });
+      // Unmult (black): grey becomes half see-through, white stays solid, black goes; with Remove Color Matting grey shows white at
+      // half strength (128 over black either way), so the alpha is read through a Matte view
+      f = await only('unmult'); await matteAfter(); draw(); const umGrey = px(K.GRY, K.Y), umWhite = px(K.WHT, K.Y), umBlack = px(K.BLK, K.Y);
+      f.bg = 1; draw(); const umWBlack = px(K.BLK, K.Y), umWWhite = px(K.WHT, K.Y); f.bg = 0;
+      step('unmult', { greyAlpha: umGrey.join(), whiteAlpha: umWhite.join(), blackAlpha: umBlack.join(), whiteBgBlack: umWBlack.join(), whiteBgWhite: umWWhite.join(),
+        works: cl(umGrey, [128, 128, 128], 2) && cl(umWhite, W3) && cl(umBlack, z) && cl(umWBlack, W3) && cl(umWWhite, z) });
+      // Screen Key on the green patch's colour: green goes, red and grey stay (no spill to take out); the matte view shows it
+      f = await only('screenkey'); f.screen = '#28c83c'; { const e = await kerr('fx_key', 'fxk_point'); if (e) step('skKernel', e); }
+      draw(); const skGreen = px(K.GRN, K.Y), skRed = px(K.RED, K.Y), skGrey = px(K.GRY, K.Y);
+      f.view = 1; draw(); const skMG = px(K.GRN, K.Y), skMR = px(K.RED, K.Y); f.view = 0;
+      step('screenkey', { green: skGreen.join(), red: skRed.join(), grey: skGrey.join(), matteGreen: skMG.join(), matteRed: skMR.join(),
+        works: cl(skGreen, z) && cl(skRed, P0(K.RED, K.Y)) && cl(skGrey, P0(K.GRY, K.Y)) && cl(skMG, z) && cl(skMR, W3) });
+      // Key Light on the same green: green goes, red stays; Status shows green black and red white; Screen Gain 0 keys nothing but still despills (green limited to 50, between red 40 and blue 60, as EffectCraft's keylight.rs)
+      f = await only('keylight'); f.screen = '#28c83c'; { const e = await kerr('fx_color', 'fxc_kl_final'); if (e) step('klKernel', e); }
+      draw(); const klGreen = px(K.GRN, K.Y), klRed = px(K.RED, K.Y), klWhite = px(K.WHT, K.Y);
+      f.view = 8; draw(); const klSG = px(K.GRN, K.Y), klSR = px(K.RED, K.Y); f.view = 10;
+      set(f, 'gain', 0); draw(); const klNone = px(K.GRN, K.Y); set(f, 'gain', 100);
+      set(f, 'cropL', 50); draw(); const klCrop = px(K.RED, K.Y), klKept = px(K.GRY, K.Y); set(f, 'cropL', 0);
+      f.section = 4; S.sel = L.id; setRightTab('fx'); refresh(); const klCropRows = !!$(`#inspector [data-p="${fxKey(f, 'cropL')}"]`) && !$(`#inspector [data-p="${fxKey(f, 'gain')}"]`); f.section = 0; refresh();
+      step('keylight', { green: klGreen.join(), red: klRed.join(), white: klWhite.join(), statusGreen: klSG.join(), statusRed: klSR.join(), gain0: klNone.join(), cropLeftHalfRed: klCrop.join(), cropKeepsGrey: klKept.join(), sections: klCropRows,
+        works: cl(klGreen, z) && cl(klRed, P0(K.RED, K.Y), 2) && cl(klWhite, W3, 2) && cl(klSG, z) && cl(klSR, W3) && cl(klNone, [40, 50, 60], 2) && cl(klCrop, z) && cl(klKept, P0(K.GRY, K.Y), 2) && klCropRows });
+      // Key Cleaner after Color Range's half-kept white (alpha 25/60): Alpha Contrast 200 % pushes it to 1/3 (85)
+      const cr = async () => { const g = await only('colorrange'); g.space = 2; set(g, 'minL', 200); set(g, 'maxL', 255); set(g, 'maxA', 230); set(g, 'maxB', 230); set(g, 'fuzz', 60); return g; };
+      await cr(); f = await add('keycleaner'); set(f, 'contrast', 200); draw(); const kcWhite = px(K.WHT, K.Y);
+      set(f, 'contrast', 100); draw(); const kcSame = px(K.WHT, K.Y);
+      step('keycleaner', { white200: kcWhite.join(), white100: kcSame.join(), works: cl(kcWhite, [85, 85, 85], 2) && cl(kcSame, [106, 106, 106], 2) });
+      // Simple Choker after keying out red: Choke -3 grows the kept white 3 px into the red patch (with white's colour), +3 shrinks it
+      const redOut = async () => { const g = await only('colorkey'); g.key = '#dc2828'; set(g, 'tolerance', 10); return g; };
+      await redOut(); f = await add('simplechoker'); set(f, 'choke', -3); draw(); const scGrow = px(642, K.Y);
+      set(f, 'choke', 3); draw(); const scShrink = px(637, K.Y), scInside = px(600, K.Y);
+      set(f, 'choke', 0); f.view = 1; draw(); const scMR = px(K.RED, K.Y), scMW = px(K.WHT, K.Y);
+      step('simplechoker', { grown: scGrow.join(), shrunk: scShrink.join(), inside: scInside.join(), matteRed: scMR.join(), matteWhite: scMW.join(),
+        works: scGrow[1] > 150 && cl(scShrink, z) && cl(scInside, W3) && cl(scMR, z) && cl(scMW, W3) });
+      // Matte Choker (defaults) after keying out red: the last white pixel before the red patch goes dark, white inside stays
+      await redOut(); f = await add('mattechoker'); { const e = await kerr('lumina_key', 'lk_setalpha'); if (e) step('mcKernel', e); }
+      draw(); const mcEdge = px(639, K.Y), mcIn = px(600, K.Y), mcRed = px(K.RED, K.Y);
+      step('mattechoker', { edge: mcEdge.join(), inside: mcIn.join(), red: mcRed.join(), works: mcEdge[0] < 60 && cl(mcIn, W3) && cl(mcRed, z) });
+      // Refine Hard Matte after keying out red: inside the white and red patches nothing changes; the edge stays put;
+      // Refine Soft Matte's View Edge Region tints the band red and shows solid white inside
+      await redOut(); f = await add('refinehard'); { const e = await kerr('lumina_key', 'lk_refine'); if (e) step('rfKernel', e); }
+      draw(); const rhW = px(K.WHT, K.Y), rhR = px(K.RED, K.Y), rhE1 = px(630, K.Y), rhE2 = px(650, K.Y);
+      f.viewMap = true; draw(); const rhMap = px(K.WHT, K.Y); f.viewMap = false;
+      await redOut(); f = await add('refinesoft'); draw(); const rsW = px(K.WHT, K.Y), rsR = px(K.RED, K.Y);
+      f.viewEdges = true; draw(); const rsBand = px(640, K.Y), rsIn = px(K.WHT, K.Y);
+      step('refinematte', { hardWhite: rhW.join(), hardRed: rhR.join(), hardNearEdgeWhite: rhE1.join(), hardNearEdgeRed: rhE2.join(), hardMapWhite: rhMap.join(), softWhite: rsW.join(), softRed: rsR.join(), softBand: rsBand.join(), softInside: rsIn.join(),
+        works: cl(rhW, W3) && cl(rhR, z) && rhE1[0] > 200 && rhE2[0] < 40 && cl(rhMap, z) && cl(rsW, W3) && cl(rsR, z) && rsBand[0] > rsBand[1] + 40 && cl(rsIn, W3) });
+      // CC Simple Wire Removal, Fade, along the black|white edge (x 320, y 100-440, 20 px thick): the edge becomes a ramp,
+      // mid grey on the line; below the wire's end nothing changes
+      f = await only('wireremoval'); set(f, 'aX', 320 / 1920); set(f, 'aY', 100 / 1080); set(f, 'bX', 320 / 1920); set(f, 'bY', 440 / 1080); set(f, 'thickness', 20); f.style = 0;
+      { const e = await kerr('fx_pixel2', 'fp2_wire'); if (e) step('wrKernel', e); }
+      draw(); const wrMid = px(320, K.Y), wrL = px(312, K.Y), wrR = px(328, K.Y), wrBelow = px(320, 500);
+      f.style = 2; draw(); const wrDisp = px(320, K.Y);
+      step('wireremoval', { onLine: wrMid.join(), left: wrL.join(), right: wrR.join(), belowEnd: wrBelow.join(), displace: wrDisp.join(),
+        works: wrMid[0] > 100 && wrMid[0] < 170 && wrL[0] < wrMid[0] && wrR[0] > wrMid[0] && cl(wrBelow, P0(320, 500)) && (wrDisp[0] < 5 || wrDisp[0] > 250) });
+    }
+    const r12speed = {};
+    for (const [id, vals, opts] of [['keylight', { rollback: 2, softness: 2 }, { screen: '#28c83c' }], ['screenkey', { softness: 3 }, { screen: '#28c83c' }], ['spillsuppressor', {}], ['advancedspill', {}],
+      ['keycleaner', {}], ['unmult', {}], ['wireremoval', { thickness: 12 }], ['simplechoker', { choke: 2.5 }], ['mattechoker', {}], ['refinehard', {}], ['refinesoft', {}]]) {
+      const g = await only(id); for (const k in vals) set(g, k, vals[k]); Object.assign(g, opts || {}); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r12speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round12speed', r12speed);
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
@@ -847,6 +930,8 @@
       ['lumetri', { exposure: .3, contrast: 25, vigAmount: -2 }, { look: 5, rgbMaster: '0,0 0.3,0.22 0.7,0.8 1,1', wheelHighs: '#ffe0c0', wheelShadows: '#6080a0' }],
       ['colorkey', { tolerance: 30, feather: 6 }, { key: '#dc2828' }], ['lumakey', { threshold: 100 }], ['linearcolorkey', { tolerance: 25 }, { key: '#283cdc' }], ['colorrange', { maxL: 200 }],
       ['extract', { black: 100, blackSoft: 60 }], ['colordifferencekey', {}], ['innerouterkey', { radius: 30, feather: 6 }],
+      ['keylight', { softness: 2 }, { screen: '#28c83c' }], ['screenkey', {}, { screen: '#dc2828' }], ['spillsuppressor', {}, { accuracy: 1 }], ['advancedspill', {}], ['unmult', {}],
+      ['wireremoval', { thickness: 40, aX: .1, aY: .1, bX: .9, bY: .4 }], ['simplechoker', { choke: 20 }, { view: 1 }],
       ['rgbsplit', { amount: 30 }, { trigger: 0 }], ['edgeglow', { radius: 20 }, { trigger: 0 }], ['flash', { amount: 55 }, { trigger: 0, color: '#9fdcff' }], ['vhs', {}, { trigger: 0 }], ['shake', { amount: 40, rotation: 4 }, { trigger: 0 }]];
     const T = S.layers[0];
     const strip = document.createElement('canvas'); strip.width = 4 * 480; strip.height = Math.ceil(shots.length / 4) * 270; const sx = strip.getContext('2d');

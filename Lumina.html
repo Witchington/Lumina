@@ -2539,6 +2539,70 @@ const KEY_VIEWS = [[0, 'Final output'], [1, 'Source only'], [2, 'Matte only']];
 const IO_SHAPES = [['rect', 'Rectangle'], ['ellipse', 'Oval'], ['diamond', 'Diamond'], ['star', 'Star'], ['heart', 'Heart']];   // MASK_SHAPES without split and bars
 // a matte image (x = keep) applied to the layer
 const fxKeyApply = (E, img, m) => E.run('fx_key', 'fxk_point', fxP({ 0: [5, 0, 0, 0] }), img, m);
+// Key Light's settings, a Show menu picking the section (its list is long)
+const KL_PARAMS = (() => {
+  const sec = (n, list) => list.map(d => ({ ...d, show: f => +(f.section ?? 0) === n && (!d.show || d.show(f)) }));
+  const pc = (id, label, def = 0) => ({ id, label, def, min: 0, max: 100, dec: 1 }), bi = (id, label) => ({ id, label, def: 0, min: -100, max: 100, dec: 1 });
+  return [
+    { id: 'section', label: 'Show', type: 'pick', def: 0, opts: [[0, 'Main'], [1, 'Screen matte'], [2, 'Foreground color correction'], [3, 'Edge color correction'], [4, 'Source crops']] },
+    { id: 'view', label: 'View', type: 'pick', def: 10, opts: ['Source', 'Source alpha', 'Corrected source', 'Color correction edges', 'Screen matte', 'Inside mask', 'Outside mask',
+      'Combined matte', 'Status', 'Intermediate result', 'Final result'].map((n, i) => [i, n]) },
+    ...sec(0, [{ id: 'unpremult', label: 'Unpremultiply result', type: 'check', def: true },
+      { id: 'screen', label: 'Screen color', type: 'color', def: '#00ff00' },
+      { id: 'gain', label: 'Screen gain', def: 100, min: 0, max: 200, dec: 1 }, pc('balance', 'Screen balance', 50),
+      { id: 'despillBias', label: 'Despill bias', type: 'color', def: '#808080' },
+      { id: 'alphaBias', label: 'Alpha bias', type: 'color', def: '#808080', show: f => f.lock === false },
+      { id: 'lock', label: 'Lock biases together', type: 'check', def: true },
+      { id: 'preblur', label: 'Screen pre-blur', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'sourceAlpha', label: 'Source alpha', type: 'pick', def: 2, opts: [[0, 'Ignore'], [1, 'Add to inside mask'], [2, 'Normal']] }]),
+    ...sec(1, [pc('clipBlack', 'Clip black %'), pc('clipWhite', 'Clip white %', 100), { id: 'rollback', label: 'Clip rollback', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'shrinkGrow', label: 'Screen shrink/grow', def: 0, min: -100, max: 100, dec: 1 }, { id: 'softness', label: 'Screen softness', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'despotBlack', label: 'Screen despot black', def: 0, min: 0, max: 100, dec: 1 }, { id: 'despotWhite', label: 'Screen despot white', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'replace', label: 'Replace method', type: 'pick', def: 3, opts: [[0, 'None'], [1, 'Source'], [2, 'Hard color'], [3, 'Soft color']] },
+      { id: 'replaceColor', label: 'Replace color', type: 'color', def: '#808080' }]),
+    ...sec(2, [{ id: 'fgCC', label: 'Enable color correction', type: 'check', def: false },
+      { id: 'fgSat', label: 'Saturation %', def: 100, min: 0, max: 400, dec: 1 }, bi('fgContrast', 'Contrast'), bi('fgBright', 'Brightness')]),
+    ...sec(3, [{ id: 'edgeCC', label: 'Enable edge color correction', type: 'check', def: false }, pc('edgeHard', 'Edge hardness %'),
+      { id: 'edgeSoft', label: 'Edge softness', def: 0, min: 0, max: 100, dec: 1 }, { id: 'edgeGrow', label: 'Edge grow', def: 1, min: 0, max: 100, dec: 1 },
+      { id: 'edgeSat', label: 'Saturation %', def: 100, min: 0, max: 400, dec: 1 }, bi('edgeContrast', 'Contrast'), bi('edgeBright', 'Brightness')]),
+    ...sec(4, [pc('cropL', 'Left %'), pc('cropR', 'Right %'), pc('cropT', 'Top %'), pc('cropB', 'Bottom %')])];
+})();
+// Refine Soft / Hard Matte's settings (matte::specs; Reduce Chatter and motion blur need other frames, so they are left out)
+function refineParams(hard) {
+  const pc = (id, label, def = 0) => ({ id, label, def, min: 0, max: 100, dec: 0 }), ck = (id, label, def) => ({ id, label, type: 'check', def });
+  const decon = [ck('decon', 'Decontaminate edge colors', true), pc('deconAmount', 'Decontamination amount %', 100), ck('extend', 'Extend where smoothed', true),
+    { id: 'deconRadius', label: 'Increase decontamination radius', def: 0, min: 0, max: 100, dec: 1 }, ck('viewMap', 'View decontamination map', false)];
+  const radius = d => ({ id: 'radius', label: 'Additional edge radius', def: d, min: 1, max: 200, dec: 1 });
+  return hard ? [pc('smooth', 'Smooth %', 20), pc('feather', 'Feather %'), { id: 'choke', label: 'Choke %', def: 0, min: -100, max: 100, dec: 0 }, ...decon, radius(3),
+      { id: 'contrast', label: 'Alpha contrast %', def: 300, min: 100, max: 1000, dec: 0 }, ck('invert', 'Invert', false)]
+    : [ck('edges', 'Calculate edge details', true), radius(10), ck('viewEdges', 'View edge region', false), pc('smooth', 'Smooth %'), pc('feather', 'Feather %', 10),
+      pc('contrast', 'Contrast %'), { id: 'shift', label: 'Shift edge %', def: 0, min: -100, max: 100, dec: 0 }, ...decon, ck('invert', 'Invert', false)];
+}
+// matte::refine: a guided filter (luminance guides the alpha) inside the band where the alpha changes within the radius,
+// then feather, choke / shift, contrast, and the edge colours pulled towards a blur of the layer (decontamination)
+function fxRefine(E, img, q, hard) {
+  const K = 'fx_key', k = (op, u = [], f = []) => fxP({ 0: [op, ...u, 0, 0, 0].slice(0, 4) }, { 0: [...f, 0, 0, 0, 0].slice(0, 4) });
+  const r = Math.max(1, Math.round(q('radius') * E.sc)), smooth = q('smooth') / 100, feather = q('feather') / 100 * r * .5;
+  const choke = clamp(hard ? q('choke') : -q('shift'), -100, 100) / 100 * .5, contrast = hard ? q('contrast') / 100 : 1 + Math.max(q('contrast'), 0) / 100 * 3;
+  const pack = E.run(K, 'fxk_point', k(29), img);
+  const band = E.run(K, 'fxk_point', k(32), fxMorph(E, pack, r, [2, 1, 2, 2]), fxMorph(E, pack, r, [2, 0, 2, 2]));
+  let na;
+  if (hard || q('edges')) {
+    const eps = 1e-4 + smooth * smooth * .05, box = x => fxBoxPasses(E, x, [r], [r], true);
+    const coef = box(E.run(K, 'fxk_point', k(30, [], [eps]), box(pack)));
+    na = E.run('lumina_key', 'lk_refine', fxP(), coef, E.run('lumina_key', 'lk_rpack', fxP(), pack, band));
+  } else {
+    na = fxAlphaPlane(E, img);
+    if (smooth > 0) { const s = smooth * r * .5; na = fxGauss(E, na, s, s, true); }
+  }
+  if (feather > 0) na = fxGauss(E, na, feather, feather, true);
+  na = E.run(K, 'fxk_point', k(33, [q('invert')], [choke, contrast]), na);
+  if (!hard && q('viewEdges')) return E.run(K, 'fxk_point', k(34), na, band);
+  const amt = q('deconAmount') / 100, on = q('decon'), view = q('viewMap'), dr = r + Math.max(q('deconRadius'), 0) * E.sc;
+  const est = on && amt > 0 && !view ? fxGauss(E, img, dr * .5, dr * .5, true) : img;
+  const d = E.run('lumina_key', 'lk_decon', fxP({ 0: [0, view, on && amt > 0, q('extend')] }, { 0: [amt, 0, 0, 0] }), img, E.run('lumina_key', 'lk_pairs', fxP(), est, na));
+  return view ? d : fxSetAlpha(E, d, na);
+}
 // util::morph_plane: min (erode) or max (grow) over a square of radius r, per channel (modes: 0 min, 1 max, 2 keep)
 function fxMorph(E, img, r, modes) {
   if (r < 1) return img;
@@ -2557,6 +2621,20 @@ function fxThinFeather(E, m, thin, feather) {
   if (thin > 0) m = fxMorphFrac(E, m, thin, false); else if (thin < 0) m = fxMorphFrac(E, m, -thin, true);
   return feather > 0 ? fxGauss(E, m, feather * .5, feather * .5, true) : m;
 }
+// ---- Round 12 matte helpers ----
+const MATTE_K = [...KEY_K, ...['lk_pairs', 'lk_setalpha', 'lk_clean', 'lk_decon', 'lk_rpack', 'lk_refine'].map(e => ['lumina_key', e])];
+const fxAlphaPlane = (E, img) => E.run('fx_key', 'fxk_point', fxP({ 0: [24, 0, 0, 0] }), img);   // (a, a, a, a)
+const fxMatteView = (E, img) => E.run('fx_key', 'fxk_point', fxP({ 0: [28, 0, 0, 0] }), img);    // the alpha as opaque grey
+// util::set_alpha: the layer with a new matte (x of `m`); see-through pixels that gain alpha take a blur of the layer's colours
+const fxSetAlpha = (E, img, m) => E.run('lumina_key', 'lk_setalpha', fxP(), img, E.run('lumina_key', 'lk_pairs', fxP(), fxGauss(E, img, 3, 3, true), m));
+// keying::primary: the key colour's main channel and the other two (in channel order)
+const keyPrimary = c => c[1] >= c[0] && c[1] >= c[2] ? [1, 0, 2] : c[2] >= c[0] && c[2] >= c[1] ? [2, 0, 1] : [0, 1, 2];
+// keying::secondary: Screen Balance weights the larger of the two other channels
+const keySecondary = (c, o1, o2, bal) => { const hi = Math.max(c[o1], c[o2]), lo = Math.min(c[o1], c[o2]); return bal * hi + (1 - bal) * lo; };
+// keylight::primary: as keyPrimary, the other two with the larger in the screen colour first
+const klPrimary = s => { const pi = s[1] >= s[0] && s[1] >= s[2] ? 1 : s[2] >= s[0] ? 2 : 0, [a, b] = pi === 0 ? [1, 2] : pi === 1 ? [0, 2] : [0, 1]; return s[a] >= s[b] ? [pi, a, b] : [pi, b, a]; };
+const klNeutralise = (c, bias) => { const l = Math.max(fxLum(...bias), 1e-4); return c.map((v, i) => v * l / Math.max(bias[i], 1e-4)); };
+const ERODE_X = [0, 2, 2, 2], DILATE_X = [1, 2, 2, 2];
 // Inner/Outer Key's trimap on a frame-sized canvas: white inside, grey the edge (the outside shape, or a band of the
 // highlight radius round the inside), black the rest; shapes sit on the layer, sized as a share of it
 function fxTrimap(E, q) {
@@ -3736,6 +3814,163 @@ const FX = {
       if (fe > .05) col = E.run(K, 'lk_mix', fxP({ 0: [1, 0, 0, 0] }), col, fxGauss(E, col, fe * .5, fe * .5, true));
       return E.run(K, 'lk_final', fxP({ 0: [1, q('invert'), 0, 0] }, { 0: [q('threshold') / 100, q('original') / 100, 0, 0] }), img, col);
     } },
+  // ---- Round 12: Keying II + mattes. Spill Suppressor, Advanced Spill Suppressor, Unmult, Screen Key and the matte
+  //      chokers run in EffectCraft's fx_key.wgsl, Key Light in fx_color.wgsl (fxc_kl_*), CC Simple Wire Removal in
+  //      fx_pixel2's fp2_wire; Key Cleaner, Refine Hard / Soft Matte and set_alpha use Lumina's lumina_key.wgsl too ----
+  keylight: { name: 'Key Light', cat: 'Keying', kernels: [...KEY_K, ...['fxc_kl_raw', 'fxc_kl_rollback', 'fxc_kl_pack', 'fxc_kl_band', 'fxc_kl_edge', 'fxc_kl_final'].map(e => ['fx_color', e])], params: KL_PARAMS,
+    run(E, img, q) {
+      const view = q('view'); if (view === 0) return img;
+      const screen = q('screen'), ix = klPrimary(screen), [pi, o1, o2] = ix, gain = q('gain') / 100, bal = q('balance') / 100;
+      const dbias = q('despillBias'), abias = q('lock') ? dbias : q('alphaBias'), sa = klNeutralise(screen, abias);
+      const sd = Math.max(sa[pi] - (bal * sa[o1] + (1 - bal) * sa[o2]), 1e-3), P = k => q(k) / 100, px = k => q(k) * E.sc;
+      const pre = px('preblur'), src = pre > 0 ? fxGauss(E, img, pre * .5, pre * .5, true) : img, F = 'fx_color';
+      const raw = E.run(F, 'fxc_kl_raw', fxP({ 0: [...ix, 0] }, { 0: [...abias, sd], 1: [gain, bal, P('clipBlack'), P('clipWhite')] }), src);
+      let m = raw;
+      const rb = px('rollback'); if (rb > 0) m = E.run(F, 'fxc_kl_rollback', fxP(), fxMorphFrac(E, m, rb, false, [0, 1, 2, 2]), raw);
+      const db = px('despotBlack'), dw = px('despotWhite'), sg = px('shrinkGrow'), so = px('softness');
+      if (db > 0) m = fxMorphFrac(E, fxMorphFrac(E, m, db, true, DILATE_X), db, false, ERODE_X);
+      if (dw > 0) m = fxMorphFrac(E, fxMorphFrac(E, m, dw, false, ERODE_X), dw, true, DILATE_X);
+      if (sg < 0) m = fxMorphFrac(E, m, -sg, false, ERODE_X); else if (sg > 0) m = fxMorphFrac(E, m, sg, true, DILATE_X);
+      if (so > 0) m = fxGauss(E, m, so * .5, so * .5, true);
+      let planes = E.run(F, 'fxc_kl_pack', fxP(), m, raw);
+      const sam = q('sourceAlpha');
+      if (q('edgeCC')) {
+        let band = E.run(F, 'fxc_kl_band', fxP({ 0: [sam, 0, 0, 0] }), img, planes);
+        const g = px('edgeGrow'), es = px('edgeSoft');
+        if (g > 0) band = fxMorphFrac(E, band, g, true, DILATE_X);
+        if (es > 0) band = fxGauss(E, band, es * .5, es * .5, true);
+        planes = E.run(F, 'fxc_kl_edge', fxP({}, { 0: [P('edgeHard'), 0, 0, 0] }), planes, band);
+      }
+      const l0 = Math.max(fxLum(...dbias) / Math.max(dbias[pi], 1e-4), 1e-4), [rx, ry, rw, rh] = E.rect;
+      return E.run(F, 'fxc_kl_final', fxP({ 0: [...ix, view], 1: [q('replace'), q('fgCC'), q('unpremult'), sam] }, {
+        0: [...screen, bal], 1: [...dbias, l0], 2: [...q('replaceColor'), 0], 3: [P('fgSat'), P('fgContrast') + 1, P('fgBright') + 1, 0],
+        4: [P('edgeSat'), P('edgeContrast') + 1, P('edgeBright') + 1, 0], 5: ['cropL', 'cropR', 'cropT', 'cropB'].map(P), 6: [rx, ry, 1, 0], 7: [rw, rh, 0, 0] }), img, planes);
+    } },
+  screenkey: { name: 'Screen Key', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: [[0, 'Final result'], [1, 'Screen matte'], [2, 'Status'], [3, 'Source']] },
+      { id: 'screen', label: 'Screen color', type: 'color', def: '#26bf40' },
+      { id: 'gain', label: 'Screen gain', def: 100, min: 0, max: 200, dec: 1 },
+      { id: 'balance', label: 'Screen balance %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'despill', label: 'Despill %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'clipBlack', label: 'Clip black %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'clipWhite', label: 'Clip white %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'preblur', label: 'Screen pre-blur', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'shrinkGrow', label: 'Screen shrink/grow', def: 0, min: -50, max: 50, dec: 1 },
+      { id: 'softness', label: 'Screen softness', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'edge', label: 'Edge color', type: 'pick', def: 0, opts: [[0, 'Screen subtract'], [1, 'Source']] }],
+    run(E, img, q) {
+      const view = q('view'); if (view === 3) return img;
+      const sc = q('screen'), [pi, o1, o2] = keyPrimary(sc), bal = q('balance') / 100, sd = Math.max(sc[pi] - keySecondary(sc, o1, o2, bal), 1e-3);
+      const pre = q('preblur') * E.sc, src = pre > 0 ? fxGauss(E, img, pre * .5, pre * .5, true) : img;
+      let m = E.run('fx_key', 'fxk_point', fxP({ 0: [22, 0, 0, 0], 1: [pi, o1, o2, 0] }, { 0: [sd, q('gain') / 100, bal, q('clipBlack') / 100], 1: [q('clipWhite') / 100, 0, 0, 0] }), src);
+      const sg = q('shrinkGrow') * E.sc, so = q('softness') * E.sc;
+      if (sg < 0) m = fxMorphFrac(E, m, -sg, false); else if (sg > 0) m = fxMorphFrac(E, m, sg, true);
+      if (so > 0) m = fxGauss(E, m, so * .5, so * .5, true);
+      return E.run('fx_key', 'fxk_point', fxP({ 0: [23, view, q('edge'), 0], 1: [pi, o1, o2, 0] }, { 0: [...sc, bal], 1: [q('despill') / 100, 0, 0, 0] }), img, m);
+    } },
+  spillsuppressor: { name: 'Spill Suppressor', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'color', label: 'Color to suppress', type: 'color', def: '#0000ff' },
+      { id: 'accuracy', label: 'Color accuracy', type: 'pick', def: 0, opts: [[0, 'Faster'], [1, 'Better']] },
+      { id: 'amount', label: 'Suppression', def: 100, min: 0, max: 200, dec: 0 }],
+    run(E, img, q) {
+      const k = q('color'), amt = q('amount') / 100;
+      if (q('accuracy') === 1) {
+        const g = (k[0] + k[1] + k[2]) / 3, kc = k.map(v => v - g), n = Math.hypot(...kc); if (n < 1e-5) return img;
+        return E.run('fx_key', 'fxk_point', fxP({ 0: [7, 1, 0, 0] }, { 0: [...kc.map(v => v / n), amt] }), img);
+      }
+      return E.run('fx_key', 'fxk_point', fxP({ 0: [7, 0, 0, 0], 1: [...keyPrimary(k), 0] }, { 0: [0, 0, 0, amt] }), img);
+    } },
+  // Advanced Spill Suppressor: Standard finds the key's main channel itself (the one most often above the other two)
+  advancedspill: { name: 'Advanced Spill Suppressor', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'method', label: 'Method', type: 'pick', def: 0, opts: [[0, 'Standard'], [1, 'Ultra']] },
+      { id: 'amount', label: 'Suppression', def: 100, min: 0, max: 200, dec: 0 },
+      { id: 'key', label: 'Key color', type: 'color', def: '#00ff00', show: f => +(f.method ?? 0) === 1 },
+      { id: 'tolerance', label: 'Tolerance %', def: 50, min: 0, max: 100, dec: 1, show: f => +(f.method ?? 0) === 1 },
+      { id: 'desaturate', label: 'Desaturate %', def: 0, min: 0, max: 100, dec: 1, show: f => +(f.method ?? 0) === 1 },
+      { id: 'range', label: 'Spill range %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'spillCC', label: 'Spill color correction %', def: 0, min: 0, max: 100, dec: 1, show: f => +(f.method ?? 0) === 1 },
+      { id: 'luma', label: 'Luma correction %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const ultra = q('method') === 1, key = q('key');
+      let pi;
+      if (ultra) pi = keyPrimary(key)[0];
+      else {
+        const R = E.read(img, 320), d = R.d, ex = [0, 0, 0];
+        for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; if (!a) continue; const c = [d[i], d[i + 1], d[i + 2]];
+          for (let k = 0; k < 3; k++) ex[k] += Math.max(0, c[k] - Math.max(c[(k + 1) % 3], c[(k + 2) % 3])) * a; }
+        pi = ex[1] >= ex[0] && ex[1] >= ex[2] ? 1 : ex[2] >= ex[0] ? 2 : 0;
+      }
+      const [o1, o2] = pi === 0 ? [1, 2] : pi === 1 ? [0, 2] : [0, 1], P = k => q(k) / 100;
+      return E.run('fx_key', 'fxk_point', fxP({ 0: [8, 0, 0, 0], 1: [pi, o1, o2, 0] }, { 0: [P('amount'), P('range'), P('luma'), ultra ? P('tolerance') : 1],
+        1: [ultra ? P('desaturate') : 0, ultra ? P('spillCC') : 0, fxHSL(key)[0], 0] }), img);
+    } },
+  keycleaner: { name: 'Key Cleaner', cat: 'Keying', kernels: MATTE_K, params: [
+      { id: 'radius', label: 'Additional edge radius', def: 3, min: 0, max: 100, dec: 1 },
+      { id: 'chatter', label: 'Reduce chatter', type: 'check', def: false },
+      { id: 'contrast', label: 'Alpha contrast %', def: 100, min: 100, max: 500, dec: 0 },
+      { id: 'strength', label: 'Strength %', def: 100, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const r = Math.max(0, q('radius') * E.sc), st = q('strength') / 100, ch = q('chatter');
+      let a = fxAlphaPlane(E, img); if (ch) a = fxGauss(E, a, 1, 1, true);
+      const est = r > 0 && st > 0 ? fxGauss(E, img, r * .5, r * .5, true) : null;
+      return E.run('lumina_key', 'lk_clean', fxP({ 0: [!!est, ch, 0, 0] }, { 0: [q('contrast') / 100, st, 0, 0] }), img, E.run('lumina_key', 'lk_pairs', fxP(), est || img, a));
+    } },
+  unmult: { name: 'Unmult', cat: 'Keying', kernels: KEY_K, params: [
+      { id: 'bg', label: 'Background color', type: 'pick', def: 0, opts: [[0, 'Black'], [1, 'White']] },
+      { id: 'black', label: 'Black level %', def: 0, min: 0, max: 100, dec: 1, show: f => +(f.bg ?? 0) === 0 },
+      { id: 'white', label: 'White level %', def: 100, min: 0, max: 100, dec: 1, show: f => +(f.bg ?? 0) === 1 },
+      { id: 'softness', label: 'Softness %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'decon', label: 'Remove color matting', type: 'check', def: true },
+      { id: 'clip', label: 'Clip HDR results', type: 'check', def: true }],
+    run(E, img, q) {
+      const white = q('bg') === 1, level = clamp((white ? q('white') : q('black')) / 100, 0, 1);
+      return E.run('fx_key', 'fxk_point', fxP({ 0: [10, white, q('decon'), q('clip')] }, { 0: [level, clamp(q('softness') / 100, 0, 1), 0, 0] }), img);
+    } },
+  // CC Simple Wire Removal: hides a thin line from A to B with the picture either side (Frame Offset works as Displace,
+  // since Lumina effects see only the current frame)
+  wireremoval: { name: 'CC Simple Wire Removal', cat: 'Keying', kernels: [['fx_pixel2', 'fp2_wire']], params: [
+      { id: 'a', label: 'Point A', type: 'pt', def: [.25, .25] },
+      { id: 'b', label: 'Point B', type: 'pt', def: [.75, .75] },
+      { id: 'style', label: 'Removal style', type: 'pick', def: 2, opts: [[0, 'Fade'], [1, 'Frame offset'], [2, 'Displace'], [3, 'Displace horizontal']] },
+      { id: 'thickness', label: 'Thickness', def: 5, min: 0, max: 100, dec: 1 },
+      { id: 'slope', label: 'Slope %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'mirror', label: 'Mirror blend %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const hw = q('thickness') * E.sc * .5; if (hw <= 0) return img;
+      const [ax, ay] = q('a'), [bx, by] = q('b'), len = Math.hypot(bx - ax, by - ay); if (len < 1e-6) return img;
+      const tx = (bx - ax) / len, ty = (by - ay) / len, st = q('style');
+      return E.run('fx_pixel2', 'fp2_wire', fxP({ 0: [st === 1 ? 2 : st, 0, 0, 0] }, { 0: [ax, ay, -ty, tx], 1: [hw, hw * clamp(q('slope') / 100, 0, 1), clamp(q('mirror') / 100, 0, 1), len] }), img);
+    } },
+  simplechoker: { name: 'Simple Choker', cat: 'Matte', kernels: MATTE_K, params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: [[0, 'Final output'], [1, 'Matte']] },
+      { id: 'choke', label: 'Choke matte', def: 0, min: -100, max: 100, dec: 2 }],
+    run(E, img, q) {
+      const c = q('choke') * E.sc;
+      if (Math.abs(c) > 1e-6) img = fxSetAlpha(E, img, fxMorphFrac(E, fxAlphaPlane(E, img), Math.abs(c), c < 0));
+      return q('view') === 1 ? fxMatteView(E, img) : img;
+    } },
+  mattechoker: { name: 'Matte Choker', cat: 'Matte', kernels: MATTE_K, params: [
+      { id: 'geo1', label: 'Geometric softness 1', def: 4, min: 0, max: 1000, dec: 1 },
+      { id: 'choke1', label: 'Choke 1', def: 75, min: -127, max: 127, dec: 0 },
+      { id: 'gray1', label: 'Gray level softness 1 %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'geo2', label: 'Geometric softness 2', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'choke2', label: 'Choke 2', def: 0, min: -127, max: 127, dec: 0 },
+      { id: 'gray2', label: 'Gray level softness 2 %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'iterations', label: 'Iterations', def: 1, min: 1, max: 20, dec: 0 }],
+    run(E, img, q) {
+      const stage = (a, geo, choke, gray) => {
+        if (geo > 0) a = fxGauss(E, a, geo * .5, geo * .5, true);
+        const t = .5 + choke / 255 * .5, w = Math.max(gray, 1e-3);
+        return Math.abs(t - .5) < 1e-6 && Math.abs(w - 1) < 1e-6 ? a : E.run('fx_key', 'fxk_point', fxP({ 0: [26, 0, 0, 0] }, { 0: [t, w, 0, 0] }), a);
+      };
+      let a = fxAlphaPlane(E, img);
+      for (let i = 0, n = clamp(Math.round(q('iterations')), 1, 20); i < n; i++) {
+        a = stage(a, q('geo1') * E.sc, q('choke1'), q('gray1') / 100); a = stage(a, q('geo2') * E.sc, q('choke2'), q('gray2') / 100);
+      }
+      return fxSetAlpha(E, img, a);
+    } },
+  refinesoft: { name: 'Refine Soft Matte', cat: 'Matte', kernels: MATTE_K, params: refineParams(false), run: (E, img, q) => fxRefine(E, img, q, false) },
+  refinehard: { name: 'Refine Hard Matte', cat: 'Matte', kernels: MATTE_K, params: refineParams(true), run: (E, img, q) => fxRefine(E, img, q, true) },
   // ---- C4: anime VFX (Lumina's own shaders, shaders/lumina_vfx.wgsl), each can fire on beats, impacts or bookmarks ----
   rgbsplit: { name: 'RGB Split', cat: 'Anime VFX', kernels: VFX_K('lvx_rgbsplit'), params: [
       { id: 'amount', label: 'Amount (px)', def: 12, min: 0, max: 120, dec: 1 },
