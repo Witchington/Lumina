@@ -857,10 +857,11 @@ if (SELFTEST) ipcMain.handle('claude:probe', (e, { lines, want, env = {} }) => {
   return runMcp(lines, want, env);
 });
 // self tests only: read / write / delete a file inside the test folder, and run Lumina.exe with an uninstaller flag
-if (SELFTEST) ipcMain.handle('claude:testfile', (e, { name, text, remove }) => {
+if (SELFTEST) ipcMain.handle('claude:testfile', (e, { name, text, remove, copyFrom }) => {
   const dir = process.env.LUMINA_TESTDIR, f = path.resolve(dir, name);
   if (!dir || !f.startsWith(path.resolve(dir) + path.sep)) throw new Error('Only files in the test folder.');
   if (remove) { fs.rmSync(f, { recursive: true, force: true }); return null; }
+  if (copyFrom) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.copyFileSync(copyFrom, f); return f; }
   if (text != null) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); return null; }
   return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null;
 });

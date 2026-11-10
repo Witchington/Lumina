@@ -132,7 +132,7 @@
     const tOn = await lumina.claudeTest();
     $('#ccTestBtn').click(); for (let i = 0; i < 50 && !/Working|can't|didn't/.test($('#ccTest').textContent); i++) await new Promise(r => setTimeout(r, 200));
     const shown = $('#ccTest').textContent; $('#mOk').click(); await setClaude(false);
-    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 19 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
+    step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 24 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
       buttonSaysWorking: /Working/.test(shown), shown, closed: $('#modal').hidden });
     await TF({ name: 'claude-desktop', remove: true }); await TF({ name: 'claude-code.json', remove: true });
 
@@ -196,9 +196,50 @@
     const b = id => m2.replies.find(r => r.id === id), names = (b(2)?.result?.tools || []).map(t => t.name);
     const img2 = b(4)?.result?.content?.find(c => c.type === 'image'); let red = null;
     if (img2) { const im = new Image(); im.src = 'data:image/png;base64,' + img2.data; await im.decode(); const c2 = document.createElement('canvas'); c2.width = im.width; c2.height = im.height; const x2 = c2.getContext('2d'); x2.drawImage(im, 0, 0); red = [...x2.getImageData(4, 4, 1, 1).data].slice(0, 3); }
-    step('viaClaude', { tools: names.length === 19, toolNames: names.join(), editTools: names.includes('set_keyframe') && names.includes('undo'),
-      editsMarked: (b(2)?.result?.tools || []).filter(t => t.annotations?.readOnlyHint === false).length === 15,
+    step('viaClaude', { tools: names.length === 24, toolNames: names.join(), editTools: names.includes('set_keyframe') && names.includes('undo'),
+      editsMarked: (b(2)?.result?.tools || []).filter(t => t.annotations?.readOnlyHint === false).length === 20,
       added: !b(3)?.result?.isError, redFrame: !!red && red[0] > 200 && red[1] < 40 && red[2] < 40, red });
+
+    // ---- 9. M3 media: files are copied into this test folder first, so edit copies land here, not in other suites
+    S.layers = []; for (const k in RT) delete RT[k]; clearMulti(); seek(0); undoStack.length = 0; redoStack.length = 0; commit(); refresh();
+    const SRC = 'D:\\Lumina\\.claude\\speed\\media\\', HERE = 'D:\\Lumina\\.claude\\mcp\\media\\';
+    await TF({ name: 'media', remove: true });
+    const vid = await TF({ name: 'media/clip2.webm', copyFrom: SRC + 'clip2.webm' }), pic = await TF({ name: 'media/red.png', copyFrom: SRC + 'red.png' });
+    const wavP = await TF({ name: 'media/speech.wav', copyFrom: SRC + 'speech.wav' }), junk = await TF({ name: 'media/notes.webm', copyFrom: SRC + 'list.html' });
+    await TF({ name: 'media/caps.srt', text: '1\n00:00:01,000 --> 00:00:02,500\nFirst line\n\n2\n00:00:03,000 --> 00:00:04,000\nSecond line\n' });
+    const i1 = await one('import_media', { path: vid, start: 1 }), V = byId(i1.result?.id);
+    const i2 = await one('import_media', { path: pic }), PIC = byId(i2.result?.id);
+    const i3 = await C('import_media', { path: HERE + 'missing.mp4' }), i4 = await C('import_media', { path: 'clip.mp4' });
+    const tJ = performance.now(), i5 = await C('import_media', { path: junk }), junkSecs = +((performance.now() - tJ) / 1000).toFixed(1);
+    step('import', { video: i1.ok && V?.kind === 'video' && V.start === 1 && MEDIA[V.media]?.path === vid && i1.steps === 1 || i1.error,
+      picture: i2.ok && PIC?.kind === 'image' && i2.steps === 1 || i2.error,
+      missing: !i3.ok && /no file at/.test(i3.error), notFull: !i4.ok && /full path/.test(i4.error), unreadable: !i5.ok && /couldn't read/.test(i5.error), junkSecs,
+      inProject: (await C('get_project', {})).result.media.some(m => m.path === vid) });
+    // another clip of the same file, and captions
+    const pm = await one('place_media', { media: V.media, start: 6, in: .5, out: 1.5 }), PM = byId(pm.result?.id), pmBad = await C('place_media', { media: 9999 });
+    const c1 = await one('import_captions', { path: HERE + 'caps.srt', start: 2 }), CL = byId(c1.result?.id);
+    const c2 = await one('import_media', { path: HERE + 'caps.srt' }), c3 = await C('import_captions', { path: pic });
+    const gl = await C('get_layer', { id: CL?.id });
+    step('placeCaptions', { place: pm.ok && PM?.media === V.media && PM.start === 6 && Math.abs(len(PM) - 1) < 1e-6 && pm.steps === 1, badMedia: !pmBad.ok && /no imported file/.test(pmBad.error),
+      captions: c1.ok && CL?.cues?.length === 2 && CL.start === 2 && c1.steps === 1 || c1.error, viaImport: c2.ok && c2.result.lines === 2, notCaptions: !c3.ok && /srt or \.vtt/.test(c3.error),
+      listed: gl.ok && gl.result.captions?.[1]?.text === 'Second line' && gl.result.captions[0].t0 === 3 });
+    // auto captions: only with the speech model already downloaded (Claude never starts that download)
+    const ia = await C('import_media', { path: wavP }), A = byId(ia.result?.id), ready = (await lumina.speechStatus()).ready;
+    const ac0 = await C('auto_captions', { id: PIC.id }), acL = await C('auto_captions', { id: A.id, language: 'klingon' });
+    const tA = performance.now(), ac = await one('auto_captions', { id: A.id, language: 'english' }), acSecs = +((performance.now() - tA) / 1000).toFixed(1);
+    step('autoCaptions', { modelReady: ready, notSound: !ac0.ok && /no sound/.test(ac0.error), badLang: !acL.ok && /language must be/.test(acL.error),
+      made: ready ? ac.ok && ac.result.lines > 0 && ac.steps === 1 : !ac.ok && /isn't downloaded/.test(ac.error), acSecs, lines: ac.result?.lines, langBack: acLang === 'auto' });
+    // edit copy: starts, runs in the background, and every clip of that file switches to it
+    const o0 = await C('optimize', { id: PIC.id }), o1 = await C('optimize', { id: V.id });
+    let st = null; for (let i = 0; i < 300; i++) { st = (await C('get_layer', { id: V.id })).result.media.editCopy; if (st === 'ready') break; await new Promise(r => setTimeout(r, 200)); }
+    const copyPath = MEDIA[V.media].path, o2 = await C('optimize', { id: V.id });
+    step('optimize', { notVideo: !o0.ok && /isn't a video/.test(o0.error), started: o1.ok && o1.result.editCopy === 'making' || o1.error, ready: st === 'ready',
+      copyNextToOriginal: /clip2 \(edit copy\)\.mp4$/.test(copyPath) && copyPath.startsWith(HERE), placedToo: MEDIA[PM.media].path === copyPath, again: o2.result?.editCopy === 'ready' });
+    // undo takes an import back off
+    const nL = S.layers.length; await C('undo', {}); const undone = S.layers.length === nL - 1;
+    step('importUndo', { undone });
+    S.layers = []; for (const k in RT) { RT[k].el?.pause?.(); delete RT[k]; } refresh(); await new Promise(r => setTimeout(r, 300));
+    await TF({ name: 'media', remove: true });
 
     const flat = []; (function walk(o, p) { for (const [k, v] of Object.entries(o)) { if (v === false) flat.push(p + k); else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, p + k + '.'); } })(R.steps, '');
     R.falses = flat;

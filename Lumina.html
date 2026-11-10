@@ -8471,7 +8471,9 @@ const API_TOOLS = {
       selectedLayer: S.sel ?? null, background: S.global.bg ?? null, bookmarks: (S.bookmarks || []).map(b => apiNum(b.t ?? b)),
       layerOrder: 'the first layer is drawn on top',
       layers: S.layers.map(L => ({ id: L.id, name: L.name, kind: L.kind, start: apiNum(L.start), length: apiNum(len(L)), end: apiNum(endOf(L)),
-        visible: L.visible !== false, effects: (L.fx || []).map(f => FX[f.id]?.name || f.id) }))
+        visible: L.visible !== false, effects: (L.fx || []).map(f => FX[f.id]?.name || f.id) })),
+      // every imported file (a clip of one can be put on the timeline again with place_media)
+      media: Object.entries(MEDIA).filter(([, m]) => m && m.type).map(([id, m]) => apiMedia(+id))
     };
   },
   get_layer({ id }) {
@@ -8479,7 +8481,8 @@ const API_TOOLS = {
     for (const [k, v] of Object.entries(L)) if (v == null || typeof v !== 'object') out[k] = apiNum(v);
     out.length = apiNum(len(L)); out.end = apiNum(endOf(L));
     const M = L.media != null ? MEDIA[L.media] : null;
-    if (M) out.media = { name: M.name, type: M.type, duration: apiNum(M.duration), width: M.w, height: M.h };
+    if (M) out.media = apiMedia(L.media);
+    if (L.cues) out.captions = L.cues.map(c => ({ t0: apiNum(c.t0 + L.start), t1: apiNum(c.t1 + L.start), text: c.text }));
     // properties that differ from a new layer's, at the playhead
     out.properties = {};
     for (const k of Object.keys(L.p)) if (!/^fx\d+_/.test(k)) { const v = val(L, k, S.time); if (v !== BASE_P[k] || L.keys[k]?.length) out.properties[k] = apiNum(v); }
@@ -8529,6 +8532,24 @@ function apiStep(fn) {
   undoStack.length = Math.min(undoStack.length, n); commit(); refresh(); drawOverlay();
   return out;
 }
+// the same for a change that has to wait (a file being read, captions being made)
+async function apiStepAsync(fn) {
+  const n = undoStack.length;
+  try { return await fn(); }
+  finally { undoStack.length = Math.min(undoStack.length, n); commit(); refresh(); drawOverlay(); }
+}
+// a file on this computer, given by its full path
+async function apiPath(p) {
+  if (typeof p !== 'string' || !/^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p)) throw new Error('path must be a full path to a file on this computer, like "C:\\Videos\\clip.mp4".');
+  if (!window.lumina?.exists) throw new Error('Opening files by path works in the desktop app.');
+  if (!(await lumina.exists([p]))[0]) throw new Error(`There is no file at ${p}.`);
+  return p;
+}
+const apiMedia = id => {
+  const m = MEDIA[id];
+  return { media: id, name: m.name, type: m.type, path: m.path || null, duration: apiNum(m.duration), width: m.w, height: m.h,
+    editCopy: m.origPath ? 'ready' : OPT[id] ? `making, ${Math.round(OPT[id].f * 100)}%` : null, ...(m.origPath ? { original: m.origPath } : {}) };
+};
 const apiNumber = (v, what) => { const n = +v; if (v === null || v === '' || typeof v === 'boolean' || !isFinite(n)) throw new Error(`${what} must be a number.`); return n; };
 const apiColor = (v, what) => { if (!/^#[0-9a-f]{6}$/i.test(String(v))) throw new Error(`${what} must be a colour like "#ff8800".`); return String(v).toLowerCase(); };
 const apiTime = (v, what = 'time') => Math.max(0, apiNumber(v, what));
@@ -8673,6 +8694,75 @@ Object.assign(API_TOOLS, {
   remove_effect({ id, index }) {
     const L = apiLocked(apiLayer(id)), f = apiEffect(L, index);
     return apiStep(() => { delFX(L, +index); return { id: L.id, removed: f.id, effectsLeft: (L.fx || []).length }; });
+  },
+  // ---- M3: media
+  async import_media({ path, start }) {
+    const p = await apiPath(path);
+    if (/\.(srt|vtt)$/i.test(p)) return API_TOOLS.import_captions({ path: p, start });
+    const before = new Set(Object.keys(MEDIA));
+    return apiStepAsync(async () => {
+      addFiles([pathFile(p)]);
+      // addFiles reads the file in the background; wait for its clip (a file Chromium can't read never gets one)
+      let mid = null;
+      for (let i = 0; i < 150 && mid == null; i++) { await new Promise(r => setTimeout(r, 100)); mid = Object.keys(MEDIA).find(k => !before.has(k) && MEDIA[k]?.path === p && S.layers.some(L => L.media === +k)) ?? null; }
+      if (mid == null) throw new Error(`Lumina couldn't read ${p}. It reads MP4 (H.264), WebM, MOV, MP3, WAV, PNG, JPG, SVG, PSD and most camera pictures.`);
+      const L = S.layers.find(x => x.media === +mid);
+      if (start != null) L.start = apiTime(start, 'start');
+      S.sel = L.id;
+      return { id: L.id, media: +mid, kind: L.kind, start: apiNum(L.start), length: apiNum(len(L)) };
+    });
+  },
+  place_media({ media, start, in: from, out: to }) {
+    const m = MEDIA[media];
+    if (!m?.type) throw new Error(`There is no imported file with media id ${media}. get_project lists them under media.`);
+    return apiStep(() => {
+      const L = newLayer(m.type, { name: m.name, media: +media, start: start != null ? apiTime(start, 'start') : S.time });
+      if (m.type === 'image') L.dur = 5;
+      else {
+        L.speed = 1; L.in = clamp(from != null ? apiNumber(from, 'in') : 0, 0, m.duration - .1); L.out = clamp(to != null ? apiNumber(to, 'out') : m.duration, L.in + .1, m.duration);
+      }
+      insertLayer(L); S.sel = L.id;
+      return { id: L.id, media: +media, kind: L.kind, start: apiNum(L.start), length: apiNum(len(L)) };
+    });
+  },
+  async import_captions({ path, start }) {
+    const p = await apiPath(path);
+    if (!/\.(srt|vtt)$/i.test(p)) throw new Error('Captions must be an .srt or .vtt file.');
+    const src = await pathFile(p).text();
+    if (!parseCaptions(src).length) throw new Error(`No captions found in ${p}.`);
+    return apiStep(() => {
+      const L = importCaptions(src, p.split(/[\\/]/).pop());
+      if (start != null) L.start = apiTime(start, 'start');
+      return { id: L.id, lines: L.cues.length, start: apiNum(L.start), length: apiNum(len(L)) };
+    });
+  },
+  async auto_captions({ id, language }) {
+    const L = apiLayer(id);
+    if (!L.media || !['video', 'audio'].includes(L.kind)) throw new Error(`Layer ${L.id} has no sound to caption. Pick a video or audio layer.`);
+    if (!window.lumina?.speechStatus) throw new Error('Auto captions work in the desktop app.');
+    // the speech model is a 77 MB download: only ever on the person's own click, never by Claude
+    if (!(await lumina.speechStatus()).ready) throw new Error(`The speech model isn't downloaded yet (about ${AC_MB} MB). Ask the person to select the clip in Lumina and press "Download speech model and make captions" once; after that this tool works.`);
+    if (acBusy) throw new Error('Lumina is already making captions. Try again when it has finished.');
+    if (language != null && !AC_LANGS.some(l => l[0] === language)) throw new Error(`language must be one of: ${AC_LANGS.map(l => l[0]).join(', ')}.`);
+    const lang = acLang; if (language) acLang = language;
+    try {
+      return await apiStepAsync(async () => {
+        const C = await autoCaptions(L);
+        if (!C) throw new Error('No speech was found in that clip.');
+        return { id: C.id, lines: C.cues.length, start: apiNum(C.start), length: apiNum(len(C)), seconds: Math.round((C.autoMs || 0) / 1000) };
+      });
+    } finally { acLang = lang; }
+  },
+  async optimize({ id }) {
+    const L = apiLayer(id), m = MEDIA[L.media];
+    if (L.kind !== 'video' || !m?.path) throw new Error(`Layer ${L.id} isn't a video from a file, so it has no edit copy to make.`);
+    if (m.origPath) return { id: L.id, editCopy: 'ready', file: m.path };
+    if (OPT[L.media]) return { id: L.id, editCopy: 'making', done: Math.round(OPT[L.media].f * 100) + '%' };
+    for (let i = 0; i < 100 && m.probe === 'busy'; i++) await new Promise(r => setTimeout(r, 100));
+    if (m.probe === undefined) await probeMedia(L.media);
+    if (!m.probe?.video) throw new Error(`Lumina couldn't read the format of ${m.name}.`);
+    makeEditCopy(L);   // runs in the background; get_layer's media.editCopy shows how far it has got
+    return { id: L.id, editCopy: 'making', note: `An easy-to-edit copy is being saved next to the original, as "${m.name.replace(/\.\w+$/, '')} (edit copy).mp4". Every clip from this file switches to it when it's done. get_layer shows the progress.` };
   },
   undo() { const can = undoStack.length > 1; undo(); return { undone: can, canUndo: undoStack.length > 1, canRedo: redoStack.length > 0 }; },
   redo() { const can = redoStack.length > 0; redo(); return { redone: can, canUndo: undoStack.length > 1, canRedo: redoStack.length > 0 }; }

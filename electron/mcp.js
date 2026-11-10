@@ -47,6 +47,7 @@ const PLACE = {
   y: { type: 'number', description: 'Centre down the frame: 0 = top, 0.5 = middle, 1 = bottom.' },
   scale: { type: 'number', description: '1 = 100%.' }, rotation: { type: 'number', description: 'Degrees.' }, opacity: { type: 'number', minimum: 0, maximum: 1 }
 };
+const PATH_ARG = { type: 'string', description: String.raw`The full path to the file on this computer, e.g. C:\Videos\clip.mp4.` };
 const SHAPE_NAMES = ['rect', 'ellipse', 'arrow', 'line', 'star', 'heart', 'triangle', 'hexagon', 'bubble', 'burst', 'blur', 'pixel', 'fill'];
 TOOLS.push(
   { name: 'seek', title: 'Move the playhead', description: 'Move the playhead to a time in seconds. New layers start at the playhead.',
@@ -81,7 +82,18 @@ TOOLS.push(
   { name: 'remove_effect', title: 'Remove an effect', description: 'Take an effect off a layer.',
     inputSchema: obj({ id: ID, index: { type: 'integer', minimum: 0 } }, ['id', 'index']), annotations: { ...edit, destructiveHint: true } },
   { name: 'undo', title: 'Undo', description: 'Undo the last change in Lumina (the same as Ctrl+Z, whoever made it).', inputSchema: obj({}), annotations: edit },
-  { name: 'redo', title: 'Redo', description: 'Redo the last undone change.', inputSchema: obj({}), annotations: edit }
+  { name: 'redo', title: 'Redo', description: 'Redo the last undone change.', inputSchema: obj({}), annotations: edit },
+  // M3: media. Files are read where they are; nothing is copied or uploaded.
+  { name: 'import_media', title: 'Import a file', description: 'Bring a video, picture, sound or .srt / .vtt captions file from this computer into the project and put it on the timeline. Returns the layer id and media id.',
+    inputSchema: obj({ path: PATH_ARG, start: SEC('Where it starts on the timeline (default: videos line up after the last video; others at the playhead).') }, ['path']), annotations: edit },
+  { name: 'place_media', title: 'Use an imported file again', description: 'Put another clip of an already imported file on the timeline (media ids are in get_project). For video and sound, in / out pick the part of the file.',
+    inputSchema: obj({ media: { type: 'integer' }, start: SEC('Timeline start (default: the playhead).'), in: SEC('Seconds into the file where the clip begins.'), out: SEC('Seconds into the file where it ends.') }, ['media']), annotations: edit },
+  { name: 'import_captions', title: 'Import captions', description: 'Add an .srt or .vtt subtitle file as one captions layer.',
+    inputSchema: obj({ path: PATH_ARG, start: SEC('Timeline start (default 0).') }, ['path']), annotations: edit },
+  { name: 'auto_captions', title: 'Make captions from speech', description: 'Turn the speech in a video or audio layer into a captions layer, on this computer. Only works once the person has downloaded the speech model in Lumina; it can take a minute or more.',
+    inputSchema: obj({ id: ID, language: { type: 'string', description: 'auto (default), english, spanish, french, german, italian, portuguese, dutch, polish, russian, turkish, arabic, hindi, japanese, korean or chinese.' } }, ['id']), annotations: edit },
+  { name: 'optimize', title: 'Make an edit copy', description: 'Start making an easy-to-edit copy of a video layer\'s file (saved next to the original, which is untouched), so jumping around in it is quick. Runs in the background; get_layer shows media.editCopy.',
+    inputSchema: obj({ id: ID }, ['id']), annotations: { ...edit, idempotentHint: true } }
 );
 
 function callLumina(tool, args) {
@@ -89,7 +101,7 @@ function callLumina(tool, args) {
   if (!c.enabled || !c.port || !c.key) return Promise.resolve({ ok: false, error: OFF });
   const body = JSON.stringify({ tool, args });
   return new Promise(done => {
-    const req = http.request({ host: '127.0.0.1', port: c.port, path: '/call', method: 'POST', timeout: 120000,
+    const req = http.request({ host: '127.0.0.1', port: c.port, path: '/call', method: 'POST', timeout: tool === 'auto_captions' ? 1800000 : 120000,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Lumina-Key': c.key } }, res => {
       let text = ''; res.setEncoding('utf8');
       res.on('data', d => text += d);

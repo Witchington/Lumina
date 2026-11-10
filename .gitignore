@@ -31,3 +31,6 @@ claude-control*.json
 
 # this PC's Claude Code link to Lumina (local paths)
 .mcp.json
+
+# the Claude control test's copied media and the edit copies it makes
+.claude/mcp/media/

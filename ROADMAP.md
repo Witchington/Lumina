@@ -7,7 +7,7 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M3 (media); ask the user which
+## ▶ Start here next: Round 12 (Keying II + mattes), or MCP step M4 (output + Image mode); ask the user which
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
@@ -74,7 +74,7 @@ The beginner layout, for reference:
 - **B4 Welcome + tips (done):** first-run welcome (new, open, sizes like YouTube / TikTok / Square) and one-time tips pointing at
   key features, which can be turned off.
 
-### Claude control (MCP), asked for by the user 2026-11-08: M1, M1b and M2 done 2026-11-09, M3 (media) next
+### Claude control (MCP), asked for by the user 2026-11-08: M1, M1b, M2 and M3 done 2026-11-09, M4 (output + Image mode) next
 Goal: Claude edits a project in the running Lumina through tools (add clips, text, effects, keyframes, look at frames,
 export) instead of only writing Lumina's code.
 
@@ -157,7 +157,20 @@ export) instead of only writing Lumina's code.
   - **Not tested here:** trimming a video clip (it uses the same functions the timeline suite tests).
 - **M2 Editing (the plan):** `seek`, `add_text`, `add_shape`, `add_solid`, `set_property`, `set_keyframe`, `move` / `trim` / `split` /
   `delete_layer`, `add_effect`, `set_effect`, `undo` / `redo`.
-- **M3 Media:** `import_media` (a file path), `place_media` on the timeline, captions, `optimize`.
+- **M3 Media: done 2026-11-09.** Five tools:
+  - `import_media`: a full path. It goes through `addFiles` (`pathFile`) and waits up to 15 s for the clip. An .srt or
+    .vtt file goes to captions instead.
+  - `place_media`: another clip of an imported file, with `in` / `out`. `get_project` now lists `media`.
+  - `import_captions`.
+  - `auto_captions`: refuses until the person has downloaded the 77 MB speech model themselves. Claude never starts that
+    download. The wait is 30 minutes.
+  - `optimize`: starts the edit copy and returns; `get_layer` shows `media.editCopy`. `get_layer` also lists a captions
+    layer's lines.
+  - Imports, captions and placing are one undo step each (`apiStepAsync`).
+  - **Tests:** mcp-suite steps `import`, `placeCaptions`, `autoCaptions`, `optimize` and `importUndo`. The test media is
+    copied into `.claude\mcp\media` (git-ignored, removed afterwards), so edit copies never land in other suites' folders.
+  - **Known:** a file Chromium can't read takes the full 15 s before the "couldn't read" answer.
+- **M3 Media (the plan):** `import_media` (a file path), `place_media` on the timeline, captions, `optimize`.
 - **M4 Output + Image mode:** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.
 - **Safety:** local only, key, off by default, every edit undoable, a status light in Lumina while Claude is connected.
 
