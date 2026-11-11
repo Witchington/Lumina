@@ -1284,6 +1284,92 @@
     }
     step('round20speed', r20speed);
 
+    // ---- Round 21: Noise & Grain. Same card: black, white, red, green, blue, grey patches across the top half (320 px
+    //      each), a grey ramp below. The grey patch's spread (100 × 100 px at 1700, 200) shows how grainy it is
+    {
+      const cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t);
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const ids = ['noiseamt', 'addgrain', 'matchgrain', 'removegrain', 'dustscratches', 'median', 'medianlegacy', 'noisealpha', 'noisehls', 'noisehlsauto', 'turbnoise', 'curlnoise'], K21 = {};
+      for (const id of ids) { await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K21[fam + ':' + e] = r; } }
+      step('noiseKernels', { ...K21, works: !Object.keys(K21).length });
+      const spread = (d, x0 = 1700, y0 = 200, n = 100, c = 0) => { let a = 0, b = 0, k = 0; for (let y = y0; y < y0 + n; y++) for (let x = x0; x < x0 + n; x++) { const v = d[(y * 1920 + x) * 4 + c]; a += v; b += v * v; k++; } return +Math.sqrt(Math.max(0, b / k - (a / k) ** 2)).toFixed(2); };
+      const count = (d, fn) => { let n = 0; for (let i = 0; i < d.length; i += 4) if (fn(d[i], d[i + 1], d[i + 2])) n++; return n; };
+      while (L.fx?.length) delFX(L, 0); draw(); const plainF = frame(), plainSpread = spread(plainF);
+      // Noise: Amount 0 changes nothing; 40 % scatters the grey patch, coloured (channels differ) or grey; a new pattern later on
+      f = await only('noiseamt'); draw(); const nzZero = diff(plainF, frame()).changed;
+      set(f, 'amount', 40); draw(); const nz1 = frame(), nzSpread = spread(nz1), nzColor = count(nz1.subarray((200 * 1920 + 1700) * 4, (200 * 1920 + 1800) * 4), (r, g, b) => r !== g || g !== b);
+      draw(1.2); const nzLater = diff(nz1, frame()).changed; f.color = false; draw(); const nzGrey = count(frame().subarray((200 * 1920 + 1700) * 4, (200 * 1920 + 1800) * 4), (r, g, b) => r !== g || g !== b);
+      // Add Grain: grain on the grey patch; Intensity 0 none; Blending Matte (Shadows 0) black on the black patch, white on the
+      // white one; Preview: grain only inside the 200 × 200 box round the middle, its outline white
+      f = await only('addgrain'); draw(); const agSpread = spread(frame()); set(f, 'intensity', 0); draw(); const agZero = diff(plainF, frame()).changed; set(f, 'intensity', 3);
+      f.view = 1; set(f, 'shadows', 0); draw(); const agMatte = [px(160, 270), px(480, 270)]; set(f, 'shadows', 1);
+      f.view = 0; draw(); const agPv = frame(), chg = (x0, y0, n) => { let k = 0; for (let y = y0; y < y0 + n; y++) for (let x = x0; x < x0 + n; x++) { const i = (y * 1920 + x) * 4; if (Math.abs(agPv[i] - plainF[i]) > 2) k++; } return k; }, agIn = chg(900, 560, 60), agOut = chg(1700, 200, 60), agBox = px(860, 540);
+      f.view = 2; f.preset = 3; draw(); const agVintage = spread(frame());
+      // Remove Grain (after Noise): the grey patch smoother than with the noise alone; Noise Samples draws yellow boxes;
+      // Blending Matte is white everywhere in the layer
+      f = await only('noiseamt'); set(f, 'amount', 30); f.color = false; draw(); const noisy = frame(), noisySpread = spread(noisy);
+      f = await add('removegrain'); set(f, 'reduction', 3); draw(); const rgSpread = spread(frame());
+      f.view = 1; draw(); const rgBoxes = count(frame(), (r, g, b) => r === 255 && g === 255 && b === 0);
+      f.view = 2; draw(); const rgMatte = px(160, 270); f.view = 3;
+      // Dust & Scratches, Median and Median (Legacy) after the noise: smoother; Threshold 255 leaves the noise; Median radius
+      // 6 uses the sliding histogram and smooths too; radius 0 changes nothing
+      while (L.fx.length > 1) delFX(L, 1);
+      f = await add('dustscratches'); set(f, 'radius', 2); draw(); const dsSpread = spread(frame()); set(f, 'threshold', 255); draw(); const dsKeep = diff(noisy, frame()).changed; delFX(L, 1);
+      f = await add('median'); draw(); const mdZero = diff(noisy, frame()).changed; set(f, 'radius', 2); draw(); const md2 = spread(frame()); set(f, 'radius', 6); draw(); const md6 = spread(frame()); delFX(L, 1);
+      f = await add('medianlegacy'); set(f, 'radius', 2); draw(); const mlSpread = spread(frame()); delFX(L, 1);
+      // Noise Alpha (Scale): holes in the layer show the black behind it on the grey patch
+      f = await only('noisealpha'); draw(); const naZero = diff(plainF, frame()).changed; set(f, 'amount', 60); f.original = 2; draw(); const naSpread = spread(frame());
+      // Noise HLS: Lightness 50 % scatters the grey patch, the same each frame; Noise HLS Auto changes with time
+      f = await only('noisehls'); draw(); const hlZero = diff(plainF, frame()).changed; set(f, 'lightness', 50); draw(1); const hl1 = frame(), hlSpread = spread(hl1); draw(1.5); const hlSame = diff(hl1, frame()).changed;
+      f = await only('noisehlsauto'); set(f, 'lightness', 50); draw(1); const ha1 = frame(); draw(1.5); const haMoves = diff(ha1, frame()).changed;
+      // Turbulent Noise: a cloudy pattern over the layer, another with Random Seed 7 or more Evolution, and nothing outside a
+      // shrunk layer
+      f = await only('turbnoise'); draw(); const tn1 = frame(), tnSpread = spread(tn1, 200, 200, 600);
+      set(f, 'seed', 7); draw(); const tnSeed = diff(tn1, frame()).changed; set(f, 'seed', 0); set(f, 'evolution', 90); draw(); const tnEvo = diff(tn1, frame()).changed;
+      L.p.scale = .5; draw(); const tnOut = px(100, 100), tnIn = px(960, 540); L.p.scale = 1;
+      // Curl Noise: Amount 0 changes nothing; 40 bends the patches' edges, flat patch middles stay; Flow Field shows the
+      // velocities (blue 128)
+      f = await only('curlnoise'); set(f, 'amount', 0); draw(); const cnZero = diff(plainF, frame()).changed; set(f, 'amount', 40); draw(); const cnChanged = diff(plainF, frame()).changed, cnMid = [px(480, 270), P0(480, 270)];
+      f.view = 1; draw(); const cnFlow = px(700, 300);
+      // Match Grain: a grainy grey layer (behind the card) is the source; no source changes nothing; the grey patch gets
+      // grain about as strong as the source's; Noise Samples shows yellow boxes on the source
+      const gc = document.createElement('canvas'); gc.width = 1920; gc.height = 1080; const gx = gc.getContext('2d'), gd = gx.createImageData(1920, 1080);
+      let seedN = 12345; const rnd = () => (seedN = (seedN * 1103515245 + 12345) >>> 0) / 4294967296;
+      for (let i = 0; i < gd.data.length; i += 4) { const v = 128 + Math.round((rnd() - .5) * 80); gd.data[i] = gd.data[i + 1] = gd.data[i + 2] = v; gd.data[i + 3] = 255; }
+      gx.putImageData(gd, 0, 0); const gfile = new File([await new Promise(r => gc.toBlob(r))], 'grainy.png', { type: 'image/png' });
+      gfile.__path = await lumina.saveExport(await gfile.arrayBuffer(), 'grainy.png', dir + 'grainy.png');
+      const N = await load(gfile); N.start = 0; N.dur = 6; S.sel = L.id; setRightTab('fx'); refresh();
+      while (L.fx?.length) delFX(L, 0); draw();
+      if (diff(plainF, frame()).changed) { S.layers.splice(S.layers.indexOf(N), 1); S.layers.unshift(N); draw(); }
+      if (diff(plainF, frame()).changed) { S.layers.splice(S.layers.indexOf(N), 1); S.layers.push(N); draw(); }
+      const hidden = diff(plainF, frame()).changed, srcSpread = spread(gd.data);
+      f = await only('matchgrain'); draw(); const mgNone = diff(plainF, frame()).changed;
+      f.source = N.id; draw(); const mgSpread = spread(frame());
+      f.view = 1; draw(); const mgBoxes = count(frame(), (r, g, b) => r === 255 && g === 255 && b === 0); f.view = 4;
+      S.layers.splice(S.layers.indexOf(N), 1); while (L.fx?.length) delFX(L, 0);
+      step('noiseDetails', { plainSpread, nzZero, nzSpread, nzColor, nzLater, nzGrey, agSpread, agZero, agMatte: agMatte.map(String), agIn, agOut, agBox: agBox.join(), agVintage,
+        noisySpread, rgSpread, rgBoxes, rgMatte: rgMatte.join(), dsSpread, dsKeep, mdZero, md2, md6, mlSpread, naZero, naSpread, hlZero, hlSpread, hlSame, haMoves,
+        tnSpread, tnSeed, tnEvo, tnOut: tnOut.join(), tnIn: tnIn.join(), cnZero, cnChanged, cnMid: cnMid.map(String), cnFlow: cnFlow.join(), hidden, srcSpread, mgNone, mgSpread, mgBoxes,
+        works: nzZero === 0 && nzSpread > 10 && nzColor > 50 && nzLater > 10000 && nzGrey === 0 && agSpread > 1 && agZero === 0 && agMatte[0][0] < 10 && agMatte[1][0] > 245
+          && agIn > 1000 && agOut === 0 && agBox.join() === '255,255,255' && agVintage > agSpread && rgSpread < noisySpread * .7 && rgBoxes > 100 && rgMatte.join() === '255,255,255'
+          && dsSpread < noisySpread * .7 && dsKeep === 0 && mdZero === 0 && md2 < noisySpread * .7 && md6 < noisySpread * .5 && mlSpread < noisySpread * .7
+          && naZero === 0 && naSpread > 10 && hlZero === 0 && hlSpread > 10 && hlSame === 0 && haMoves > 10000
+          && tnSpread > 20 && tnSeed > 10000 && tnEvo > 10000 && tnOut.join() === '0,0,0' && tnIn.join() !== '0,0,0'
+          && cnZero === 0 && cnChanged > 2000 && cl(cnMid[0], cnMid[1]) && Math.abs(cnFlow[2] - 128) <= 2
+          && hidden === 0 && mgNone === 0 && mgSpread > srcSpread * .4 && mgSpread < srcSpread * 2 && mgBoxes > 100 });
+      const menuN = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Noise & Grain');
+      step('noiseMenu', { count: menuN?.children.length, works: menuN?.children.length === 12 });
+    }
+    const r21speed = {};
+    for (const id of ['noiseamt', 'addgrain', 'removegrain', 'dustscratches', 'median', 'noisealpha', 'noisehls', 'turbnoise', 'curlnoise']) {
+      const f = await only(id);
+      if (id === 'noiseamt' || id === 'noisealpha') set(f, 'amount', 40); if (id === 'noisehls') set(f, 'lightness', 30); if (id === 'median') set(f, 'radius', 3);
+      draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r21speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    while (L.fx?.length) delFX(L, 0);
+    step('round21speed', r21speed);
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }

@@ -7,19 +7,26 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 21 (Noise & Grain) (Round IX done 2026-11-11); Round 20 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 22 (Perspective) (Round 21 done 2026-11-11); Round 21 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 20 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 21 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
-Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
-Noise. Check first which of them Lumina already has (some came in early Rounds), then find the rest's host code in
-EffectCraft's crates/gpu/src (fx_noise.rs is likely; check each file's `IDS` list). Round 20's helpers: `fxRng(seed)`
+Rounds 8–21 and the Round 6 leftovers are done. **Round 22 is next, Perspective** (WORKPLAN.md's round table): Drop
+Shadow, Radial Shadow, Bevel Alpha, Bevel Edges, 3D Glasses, CC Cylinder, CC Sphere, CC Spotlight, CC Environment (none of
+them is in Lumina yet). Find their host code in EffectCraft's crates/gpu/src (check each file's `IDS` list) and the CPU
+plans in crates/effects/src. Round 21's helpers: `fxPhaseTerms` (fx_noise::phase_terms), `fxGrainLook` / `fxGrainPlanes` /
+`fxGrainApply` / `fxGrainMatte` / `fxGrainPreview` (GrainLook and preview_compose), `fxSampleBoxes` / `fxGrainStats` /
+`fxSampling` / `fxDrawBoxes` (noise::sample_boxes, noise2::grain_stats_boxes, draw_boxes, on a picture read back),
+`fxMedianImage` / `fxMedianFx` (noise::median_image: bisection to radius 4, the sliding histogram above), `fxNoiseHLS`,
+`fxTurbulentNoise` (noise3::fractal_gpu) and the menus `FX_FRACTAL_TYPES`, `FX_NOISE_TYPES`, `FX_NOISE_OVERFLOW`,
+`FX_NOISE_BLENDS` (name → BlendMode::ALL place); an effect's `clip` can now be a function of its settings; new kernel
+families `fx_particles` (fx_stylize + fx_sim + fx_particles, as EffectCraft builds it) and Lumina's `lumina_noise`
+(shaders/lumina_noise.wgsl). Round 20's helpers: `fxRng(seed)`
 (util::Rng, xorshift64* on BigInt), `fxPlaneAt` (Plane::sample), `fxBolt` / `fxLightningSegs` (generate2's bolts),
 `fxHslRgb` (common::hsl_to_rgb), `fxFractal` (the CPU fractal, in doubles); `E.texFrom8(bytes, w, h)` (an 8-bit RGBA
 picture from the CPU); lumina_gen.wgsl gained `lg_alpha` (Plane::alpha) and `lg_put` (a CPU picture, optionally over the
@@ -430,7 +437,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 21 (Noise & Grain)**.
+EffectCraft carries on at **Round 22 (Perspective)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -452,8 +459,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–20 and the Round 6 leftovers are done; Round 21 (Noise & Grain) is next.** About 133
-   effects are left, in Rounds 21–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–21 and the Round 6 leftovers are done; Round 22 (Perspective) is next.** About 121
+   effects are left, in Rounds 22–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -569,6 +576,24 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 21 done (2026-11-11): Noise & Grain.** A new **Noise & Grain** group with **Noise**, **Add Grain**,
+  **Match Grain**, **Remove Grain**, **Dust & Scratches**, **Median**, **Median (Legacy)**, **Noise Alpha**, **Noise HLS**,
+  **Noise HLS Auto**, **Turbulent Noise** and **Curl Noise** (12).
+  - Kernels: fx_noise's fxn_quant / fxn_median / fxn_median_huang (median_private) / fxn_median_out, fxn_noise_alpha,
+    fxn_noise_hls, fxn_fractal, fxn_gf_guide / fxn_gf / fxn_rg_*; fx_generate's gen_noise and gen_grain_planes /
+    gen_grain_apply; fx_particles' fxp_curl_* (new family). Host code from fx_noise.rs and fx_generate.rs; Curl Noise's from
+    noise2::curl_noise and the kernels' own notes (EffectCraft's fx_particles.rs wasn't needed).
+  - Lumina's `shaders/lumina_noise.wgsl` (ln_grain_matte, ln_boxes, ln_plane_view, ln_affine) draws what EffectCraft does
+    on the CPU: the Blending Matte views, the Noise Samples boxes and Match Grain's normalised planes.
+  - Remove Grain and Match Grain measure the grain on the picture read back (8 bits) in the flattest sample boxes, as
+    EffectCraft does on the CPU. Match Grain works out its planes' spread once for the grain's size and softness, then keeps
+    it (EffectCraft measures it every frame; the spread hardly changes from frame to frame).
+  - Left out: Remove Grain's Temporal Filtering (it needs the layer's neighbouring frames through its effects, which comes
+    with the Time effects, Round 25) and the one-choice "Sampling Process" menu (Automatic).
+  - The grain, noise and Curl Noise's flow line up with the frame, not the layer's own pixels (as Round 18's Block Load);
+    Turbulent Noise and Curl Noise turn with the layer. The Preview Region is an upright box in the frame.
+  - Speeds 4.5–12.7 ms a frame (Median radius 3); Remove Grain 41 ms (it reads the picture back to measure the grain).
+  - Test: the fx suite's noiseKernels, noiseDetails, noiseMenu and round21speed steps.
 - **EffectCraft Round 20 done (2026-11-10): Generate II (light).** Generate gets **Advanced Lightning**, **Lens Flare**,
   **Beam**, **CC Light Burst 2.5**, **CC Light Sweep**, **CC Glue Gun**, **CC Threads** and **Fractal** (24 in the group now).
   - Kernels: fx_gen2's fg2_segs (linear core), fg2_pair, fg2_adv_bolt, fg2_beam, fg2_flare, fg2_glue, fg2_threads, and

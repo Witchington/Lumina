@@ -2454,8 +2454,10 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   fx_warp: ['fx_warp'],               // Round 15 on: CC Bend It, CC Page Turn (fxw_*)
   fx_transition: ['fx_transition'],   // Round 15 on: CC Bender, CC Blobbylize (ftr_*)
   fx_gen2: ['fx_gen2'],               // Round 19 on: Stroke, Scribble, Vegas, Write-on, Paint Bucket, Eyedropper Fill, Radio Waves (fg2_*)
-  lumina_gen: ['fx_generate', 'lumina_gen'] };   // Rounds 19–20: Circle, Ellipse, Cell Pattern HQ, Fractal's put (EffectCraft draws them on the CPU; shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl' };
+  lumina_gen: ['fx_generate', 'lumina_gen'],    // Rounds 19–20: Circle, Ellipse, Cell Pattern HQ, Fractal's put (EffectCraft draws them on the CPU; shaders/)
+  fx_particles: ['fx_stylize', 'fx_sim', 'fx_particles'],   // Round 21 on: Curl Noise (fxp_curl_*; EffectCraft builds it with fx_stylize's fbm and fx_sim)
+  lumina_noise: ['fx_generate', 'lumina_noise'] };   // Round 21: grain mattes, sample boxes, Match Grain's plane stats (EffectCraft does them on the CPU; shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2615,7 +2617,7 @@ function fxApply(L, t, lc) {
     const D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), t, E);
     E.fx = f; E.L = L;
     cur = D.run(E, cur, q) || cur;
-    if (D.clip) clip = true;
+    if (typeof D.clip === 'function' ? D.clip(q) : D.clip) clip = true;
   }
   blit(cur);
   if (temp.length) dev.queue.onSubmittedWorkDone().then(() => temp.forEach(x => x.destroy()));
@@ -2651,6 +2653,184 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 21 helpers (Noise & Grain): EffectCraft's noise.rs, noise2.rs and noise3.rs; GPU host code from fx_noise.rs and
+//      fx_generate.rs. The grain is measured on the picture read back (8 bits), as EffectCraft measures it on the CPU ----
+// noise::phased_cycle's two seeds and smoothed fraction for `phase` (fx_noise::phase_terms); cycle 0 = never repeats
+function fxPhaseTerms(seed, phase, cycle) {
+  const k = Math.floor(phase), t = Math.fround(phase - k), wrap = k => cycle > 0 ? ((k % cycle) + cycle) % cycle : k;
+  return [(seed + Math.imul(wrap(k) | 0, 0x632b)) >>> 0, (seed + Math.imul(wrap(k + 1) | 0, 0x632b)) >>> 0, t * t * (3 - 2 * t)];
+}
+// GrainLook (Add Grain, Match Grain): the Tweaking / Color / Application / Animation settings, and Add Grain's Preset
+const GRAIN_BLEND = ['Film', 'Multiply', 'Add', 'Screen', 'Overlay'];
+const GRAIN_PRESETS = ['None', 'Fine 35mm', 'Coarse 16mm', 'Vintage 8mm', 'Video noise', 'Monochrome high speed'];
+const GRAIN_PRESET_K = [null, [.6, .7, .2, .6, 0], [1.3, 1.8, .4, .8, 0], [1.8, 2.5, .8, .5, 0], [1, .6, 0, 1, 0], [1.6, 1.4, .3, 1, 1]];   // intensity ×, size ×, softness +, saturation ×, mono
+function fxGrainLook(E, q, preset = 0) {
+  const ft = E.t * 24 * q('animSpeed'), K = GRAIN_PRESET_K[preset];
+  const G = { intensity: q('intensity'), ci: [q('redI'), q('greenI'), q('blueI')], size: Math.max(.05, q('size')), cs: [q('redS'), q('greenS'), q('blueS')],
+    softness: q('softness'), aspect: Math.max(.05, q('aspect')), mono: q('mono'), saturation: q('saturation'), tintAmount: clamp(q('tintAmount'), 0, 1), tint: q('tint'),
+    mode: q('blendMode'), tones: [q('shadows'), q('midtones'), q('highlights')], midpoint: clamp(q('midpoint'), .01, .99),
+    frame: q('animSmooth') && ft % 1 !== 0 ? ft : Math.floor(ft), seed: ((q('grainSeed') >>> 0) ^ Math.imul(fxSeed(E), 0x9e37)) >>> 0, balance: [q('redB'), q('greenB'), q('blueB')] };
+  if (K) { G.intensity *= K[0]; G.size *= K[1]; G.softness += K[2]; G.saturation *= K[3]; G.mono = G.mono || !!K[4]; }
+  return G;
+}
+// GrainLook::planes: zero-mean value noise (one plane, or one a channel) of grain `size` frame pixels, softened, stretched
+function fxGrainPlanes(E, img, G, size, salt) {
+  const s = k => Math.max(.05, size * (G.mono ? 1 : Math.max(.05, G.cs[k])));
+  let pl = E.run('fx_generate', 'gen_grain_planes', fxP({ 0: [G.mono, G.seed, salt, 0] }, { 0: [s(0) * G.aspect, s(1) * G.aspect, s(2) * G.aspect, G.frame], 1: [s(0), s(1), s(2), 0] }), img);
+  const soft = G.softness * E.sc; if (soft > .05) pl = fxGauss(E, pl, soft * G.aspect, soft, true);
+  return pl;
+}
+// the grain laid on (gen_grain_apply): amp × per-channel factors ci (the Color balance folds in there)
+function fxGrainApply(E, img, G, planes, amp, ci) {
+  const t = G.tint, l = Math.max(1e-3, .2126 * t[0] + .7152 * t[1] + .0722 * t[2]), tint = t.map(v => (1 - G.tintAmount) + G.tintAmount * v / l);
+  return E.run('fx_generate', 'gen_grain_apply', fxP({ 0: [G.mono, G.mode, G.tintAmount > 0, 0] }, { 0: [amp, G.saturation, G.midpoint, 0], 1: [...tint, 0],
+    2: [...ci.map((v, k) => v * G.balance[k]), 0], 3: [...G.tones, 0] }), img, planes);
+}
+const fxGrainMatte = (E, img, G) => E.run('lumina_noise', 'ln_grain_matte', fxP({}, { 0: [G.midpoint, 0, 0, 0], 1: [...G.tones, 0] }), img);
+// noise::preview_compose through fx_noise's fxn_rg_out: the result inside the Preview Region, the original outside, its outline
+function fxGrainPreview(E, q, out, orig) {
+  const [cx, cy] = q('pvCenter'), hw = q('pvWidth') * E.sc / 2, hh = q('pvHeight') * E.sc / 2;
+  return E.run('fx_noise', 'fxn_rg_out', fxP({ 0: [1, q('pvShow'), 0, 0] }, { 0: [cx - hw, cx + hw, cy - hh, cy + hh], 1: [...q('pvColor'), 1] }), out, orig);
+}
+const fxGrainPreviewParams = () => [
+  { id: 'pvCenter', label: 'Preview center', type: 'pt', def: [.5, .5] },
+  { id: 'pvWidth', label: 'Preview width', def: 200, min: 1, max: 10000, dec: 0 },
+  { id: 'pvHeight', label: 'Preview height', def: 200, min: 1, max: 10000, dec: 0 },
+  { id: 'pvShow', label: 'Show preview box', type: 'check', def: true },
+  { id: 'pvColor', label: 'Preview box color', type: 'color', def: '#ffffff' }];
+const fxGrainSamplingParams = () => [
+  { id: 'samples', label: 'Number of samples', def: 80, min: 1, max: 500, dec: 0 },
+  { id: 'sampleSize', label: 'Sample size', def: 9, min: 3, max: 64, dec: 0 },
+  { id: 'sampleColor', label: 'Sample box color', type: 'color', def: '#ffff00' }];
+const fxGrainLookParams = () => {
+  const mult = (id, label) => ({ id, label, def: 1, min: 0, max: 10, dec: 2 });
+  return [
+    { id: 'intensity', label: 'Intensity', def: 1, min: 0, max: 100, dec: 2 }, mult('redI', 'Red intensity'), mult('greenI', 'Green intensity'), mult('blueI', 'Blue intensity'),
+    { id: 'size', label: 'Size', def: 1, min: .05, max: 100, dec: 2 }, mult('redS', 'Red size'), mult('greenS', 'Green size'), mult('blueS', 'Blue size'),
+    { id: 'softness', label: 'Softness', def: 0, min: 0, max: 100, dec: 2 },
+    { id: 'aspect', label: 'Aspect ratio', def: 1, min: .05, max: 20, dec: 2 },
+    { id: 'mono', label: 'Monochromatic', type: 'check', def: false }, mult('saturation', 'Saturation'),
+    { id: 'tintAmount', label: 'Tint amount', def: 0, min: 0, max: 1, dec: 2 },
+    { id: 'tint', label: 'Tint color', type: 'color', def: '#ffffff' }, mult('redB', 'Red balance'), mult('greenB', 'Green balance'), mult('blueB', 'Blue balance'),
+    { id: 'blendMode', label: 'Blending mode', type: 'pick', def: 0, opts: GRAIN_BLEND.map((n, i) => [i, n]) },
+    mult('shadows', 'Shadows'), mult('midtones', 'Midtones'), mult('highlights', 'Highlights'),
+    { id: 'midpoint', label: 'Midpoint', def: .5, min: 0, max: 1, dec: 2 },
+    { id: 'animSpeed', label: 'Animation speed', def: 1, min: 0, max: 100, dec: 2 },
+    { id: 'animSmooth', label: 'Animate smoothly', type: 'check', def: true },
+    { id: 'grainSeed', label: 'Random seed', def: 0, min: 0, max: 100000, dec: 0 }];
+};
+// noise::sample_boxes on a read-back picture: the flattest `count` boxes of `size` px (x, y, size) with an opaque surround
+// (3 px), from a grid stepped by half a box; ties go to the top, then the left
+function fxSampleBoxes(R, count, size) {
+  const w = R.w, h = R.h, d = R.d; count = Math.floor(count); size = clamp(size, 3, Math.max(Math.min(w, h), 3));
+  if (w < size || h < size || count <= 0) return [];
+  const sw = w + 1, N = sw * (h + 1), T = new Int32Array(N), S1 = new Float64Array(N), S2 = new Float64Array(N);
+  for (let y = 0; y < h; y++) {
+    let rt = 0, r1 = 0, r2 = 0;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, a = d[i + 3], k = a ? 1 / 255 : 0, v = (.2126 * d[i] + .7152 * d[i + 1] + .0722 * d[i + 2]) * k, j = (y + 1) * sw + x + 1;
+      rt += a <= 127.5 ? 1 : 0; r1 += v; r2 += v * v; T[j] = T[j - sw] + rt; S1[j] = S1[j - sw] + r1; S2[j] = S2[j - sw] + r2;
+    }
+  }
+  const box = (A, x0, y0, x1, y1) => A[y1 * sw + x1] - A[y0 * sw + x1] - A[y1 * sw + x0] + A[y0 * sw + x0];
+  const step = Math.max(1, size >> 1), nn = size * size, c = [];
+  for (let y = 0; y <= h - size; y += step) for (let x = 0; x <= w - size; x += step) {
+    if (box(T, Math.max(0, x - 3), Math.max(0, y - 3), Math.min(w, x + size + 3), Math.min(h, y + size + 3))) continue;
+    const m = box(S1, x, y, x + size, y + size) / nn; c.push([Math.round((box(S2, x, y, x + size, y + size) / nn - m * m) * 1e9), x, y]);
+  }
+  c.sort((a, b) => a[0] - b[0] || a[2] - b[2] || a[1] - b[1]);
+  return c.slice(0, count).map(([, x, y]) => [x, y, size]);
+}
+// noise2::grain_stats_boxes: each channel's spread of the high-pass residual (the colour less its Gaussian of σ 1.5) over
+// the boxes' opaque pixels, and a grain size from the lag-1 correlation
+function fxGrainStats(R, boxes) {
+  const w = R.w, h = R.h, d = R.d, mask = new Uint8Array(w * h), counted = new Uint8Array(w * h), n = [0, 0, 0], sum = [0, 0, 0], sq = [0, 0, 0];
+  let rn = 0, rd = 0;
+  for (const [x, y, s] of boxes) for (let yy = y; yy < Math.min(y + s, h); yy++) for (let xx = x; xx < Math.min(x + s, w); xx++) mask[yy * w + xx] = 1;
+  for (const [bx, by, bs] of boxes) {
+    const x0 = Math.max(0, bx - 4), y0 = Math.max(0, by - 4), x1 = Math.min(w, bx + bs + 4), y1 = Math.min(h, by + bs + 4), cw = x1 - x0, chh = y1 - y0;
+    if (cw <= 0 || chh <= 0) continue;
+    const A = new Float32Array(cw * chh), C = [0, 1, 2].map(() => new Float32Array(cw * chh));
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      const i = (y * w + x) * 4, l = (y - y0) * cw + x - x0, k = d[i + 3] ? 1 / 255 : 0; A[l] = d[i + 3] / 255;
+      for (let c = 0; c < 3; c++) C[c][l] = d[i + c] * k;
+    }
+    const lo = C.map(pl => fxGaussCPU(pl, cw, chh, 1.5, 1.5));
+    for (let ly = 0; ly < bs; ly++) {
+      const y = by + ly; if (y >= h) break;
+      for (let lx = 0; lx < bs; lx++) {
+        const x = bx + lx; if (x >= w) break;
+        const g = y * w + x; if (!mask[g] || counted[g]) continue; counted[g] = 1;
+        const l = (y - y0) * cw + x - x0; if (A[l] <= .5) continue;
+        for (let c = 0; c < 3; c++) { const hp = C[c][l] - lo[c][l]; sum[c] += hp; sq[c] += hp * hp; n[c]++; }
+        if (x + 1 < w && mask[g + 1] && A[l + 1] > .5) for (let c = 0; c < 3; c++) { const hp = C[c][l] - lo[c][l], hn = C[c][l + 1] - lo[c][l + 1]; rn += hp * hn; rd += hp * hp; }
+      }
+    }
+  }
+  const std = [0, 1, 2].map(c => n[c] > 1 ? Math.sqrt(Math.max(0, sq[c] / n[c] - (sum[c] / n[c]) ** 2)) : 0), rho = rd > 1e-12 ? clamp(rn / rd, 0, .95) : 0;
+  return { std, size: clamp(1 / (1 - rho), .5, 20) * .6 };
+}
+// the Sampling settings' boxes on a working image (sampling_boxes; the box size scales with the layer)
+const fxSampling = (E, img, q) => fxSampleBoxes(E.read(img, Math.max(E.w, E.h)), clamp(q('samples'), 1, 500), Math.max(3, Math.round(q('sampleSize') * E.sc)));
+// noise::draw_boxes (the Noise Samples view)
+function fxDrawBoxes(E, img, boxes, col) {
+  if (!boxes.length) return img;
+  return E.run('lumina_noise', 'ln_boxes', fxP({ 0: [boxes.length, 0, 0, 0] }, { 0: [...col, 1] }), img, null, null, E.data(new Float32Array(boxes.flat())));
+}
+// noise::median_image: the median of the 512-level channels, by bisection up to radius 4, a sliding histogram above it
+const FX_MEDIAN_LEVELS = Float32Array.from({ length: 512 }, (_, i) => i / 511);
+function fxMedianImage(E, img, r, straight) {
+  const qd = E.run('fx_noise', 'fxn_quant', fxP({ 0: [straight, 0, 0, 0] }), img), lv = E.data(FX_MEDIAN_LEVELS);
+  if (r <= 4) return E.run('fx_noise', 'fxn_median', fxP({ 0: [r, 0, 0, 0] }), qd, null, null, lv);
+  const seg = Math.min(clamp(4 * r, 32, 512), E.w);
+  return E.run('fx_noise', 'fxn_median_huang', fxP({ 0: [r, seg, 0, 0] }), qd, null, [Math.ceil(E.h / 64), Math.ceil(E.w / seg)], lv);
+}
+// fx_noise::median (Median, Dust & Scratches, Median (Legacy)): mode 0 Median, 1 Dust & Scratches, 2 Legacy with alpha, 3 Legacy colour only
+function fxMedianFx(E, img, q, mode) {
+  const r = Math.max(0, fxRound(q('radius') * E.sc)); if (!r) return img;
+  const onAlpha = mode >= 2 ? mode === 2 : q('onAlpha'), m = fxMedianImage(E, img, r, mode === 3);
+  return E.run('fx_noise', 'fxn_median_out', fxP({ 0: [mode, onAlpha, 0, 0] }, { 0: [mode === 1 ? q('threshold') / 255 : 0, 0, 0, 0] }), img, m);
+}
+const FX_MEDIAN_K = [['fx_noise', 'fxn_quant'], ['fx_noise', 'fxn_median'], ['fx_noise', 'fxn_median_huang'], ['fx_noise', 'fxn_median_out']];
+// noise::noise_hls_core (Noise HLS, Noise HLS Auto) through fxn_noise_hls
+function fxNoiseHLS(E, img, q, phase) {
+  const hue = q('hue') / 100, li = q('lightness') / 100, sa = q('saturation') / 100; if (!hue && !li && !sa) return img;
+  const gs = Math.max(.1, q('grainSize') * E.sc), seed = Math.imul(fxSeed(E), 0x51f3) >>> 0, S = []; let t = 0;
+  for (let k = 0; k < 3; k++) { const r = fxPhaseTerms((seed + k * 7919) >>> 0, phase, 0); S.push(r[0], r[1]); t = r[2]; }
+  return E.run('fx_noise', 'fxn_noise_hls', fxP({ 0: [q('noise'), seed, 0, 0], 1: S.slice(0, 4), 2: [S[4], S[5], 0, 0] }, { 0: [hue, li, sa, gs], 1: [phase, t, 0, 0] }), img);
+}
+const fxHLSParams = () => [
+  { id: 'noise', label: 'Noise', type: 'pick', def: 0, opts: [[0, 'Uniform'], [1, 'Squared'], [2, 'Grain']] },
+  { id: 'hue', label: 'Hue %', def: 0, min: 0, max: 100, dec: 1 },
+  { id: 'lightness', label: 'Lightness %', def: 0, min: 0, max: 100, dec: 1 },
+  { id: 'saturation', label: 'Saturation %', def: 0, min: 0, max: 100, dec: 1 },
+  { id: 'grainSize', label: 'Grain size', def: 1, min: .1, max: 100, dec: 2 }];
+// Fractal / Turbulent Noise: noise3's menus, and its Blending Mode menu (each mode's place in EffectCraft's BlendMode::ALL; 255 = None)
+const FX_FRACTAL_TYPES = ['Basic', 'Turbulent smooth', 'Turbulent basic', 'Turbulent sharp', 'Dynamic', 'Dynamic twist', 'Dynamic progressive', 'Max', 'Strings'];
+const FX_NOISE_TYPES = ['Block', 'Linear', 'Soft linear', 'Spline'];
+const FX_NOISE_OVERFLOW = ['Clip', 'Soft clamp', 'Wrap back', 'Allow HDR results'];
+const FX_NOISE_BLENDS = [['None', 255], ['Normal', 0], ['Add', 9], ['Multiply', 4], ['Screen', 11], ['Overlay', 16], ['Soft light', 17], ['Hard light', 18], ['Color dodge', 12],
+  ['Color burn', 5], ['Darken', 3], ['Lighten', 10], ['Difference', 23], ['Exclusion', 25], ['Hue', 28], ['Saturation', 29], ['Color', 30], ['Luminosity', 31],
+  ['Stencil alpha', 32], ['Stencil luma', 33], ['Silhouette alpha', 34], ['Silhouette luma', 35], ['Alpha add', 36], ['Luminescent premul', 37]];
+// noise3::fractal_gpu for Turbulent Noise: every octave's terms worked out before the pixels (origin, frequency, amplitude,
+// weight, evolution with the Turbulence Factor), in frame pixels; the rotation turns with the layer
+function fxTurbulentNoise(E, img, q) {
+  const uni = q('uniform'), sw = uni ? q('scale') : q('scaleW'), sh = uni ? q('scale') : q('scaleH'), rot = q('rotation') * Math.PI / 180 + E.rot;
+  const [ox, oy] = q('offset'), [cx, cy] = E.pt(.5, .5), turb = Math.max(0, q('turbFactor')), kind = q('fractalType'), persp = q('perspective');
+  const oct = clamp(q('complexity'), 1, 20), nOct = Math.ceil(oct), frac = oct - Math.floor(oct), evo = q('evolution') / 360;
+  const infl = clamp(q('subInfluence') / 100, 0, 1), subS = clamp(q('subScaling') / 100, .1, 1), d = new Float32Array(nOct * 10);
+  let norm = 0, amp = 1, f = 1, depth = 1;
+  for (let o = 0; o < nOct; o++) {
+    const w = o + 1 === nOct && frac > 0 ? frac : 1, k = (persp ? depth : 1) * (1 + turb * o);
+    const org = k !== 1 ? [cx + (ox - cx) * k, cy + (oy - cy) * k] : [ox, oy];
+    d.set([org[0], org[1], 0, 1, f, amp, w, evo * (1 + turb * o), o * 7.31, kind === 6 ? .5 + o * .35 : 1], o * 10);
+    norm += amp * w; amp *= infl; f /= subS; depth *= subS;
+  }
+  const NC = 2 / 3, seed = ((q('seed') >>> 0) ^ 0x7a3d) >>> 0, mode = (FX_NOISE_BLENDS[q('blendMode')] || FX_NOISE_BLENDS[1])[1];
+  return E.run('fx_noise', 'fxn_fractal', fxP({ 0: [kind, q('noiseType'), nOct, seed], 1: [0, 0, q('invert'), q('overflow')], 2: [mode, 0, 0, 0] }, {
+    0: [Math.sin(rot), Math.cos(rot), Math.max(1, sw * NC * E.sc), Math.max(1, sh * NC * E.sc)], 1: [q('contrast') / 100, q('brightness') / 100, clamp(q('opacity') / 100, 0, 1), q('blend') / 100],
+    2: [0, 0, 0, norm] }), img, null, null, E.data(d));
+}
 // ---- Round 20 helpers (Generate II, light): generate2.rs's bolts and flare ghosts, generate3's fractal ----
 // util::Rng (xorshift64*, as EffectCraft's): f() uniform in [0, 1), s() in [-1, 1)
 function fxRng(seed) {
@@ -4815,6 +4995,176 @@ const FX = {
       const key = [...FX.fractal.params.map(d => q(d.id)), E.w, E.h, ...E.rect].join(); let c = FXC.get(E.fx);
       if (c?.key !== key) FXC.set(E.fx, c = { key, px: fxFractal(E, q) });
       return E.run('lumina_gen', 'lg_put', fxP({ 0: [q('overlay'), 0, 0, 0] }), img, E.texFrom8(c.px));
+    } },
+  // ---- Round 21: Noise & Grain. EffectCraft's noise.rs, noise2.rs, noise3.rs and misc.rs (Noise); GPU host code from
+  //      fx_noise.rs, fx_generate.rs and (Curl Noise) fx_particles.wgsl. Lumina's shaders/lumina_noise.wgsl draws what
+  //      EffectCraft does on the CPU (the grain mattes and sample boxes); the grain is measured on the picture read back.
+  noiseamt: { name: 'Noise', cat: 'Noise & Grain', kernels: [['fx_generate', 'gen_noise']], params: [
+      { id: 'amount', label: 'Amount of noise %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'color', label: 'Use color noise', type: 'check', def: true },
+      { id: 'clip', label: 'Clip result values', type: 'check', def: true }],
+    run(E, img, q) {
+      if (q('amount') <= 0) return img;
+      // misc::noise: a new pattern every thousandth of a second of the layer's time
+      const seed = ((Math.floor(Math.max(0, E.t * 1000)) >>> 0) ^ fxSeed(E)) >>> 0;
+      return E.run('fx_generate', 'gen_noise', fxP({ 0: [seed, q('color'), q('clip'), E.w] }, { 0: [q('amount') / 100, 0, 0, 0] }), img);
+    } },
+  addgrain: { name: 'Add Grain', cat: 'Noise & Grain', clip: q => q('view') === 1,
+    kernels: [['fx_generate', 'gen_grain_planes'], ['fx_generate', 'gen_grain_apply'], ...BLUR_K, ['fx_noise', 'fxn_rg_out'], ['lumina_noise', 'ln_grain_matte']], params: [
+      { id: 'view', label: 'Viewing mode', type: 'pick', def: 2, opts: [[0, 'Preview'], [1, 'Blending matte'], [2, 'Final output']] },
+      { id: 'preset', label: 'Preset', type: 'pick', def: 0, opts: GRAIN_PRESETS.map((n, i) => [i, n]) },
+      ...fxGrainPreviewParams(), ...fxGrainLookParams()],
+    run(E, img, q) {
+      const G = fxGrainLook(E, q, q('preset')), view = q('view');
+      if (view === 1) return fxGrainMatte(E, img, G);
+      if (G.intensity <= 0) return img;
+      const out = fxGrainApply(E, img, G, fxGrainPlanes(E, img, G, G.size * E.sc, 101), G.intensity * .25, G.ci);
+      return view === 0 ? fxGrainPreview(E, q, out, img) : out;
+    } },
+  matchgrain: { name: 'Match Grain', cat: 'Noise & Grain', clip: q => q('view') >= 1 && q('view') <= 3,
+    kernels: [['fx_generate', 'gen_grain_planes'], ['fx_generate', 'gen_grain_apply'], ...BLUR_K, ['fx_noise', 'fxn_rg_out'], ['lumina_noise', 'ln_grain_matte'],
+      ['lumina_noise', 'ln_boxes'], ['lumina_noise', 'ln_plane_view'], ['lumina_noise', 'ln_affine']], params: [
+      { id: 'view', label: 'Viewing mode', type: 'pick', def: 4, opts: [[0, 'Preview'], [1, 'Noise samples'], [2, 'Compensation samples'], [3, 'Blending matte'], [4, 'Final output']] },
+      { id: 'source', label: 'Noise source layer', type: 'pick', def: 0, opts: L => [[0, 'None'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'compensate', label: 'Compensate for existing noise %', def: 0, min: 0, max: 100, dec: 1 },
+      ...fxGrainPreviewParams(), ...fxGrainSamplingParams(), ...fxGrainLookParams()],
+    run(E, img, q) {
+      const id = q('source'), M = id ? byId(id) : null; if (!M || M === E.L || !DRAW[M.kind]) return img;
+      const view = q('view'), src = fxLayerOr(E, img, id, 'mgrain'), col = q('sampleColor');
+      const srcBoxes = fxSampling(E, src, q);
+      if (view === 1) return fxDrawBoxes(E, src, srcBoxes, col);
+      if (view === 2) return fxDrawBoxes(E, img, fxSampling(E, img, q), col);
+      const G = fxGrainLook(E, q);
+      if (view === 3) return fxGrainMatte(E, img, G);
+      // the source's grain (no clean sample, no grain), less this layer's own grain × Compensate
+      const stats = (im, bx) => bx.length ? fxGrainStats(E.read(im, Math.max(E.w, E.h)), bx) : { std: [0, 0, 0], size: 0 };
+      const st = stats(src, srcBoxes), comp = q('compensate') / 100, own = comp > 0 ? stats(img, fxSampling(E, img, q)) : { std: [0, 0, 0] };
+      const amp = [0, 1, 2].map(k => Math.sqrt(Math.max(0, st.std[k] ** 2 - (own.std[k] * comp) ** 2)) * G.intensity * G.ci[k]);
+      const planes = fxGrainPlanes(E, img, G, Math.max(.05, Math.max(st.size, .5) * G.size * E.sc), 131);
+      // each plane brought to a spread of 1 (worked out once for the grain's size and softness, then kept)
+      const key = [E.w, E.h, G.mono, G.size, ...G.cs, G.softness, G.aspect, st.size.toFixed(3), E.sc.toFixed(4)].join();
+      let c = FXC.get(E.fx);
+      if (c?.key !== key) {
+        const R = E.read(E.run('lumina_noise', 'ln_plane_view', fxP(), planes), Math.max(E.w, E.h)), d = R.d, n = R.w * R.h, m = [0, 0, 0], v = [0, 0, 0];
+        for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) m[k] += d[i * 4 + k];
+        for (let k = 0; k < 3; k++) m[k] /= n;
+        for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) v[k] += (d[i * 4 + k] - m[k]) ** 2;
+        FXC.set(E.fx, c = { key, mean: m.map(x => x / 255 - .5), k: v.map(x => { const sd = Math.sqrt(x / n) / 255; return sd > 1e-6 ? 1 / sd : 0; }) });
+      }
+      const norm = E.run('lumina_noise', 'ln_affine', fxP({}, { 0: [...c.mean, 0], 1: [...c.k, 0] }), planes);
+      const out = fxGrainApply(E, img, G, norm, 1, amp);
+      return view === 0 ? fxGrainPreview(E, q, out, img) : out;
+    } },
+  removegrain: { name: 'Remove Grain', cat: 'Noise & Grain', clip: q => q('view') === 2,
+    kernels: [['fx_noise', 'fxn_gf_guide'], ['fx_noise', 'fxn_gf'], ['fx_noise', 'fxn_rg_texture'], ['fx_noise', 'fxn_rg_unsharp'], ['fx_noise', 'fxn_rg_out'], ...BLUR_K,
+      ['lumina_noise', 'ln_boxes'], ['kernels', 'fill']], params: [
+      { id: 'view', label: 'Viewing mode', type: 'pick', def: 3, opts: [[0, 'Preview'], [1, 'Noise samples'], [2, 'Blending matte'], [3, 'Final output']] },
+      ...fxGrainPreviewParams(),
+      { id: 'reduction', label: 'Noise reduction', def: 1, min: 0, max: 5, dec: 2 },
+      { id: 'passes', label: 'Passes', def: 1, min: 1, max: 8, dec: 0 },
+      { id: 'rgMode', label: 'Mode', type: 'pick', def: 0, opts: [[0, 'Multichannel'], [1, 'Single channel']] },
+      { id: 'texture', label: 'Texture', def: 0, min: 0, max: 1, dec: 2 },
+      { id: 'umAmount', label: 'Unsharp amount', def: 0, min: 0, max: 500, dec: 1 },
+      { id: 'umRadius', label: 'Unsharp radius', def: 1, min: .1, max: 100, dec: 1 },
+      { id: 'umThreshold', label: 'Unsharp threshold', def: 0, min: 0, max: 255, dec: 0 },
+      ...fxGrainSamplingParams()],
+    run(E, img, q) {
+      const amt = q('reduction'), um = q('umAmount') / 100, view = q('view');
+      if (view === 2) return E.run('kernels', 'fill', fxP({}, { 0: [1, 1, 1, 1] }), img);
+      if (view === 1) return fxDrawBoxes(E, img, fxSampling(E, img, q), q('sampleColor'));
+      if (amt <= 0 && um <= 0) return img;
+      // the grain level in the sample boxes (0.5..2) scales the smoothing
+      let level = 1;
+      if (amt > 0) { const R = E.read(img, Math.max(E.w, E.h)), bx = fxSampleBoxes(R, clamp(q('samples'), 1, 500), Math.max(3, Math.round(q('sampleSize') * E.sc)));
+        if (bx.length) { const st = fxGrainStats(R, bx); level = clamp((st.std[0] + st.std[1] + st.std[2]) / 3 / .02, .5, 2); } }
+      const r = Math.max(1, Math.round(2 * E.sc)), eps = (.02 * amt * level) ** 2, single = q('rgMode') === 1, texture = clamp(q('texture'), 0, 1);
+      let ch = img;
+      if (amt > 0) {
+        for (let i = clamp(Math.round(q('passes')), 1, 8); i > 0; i--) ch = fxGuided(E, E.run('fx_noise', 'fxn_gf_guide', fxP({ 0: [single, 0, 0, 0] }), ch), ch, r, eps);
+        if (texture > 0) ch = E.run('fx_noise', 'fxn_rg_texture', fxP({}, { 0: [texture, 0, 0, 0] }), ch, img);
+      }
+      if (um > 0) { const rad = Math.max(.1, q('umRadius') * E.sc); ch = E.run('fx_noise', 'fxn_rg_unsharp', fxP({}, { 0: [um, q('umThreshold') / 255, 0, 0] }), ch, fxGauss(E, ch, rad, rad, true)); }
+      if (view === 0) return fxGrainPreview(E, q, ch, img);
+      return E.run('fx_noise', 'fxn_rg_out', fxP(), ch, img);
+    } },
+  dustscratches: { name: 'Dust & Scratches', cat: 'Noise & Grain', kernels: FX_MEDIAN_K, params: [
+      { id: 'radius', label: 'Radius', def: 1, min: 0, max: 255, dec: 0 },
+      { id: 'threshold', label: 'Threshold', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'onAlpha', label: 'Operate on alpha channel', type: 'check', def: false }],
+    run: (E, img, q) => fxMedianFx(E, img, q, 1) },
+  median: { name: 'Median', cat: 'Noise & Grain', kernels: FX_MEDIAN_K, params: [
+      { id: 'radius', label: 'Radius', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'onAlpha', label: 'Operate on alpha channel', type: 'check', def: false }],
+    run: (E, img, q) => fxMedianFx(E, img, q, 0) },
+  medianlegacy: { name: 'Median (Legacy)', cat: 'Noise & Grain', kernels: FX_MEDIAN_K, params: [
+      { id: 'radius', label: 'Radius', def: 1, min: 0, max: 255, dec: 0 },
+      { id: 'onAlphaLegacy', label: 'Operate on alpha channel', type: 'check', def: false }],
+    run: (E, img, q) => fxMedianFx(E, img, q, q('onAlphaLegacy') ? 2 : 3) },
+  noisealpha: { name: 'Noise Alpha', cat: 'Noise & Grain', clip: true, kernels: [['fx_noise', 'fxn_noise_alpha']], params: [
+      { id: 'noise', label: 'Noise', type: 'pick', def: 0, opts: [[0, 'Uniform random'], [1, 'Squared random'], [2, 'Uniform animation'], [3, 'Squared animation']] },
+      { id: 'amount', label: 'Amount %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'original', label: 'Original alpha', type: 'pick', def: 1, opts: [[0, 'Add'], [1, 'Clamp'], [2, 'Scale'], [3, 'Edges']] },
+      { id: 'overflow', label: 'Overflow', type: 'pick', def: 0, opts: [[0, 'Clip'], [1, 'Wrap back'], [2, 'Wrap']] },
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 100000, dec: 0 },
+      { id: 'phase', label: 'Noise phase°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'cycleOn', label: 'Cycle noise', type: 'check', def: false },
+      { id: 'cycle', label: 'Cycle', def: 1, min: 1, max: 100, dec: 0 }],
+    run(E, img, q) {
+      const k = q('amount') / 100; if (k <= 0) return img;
+      // the animated kinds move one pattern a second along the layer's time
+      const kind = q('noise'), seed = ((q('seed') >>> 0) ^ Math.imul(fxSeed(E), 0x2f1)) >>> 0, phase = q('phase') / 360 + (kind >= 2 ? E.t : 0);
+      const [sa, sb, t] = fxPhaseTerms(seed, kind >= 2 ? phase : Math.floor(phase), q('cycleOn') ? Math.max(1, Math.round(q('cycle'))) : 0);
+      return E.run('fx_noise', 'fxn_noise_alpha', fxP({ 0: [kind % 2, q('original'), q('overflow'), sa], 1: [sb, 0, 0, 0] }, { 0: [k, t, 0, 0] }), img);
+    } },
+  noisehls: { name: 'Noise HLS', cat: 'Noise & Grain', kernels: [['fx_noise', 'fxn_noise_hls']], params: [
+      ...fxHLSParams(), { id: 'phase', label: 'Noise phase°', def: 0, min: -3600, max: 3600, dec: 1 }],
+    run: (E, img, q) => fxNoiseHLS(E, img, q, q('phase') / 360) },
+  noisehlsauto: { name: 'Noise HLS Auto', cat: 'Noise & Grain', kernels: [['fx_noise', 'fxn_noise_hls']], params: [
+      ...fxHLSParams(), { id: 'speed', label: 'Noise animation speed', def: 10, min: 0, max: 1000, dec: 1 }],
+    run: (E, img, q) => fxNoiseHLS(E, img, q, E.t * q('speed')) },
+  turbnoise: { name: 'Turbulent Noise', cat: 'Noise & Grain', clip: true, kernels: [['fx_noise', 'fxn_fractal']], params: [
+      { id: 'fractalType', label: 'Fractal type', type: 'pick', def: 1, opts: FX_FRACTAL_TYPES.map((n, i) => [i, n]) },
+      { id: 'noiseType', label: 'Noise type', type: 'pick', def: 2, opts: FX_NOISE_TYPES.map((n, i) => [i, n]) },
+      { id: 'invert', label: 'Invert', type: 'check', def: false },
+      { id: 'contrast', label: 'Contrast', def: 100, min: 0, max: 10000, dec: 1 },
+      { id: 'brightness', label: 'Brightness', def: 0, min: -10000, max: 10000, dec: 1 },
+      { id: 'overflow', label: 'Overflow', type: 'pick', def: 0, opts: FX_NOISE_OVERFLOW.map((n, i) => [i, n]) },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'uniform', label: 'Uniform scaling', type: 'check', def: true },
+      { id: 'scale', label: 'Scale', def: 100, min: 1, max: 10000, dec: 1 },
+      { id: 'scaleW', label: 'Scale width', def: 100, min: 1, max: 10000, dec: 1 },
+      { id: 'scaleH', label: 'Scale height', def: 100, min: 1, max: 10000, dec: 1 },
+      { id: 'offset', label: 'Offset turbulence', type: 'pt', def: [.5, .5] },
+      { id: 'perspective', label: 'Perspective offset', type: 'check', def: false },
+      { id: 'complexity', label: 'Complexity', def: 6, min: 1, max: 20, dec: 1 },
+      { id: 'subInfluence', label: 'Sub influence %', def: 70, min: 0, max: 100, dec: 1 },
+      { id: 'subScaling', label: 'Sub scaling', def: 56, min: 10, max: 100, dec: 1 },
+      { id: 'evolution', label: 'Evolution°', def: 0, min: -36000, max: 36000, dec: 1 },
+      { id: 'turbFactor', label: 'Turbulence factor', def: .5, min: 0, max: 10, dec: 2 },
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 100000, dec: 0 },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'blendMode', label: 'Blending mode', type: 'pick', def: 1, opts: FX_NOISE_BLENDS.map(([n], i) => [i, n]) },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run: fxTurbulentNoise },
+  curlnoise: { name: 'Curl Noise', cat: 'Noise & Grain', clip: q => q('view') === 1,
+    kernels: [['fx_particles', 'fxp_curl_pot'], ['fx_particles', 'fxp_curl_vel'], ['fx_particles', 'fxp_curl_view'], ['fx_particles', 'fxp_curl_flow']], params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: [[0, 'Final output'], [1, 'Flow field']] },
+      { id: 'amount', label: 'Displacement amount', def: 20, min: -1000, max: 1000, dec: 1 },
+      { id: 'scale', label: 'Scale', def: 100, min: 1, max: 10000, dec: 1 },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'offset', label: 'Offset turbulence', type: 'pt', def: [.5, .5] },
+      { id: 'complexity', label: 'Complexity', def: 3, min: 1, max: 20, dec: 1 },
+      { id: 'evolution', label: 'Evolution°', def: 0, min: -36000, max: 36000, dec: 1 },
+      { id: 'steps', label: 'Flow steps', def: 4, min: 1, max: 16, dec: 0 },
+      { id: 'edge', label: 'Edge behavior', type: 'pick', def: 0, opts: [[0, 'Clamp'], [1, 'Wrap']] },
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 100000, dec: 0 }],
+    run(E, img, q) {
+      // noise2::curl_noise: the curl of a fractal potential traced back along its flow (semi-Lagrangian), Flow Steps times
+      const amount = q('amount') * E.sc, view = q('view'); if (Math.abs(amount) < 1e-6 && view === 0) return img;
+      const scale = Math.max(1, q('scale')) * E.sc, rot = q('rotation') * Math.PI / 180 + E.rot, [ox, oy] = q('offset'), steps = clamp(Math.trunc(q('steps')), 1, 16);
+      const pr = fxP({ 0: [((q('seed') >>> 0) ^ 0x517cc1) >>> 0, steps, q('edge') === 1, 0] }, { 0: [ox, oy, scale, q('complexity')], 1: [Math.cos(rot), Math.sin(rot), q('evolution') / 360 * 4, amount / steps] });
+      const vel = E.run('fx_particles', 'fxp_curl_vel', pr, E.run('fx_particles', 'fxp_curl_pot', pr, img));
+      return view === 1 ? E.run('fx_particles', 'fxp_curl_view', pr, vel) : E.run('fx_particles', 'fxp_curl_flow', pr, img, vel);
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's
