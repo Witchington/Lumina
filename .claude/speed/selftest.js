@@ -845,7 +845,7 @@
 
     // ---- 24. C15 friends' test release: version, About box, Help › Send feedback
     {
-      const VER = '0.9.2', VERX = VER.replace(/\./g, '\\.'); // the version in package.json
+      const VER = '0.10.0', VERX = VER.replace(/\./g, '\\.'); // the version in package.json
       const fbInfo = lumina.info?.version === VER && /^Windows \d/.test(lumina.info?.os || '');
       const help = MENUS.Help(), names = help.filter(Array.isArray).map(m => m[0]);
       const fbMenu = names.includes('Send feedback…') && names.includes('About Lumina') && help.find(m => m[0] === 'About Lumina')[3] !== false;

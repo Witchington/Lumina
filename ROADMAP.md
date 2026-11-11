@@ -81,6 +81,9 @@ files, the friend's timeline fixes and the impact parts; GitHub built `Lumina-Se
 as the user asked. Only real changes are committed; test output (selftest media, pasted pictures, the timeline test's
 videos) is left out or ignored. Next release: bump package.json + speed test `VER`, rebuild, all nine suites, commit,
 enable the workflow, push the tag, check the assets, disable the workflow.
+**0.10.0 released (2026-11-10, the user asked: "update the github with everything ... as well as update the setup"):** all local
+work since 0.9.2 (EffectCraft Rounds, floating panels FP/FP2, the MCP rounds through M5) pushed with tag v0.10.0, same steps as
+0.9.2. Checked before the push: no key, control file, `.mcp.json`, personal path or IP other than 127.0.0.1 in any tracked file.
 The beginner layout, for reference:
 - **B1 Tool rail (done):** icon tabs down the left (Media, Text, Stickers, Effects, Transitions, Captions, Audio, Adjust), each
   opening a browsable panel with previews to click or drag in, like CapCut. Leave room for an Image tab (PhotoCraft).

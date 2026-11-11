@@ -28,4 +28,4 @@ npm run dist          # Windows setup, in dist\
 npm run dist:linux    # Linux AppImage (build this on Linux)
 ```
 
-Push a tag like `v0.9.2` (after setting that version in `package.json`) and GitHub builds both downloads and puts them on a release.
+Push a tag like `v0.10.0` (after setting that version in `package.json`) and GitHub builds both downloads and puts them on a release.
