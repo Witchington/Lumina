@@ -7,19 +7,23 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 22 (Perspective) (Round 21 done 2026-11-11); Round 21 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 23 (Transitions) (Round 22 done 2026-11-11); Round 22 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 21 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 22 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–21 and the Round 6 leftovers are done. **Round 22 is next, Perspective** (WORKPLAN.md's round table): Drop
-Shadow, Radial Shadow, Bevel Alpha, Bevel Edges, 3D Glasses, CC Cylinder, CC Sphere, CC Spotlight, CC Environment (none of
-them is in Lumina yet). Find their host code in EffectCraft's crates/gpu/src (check each file's `IDS` list) and the CPU
-plans in crates/effects/src. Round 21's helpers: `fxPhaseTerms` (fx_noise::phase_terms), `fxGrainLook` / `fxGrainPlanes` /
+Rounds 8–22 and the Round 6 leftovers are done. **Round 23 is next, Transitions** (WORKPLAN.md's round table): Block
+Dissolve, Card Wipe, Gradient Wipe, Iris/Linear/Radial Wipe, Venetian Blinds, CC Glass/Grid/Image/Light/Radial Scale/Scale
+Wipe, CC Jaws, Line Sweep, Twister, WarpoMatic (none of them is an effect in Lumina yet; Lumina's own clip transitions are
+separate). Most hosts are in EffectCraft's fx_transition.rs, already saved in the scratchpad as
+ec13/fx_transition_gpu.rs (Card Wipe stays on EffectCraft's CPU). Round 22's helpers: `fxNorm3`, `fxLightDir`
+(perspective::light_dir), `fxRotXYZ` (rot_xyz) / `fxRotRows`, `FX_SHADING` + `fxShading` (perspective::Shading into f[1],
+f[3..6]), `FX_FACES`, `fxLayerBox(E, M)` (another layer's on-screen box and scale as last drawn), `GLASSES_VIEWS`; new kernel
+family `fx_extra` (fx_generate + fx_extra, the bevels). Round 21's helpers: `fxPhaseTerms` (fx_noise::phase_terms), `fxGrainLook` / `fxGrainPlanes` /
 `fxGrainApply` / `fxGrainMatte` / `fxGrainPreview` (GrainLook and preview_compose), `fxSampleBoxes` / `fxGrainStats` /
 `fxSampling` / `fxDrawBoxes` (noise::sample_boxes, noise2::grain_stats_boxes, draw_boxes, on a picture read back),
 `fxMedianImage` / `fxMedianFx` (noise::median_image: bisection to radius 4, the sliding histogram above), `fxNoiseHLS`,
@@ -437,7 +441,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 22 (Perspective)**.
+EffectCraft carries on at **Round 23 (Transitions)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -459,8 +463,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–21 and the Round 6 leftovers are done; Round 22 (Perspective) is next.** About 121
-   effects are left, in Rounds 22–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–22 and the Round 6 leftovers are done; Round 23 (Transitions) is next.** About 112
+   effects are left, in Rounds 23–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -576,6 +580,22 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 22 done (2026-11-11): Perspective.** A new **Perspective** group with **Drop Shadow**, **Radial
+  Shadow**, **Bevel Alpha**, **Bevel Edges**, **CC Cylinder**, **CC Sphere**, **CC Spotlight**, **CC Environment** and **3D
+  Glasses** (9).
+  - Kernels: kernels.wgsl's shadow_make / shadow_combine (Drop Shadow, host code from effects.rs); fx_transition's ftr_rshadow,
+    ftr_under, ftr_cylinder, ftr_sphere, ftr_spot, ftr_plane, ftr_env, ftr_shift, ftr_glasses (host code from fx_transition.rs);
+    fx_extra's fxe_alpha / fxe_bevel_alpha / fxe_bevel_edges (new family; EffectCraft's fx_extra.rs wasn't saved, so the
+    bevels' packing comes from fx_extra.wgsl's notes and perspective.rs, with gauss_plane as `fxGaussPlane`). Nothing was
+    downloaded.
+  - Drop Shadow's direction and Bevel Alpha's light angle turn with the layer. Radial Shadow, CC Cylinder, CC Sphere, CC
+    Spotlight's Light Only and 3D Glasses stay inside the layer's box, as EffectCraft's layer buffer keeps them (Radial
+    Shadow's Resize Layer lets the shadow out). Bevel Edges, CC Cylinder, CC Sphere and CC Spotlight treat the layer as its
+    upright box in the frame, and their light doesn't turn with a rotated layer. 3D Glasses' side-by-side and over-under
+    views split the frame, not the layer's own box. CC Environment's environment layer is mapped onto its on-screen box as
+    last drawn.
+  - Speeds 4.2–5.2 ms a frame at 1080p.
+  - Test: the fx suite's perspectiveKernels, perspectiveDetails, perspectiveMenu and round22speed steps.
 - **EffectCraft Round 21 done (2026-11-11): Noise & Grain.** A new **Noise & Grain** group with **Noise**, **Add Grain**,
   **Match Grain**, **Remove Grain**, **Dust & Scratches**, **Median**, **Median (Legacy)**, **Noise Alpha**, **Noise HLS**,
   **Noise HLS Auto**, **Turbulent Noise** and **Curl Noise** (12).

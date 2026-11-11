@@ -1370,6 +1370,63 @@
     while (L.fx?.length) delFX(L, 0);
     step('round21speed', r21speed);
 
+    // ---- Round 22: Perspective. The card at half size in the middle (x 480-1440, y 270-810) over black: patches 160 px wide
+    //      across its top half (black, white, red, green, blue, grey from x 480), the ramp below
+    {
+      const cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), sum = a => a[0] + a[1] + a[2], BK = [0, 0, 0], WH = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const ids = ['dropshadow', 'radialshadow', 'bevelalpha', 'beveledges', 'cccylinder', 'ccsphere', 'ccspotlight', 'ccenvironment', 'glasses3d'], K22 = {};
+      for (const id of ids) { await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K22[fam + ':' + e] = r; } }
+      step('perspectiveKernels', { ...K22, works: !Object.keys(K22).length });
+      L.p.scale = .5; while (L.fx?.length) delFX(L, 0); draw(); const half = frame(), H0 = (x, y) => { const i = (y * 1920 + x) * 4; return [half[i], half[i + 1], half[i + 2]]; };
+      // Drop Shadow (white, 100 %, 40 px down-right): the shadow shows past the layer's corner, not elsewhere; the layer stays on
+      // top; Shadow Only leaves just the shadow; Softness blurs its edge; Direction 315 throws it up-left
+      f = await only('dropshadow'); f.color = '#ffffff'; set(f, 'opacity', 100); set(f, 'distance', 80); draw(); const ds = [px(1455, 825), px(470, 280), px(560, 400), H0(560, 400)];
+      f.shadowOnly = true; draw(); const dsOnly = px(1000, 400); set(f, 'softness', 40); draw(); const dsSoft = px(1468, 600);
+      set(f, 'softness', 0); set(f, 'direction', 315); f.shadowOnly = false; draw(); const dsUp = [px(460, 250), px(1455, 825)];
+      // Radial Shadow (white, 100 %): kept inside the layer's box until Resize Layer; then the layer spread from the light shows
+      // past its far corner
+      f = await only('radialshadow'); f.color = '#ffffff'; set(f, 'opacity', 100); draw(); const rsClip = px(1480, 835);
+      f.resize = true; draw(); const rs = [px(1480, 835), px(1600, 950), px(560, 400), H0(560, 400)];
+      // Bevel Alpha (10 px, full light from the upper left): the top edge brighter, the bottom edge darker, the middle untouched
+      f = await only('bevelalpha'); set(f, 'thickness', 20); set(f, 'intensity', 1); draw(); const ba = [px(1360, 273), H0(1360, 273), px(1360, 806), H0(1360, 806), px(1360, 500), H0(1360, 500)];
+      // Bevel Edges (54 px bands): the same round the layer's box
+      f = await only('beveledges'); set(f, 'intensity', 1); draw(); const be = [px(1360, 280), H0(1360, 280), px(1360, 800), H0(1360, 800), px(1360, 500), H0(1360, 500)];
+      // CC Cylinder (radius 153 px): the layer wrapped round it, nothing beside it; Inside differs from Full
+      f = await only('cccylinder'); draw(); const cy1 = frame(), cy = [px(1300, 400), H0(1300, 400), px(960, 450)]; f.render = 2; draw(); const cyIn = diff(cy1, frame()).changed;
+      // CC Sphere (radius 60 px): nothing outside it
+      f = await only('ccsphere'); draw(); const sp = [px(1100, 500), H0(1100, 500), px(960, 540)];
+      // CC Spotlight: the layer kept on the cone's axis, dark far from it; Light Only is white there and nothing outside the layer
+      f = await only('ccspotlight'); draw(); const sl = [px(960, 560), H0(960, 560), px(1360, 300)]; f.render = 1; draw(); const slOnly = [px(960, 560), px(300, 300)];
+      // CC Environment: the layer becomes a reflection of itself; Probe maps it another way; nothing outside the layer
+      f = await only('ccenvironment'); draw(); const en1 = frame(), env = diff(half, en1).changed, enOut = px(300, 300); f.mapping = 1; draw(); const enProbe = diff(en1, frame()).changed;
+      // 3D Glasses (one view for both eyes): Balanced Colored Red Blue dims pure red, keeps white; Difference is black until the
+      // views are moved apart
+      f = await only('glasses3d'); draw(); const gl = [px(880, 400), px(720, 400), H0(880, 400)]; f.view = 8; draw(); const gl8 = frame(), glDiff = px(720, 400);
+      set(f, 'convergence', 40); draw(); const glApart = diff(gl8, frame()).changed;
+      step('perspectiveDetails', { ds: ds.map(String), dsOnly: dsOnly.join(), dsSoft: dsSoft.join(), dsUp: dsUp.map(String), rsClip: rsClip.join(), rs: rs.map(String),
+        ba: ba.map(String), be: be.map(String), cy: cy.map(String), cyIn, sp: sp.map(String), sl: sl.map(String), slOnly: slOnly.map(String), env, enOut: enOut.join(), enProbe,
+        gl: gl.map(String), glDiff: glDiff.join(), glApart,
+        works: cl(ds[0], WH, 3) && cl(ds[1], BK) && cl(ds[2], ds[3]) && cl(dsOnly, WH, 3) && dsSoft[0] > 40 && dsSoft[0] < 215 && cl(dsUp[0], WH, 3) && cl(dsUp[1], BK)
+          && cl(rsClip, BK) && cl(rs[0], WH, 3) && cl(rs[1], BK) && cl(rs[2], rs[3])
+          && sum(ba[0]) > sum(ba[1]) + 30 && sum(ba[2]) < sum(ba[3]) - 30 && cl(ba[4], ba[5], 3)
+          && sum(be[0]) > sum(be[1]) + 30 && sum(be[2]) < sum(be[3]) - 30 && cl(be[4], be[5], 3)
+          && cl(cy[0], BK) && sum(cy[1]) > 100 && sum(cy[2]) > 30 && cyIn > 1000 && cl(sp[0], BK) && sum(sp[1]) > 100 && sum(sp[2]) > 30
+          && cl(sl[0], sl[1], 4) && cl(sl[2], BK, 4) && cl(slOnly[0], WH, 4) && cl(slOnly[1], BK)
+          && env > 10000 && cl(enOut, BK) && enProbe > 1000
+          && gl[0][0] < gl[2][0] - 15 && cl([gl[0][1], gl[0][2]], [gl[2][1], gl[2][2]]) && cl(gl[1], WH, 3) && cl(glDiff, BK) && glApart > 1000 });
+      const menuP = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Perspective');
+      step('perspectiveMenu', { count: menuP?.children.length, works: menuP?.children.length === 9 });
+      const r22speed = {};
+      for (const id of ids) {
+        f = await only(id); if (id === 'dropshadow') set(f, 'softness', 20); if (id === 'bevelalpha') set(f, 'thickness', 10);
+        draw(); ctx.getImageData(0, 0, 1, 1);
+        const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r22speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+      }
+      while (L.fx?.length) delFX(L, 0); L.p.scale = 1; draw();
+      step('round22speed', r22speed);
+    }
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }

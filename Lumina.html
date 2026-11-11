@@ -2456,7 +2456,8 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   fx_gen2: ['fx_gen2'],               // Round 19 on: Stroke, Scribble, Vegas, Write-on, Paint Bucket, Eyedropper Fill, Radio Waves (fg2_*)
   lumina_gen: ['fx_generate', 'lumina_gen'],    // Rounds 19–20: Circle, Ellipse, Cell Pattern HQ, Fractal's put (EffectCraft draws them on the CPU; shaders/)
   fx_particles: ['fx_stylize', 'fx_sim', 'fx_particles'],   // Round 21 on: Curl Noise (fxp_curl_*; EffectCraft builds it with fx_stylize's fbm and fx_sim)
-  lumina_noise: ['fx_generate', 'lumina_noise'] };   // Round 21: grain mattes, sample boxes, Match Grain's plane stats (EffectCraft does them on the CPU; shaders/)
+  lumina_noise: ['fx_generate', 'lumina_noise'],   // Round 21: grain mattes, sample boxes, Match Grain's plane stats (EffectCraft does them on the CPU; shaders/)
+  fx_extra: ['fx_generate', 'fx_extra'] };   // Round 22 on: Bevel Alpha, Bevel Edges (fxe_*; EffectCraft builds it with fx_generate)
 const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
@@ -2653,6 +2654,41 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 22 helpers (Perspective): perspective.rs's light and rotations ----
+const fxNorm3 = v => { const l = Math.max(1e-12, Math.hypot(v[0], v[1], v[2])); return v.map(x => x / l); };
+// perspective::light_dir: towards a light at `angle` degrees (clockwise from up) and `elev` degrees above the layer
+const fxLightDir = (angle, elev) => { const a = angle * Math.PI / 180, e = elev * Math.PI / 180; return fxNorm3([Math.sin(a) * Math.cos(e), -Math.cos(a) * Math.cos(e), Math.sin(e)]); };
+// perspective::rot_xyz (R = Rz · Ry · Rx), as rows
+function fxRotXYZ(rx, ry, rz) {
+  const r = d => d * Math.PI / 180, [sx, cx, sy, cy, sz, cz] = [Math.sin(r(rx)), Math.cos(r(rx)), Math.sin(r(ry)), Math.cos(r(ry)), Math.sin(r(rz)), Math.cos(r(rz))];
+  const mul = (A, B) => A.map(row => [0, 1, 2].map(j => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
+  return mul([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], mul([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]));
+}
+// CC Cylinder and CC Sphere's settings: the shared lighting (perspective::Shading)
+const FX_SHADING = [
+  { id: 'intensity', label: 'Light intensity %', def: 100, min: 0, max: 400, dec: 1 },
+  { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+  { id: 'lightHeight', label: 'Light height°', def: 50, min: -90, max: 90, dec: 1 },
+  { id: 'lightDir', label: 'Light direction°', def: -45, min: -3600, max: 3600, dec: 1 },
+  { id: 'ambient', label: 'Ambient %', def: 20, min: 0, max: 200, dec: 1 },
+  { id: 'diffuse', label: 'Diffuse %', def: 80, min: 0, max: 200, dec: 1 },
+  { id: 'specular', label: 'Specular %', def: 20, min: 0, max: 200, dec: 1 },
+  { id: 'roughness', label: 'Roughness', def: .05, min: .001, max: .5, dec: 3 }];
+const FX_FACES = [[0, 'Full'], [1, 'Outside'], [2, 'Inside']];
+// fx_transition::shading: f[1] the layer's box, f[3..6] the light (direction, colour, ambient, diffuse, specular, shininess, half vector)
+function fxShading(E, q) {
+  const l = fxLightDir(q('lightDir'), q('lightHeight')), hv = fxNorm3([l[0], l[1], l[2] + 1]);
+  return { 1: E.rect, 3: [...l, q('intensity') / 100], 4: [...q('lightColor'), q('ambient') / 100],
+    5: [q('diffuse') / 100, q('specular') / 100, 1 / Math.max(q('roughness'), .001), 0], 6: [...hv, 0] };
+}
+const fxRotRows = M => ({ 7: [...M[0], 0], 8: [...M[1], 0], 9: [...M[2], 0] });
+// another layer's on-screen box (x, y, w, h) and scale, as it was last drawn (the whole frame if it hasn't been)
+function fxLayerBox(E, M) {
+  const r = RT[M.id]; if (!r?.m) return { rect: [0, 0, E.w, E.h], sc: 1 };
+  return { rect: fxRectOf(r.m, r.box?.w || E.w, r.box?.h || E.h), sc: Math.hypot(r.m.a, r.m.b) || 1 };
+}
+const GLASSES_VIEWS = ['Stereo pair (side by side)', 'Over under', 'Interlace upper L lower R', 'Red green LR', 'Red blue LR', 'Balanced colored red blue',
+  'Balanced red green LR', 'Balanced red blue LR', 'Difference'];
 // ---- Round 21 helpers (Noise & Grain): EffectCraft's noise.rs, noise2.rs and noise3.rs; GPU host code from fx_noise.rs and
 //      fx_generate.rs. The grain is measured on the picture read back (8 bits), as EffectCraft measures it on the CPU ----
 // noise::phased_cycle's two seeds and smoothed fraction for `phase` (fx_noise::phase_terms); cycle 0 = never repeats
@@ -5165,6 +5201,131 @@ const FX = {
       const pr = fxP({ 0: [((q('seed') >>> 0) ^ 0x517cc1) >>> 0, steps, q('edge') === 1, 0] }, { 0: [ox, oy, scale, q('complexity')], 1: [Math.cos(rot), Math.sin(rot), q('evolution') / 360 * 4, amount / steps] });
       const vel = E.run('fx_particles', 'fxp_curl_vel', pr, E.run('fx_particles', 'fxp_curl_pot', pr, img));
       return view === 1 ? E.run('fx_particles', 'fxp_curl_view', pr, vel) : E.run('fx_particles', 'fxp_curl_flow', pr, img, vel);
+    } },
+  // ---- Round 22: Perspective. EffectCraft's misc.rs (Drop Shadow), perspective.rs and perspective2.rs; GPU host code
+  //      from effects.rs and fx_transition.rs, and fx_extra.wgsl's notes for the bevels. Drop Shadow and Bevel Alpha's
+  //      angles turn with the layer; the others treat the layer as its upright box in the frame ----
+  dropshadow: { name: 'Drop Shadow', cat: 'Perspective', kernels: [['kernels', 'shadow_make'], ['kernels', 'shadow_combine'], ...BLUR_K], params: [
+      { id: 'color', label: 'Shadow color', type: 'color', def: '#000000' },
+      { id: 'opacity', label: 'Opacity %', def: 50, min: 0, max: 100, dec: 0 },
+      { id: 'direction', label: 'Direction°', def: 135, min: -3600, max: 3600, dec: 1 },
+      { id: 'distance', label: 'Distance', def: 5, min: 0, max: 32000, dec: 1 },
+      { id: 'softness', label: 'Softness', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'shadowOnly', label: 'Shadow only', type: 'check', def: false }],
+    run(E, img, q) {
+      const dir = q('direction') * Math.PI / 180 + E.rot, dist = q('distance') * E.sc, soft = q('softness') * E.sc;
+      let sh = E.run('kernels', 'shadow_make', fxP({}, { 0: [...q('color'), 1], 1: [q('opacity') / 100, Math.sin(dir) * dist, -Math.cos(dir) * dist, 0] }), img);
+      if (soft > 0) sh = fxGauss(E, sh, soft / 2, soft / 2, false);
+      return q('shadowOnly') ? sh : E.run('kernels', 'shadow_combine', fxP(), sh, img);
+    } },
+  // without Resize Layer the shadow stays inside the layer's box, as EffectCraft's buffer keeps it
+  radialshadow: { name: 'Radial Shadow', cat: 'Perspective', clip: q => !q('resize'), kernels: [['fx_transition', 'ftr_rshadow'], ['fx_transition', 'ftr_under'], ...BLUR_K], params: [
+      { id: 'color', label: 'Shadow color', type: 'color', def: '#000000' },
+      { id: 'opacity', label: 'Opacity %', def: 50, min: 0, max: 100, dec: 0 },
+      { id: 'light', label: 'Light source', type: 'pt', def: [.3, .2] },
+      { id: 'distance', label: 'Projection distance', def: 10, min: 0, max: 1000, dec: 1 },
+      { id: 'softness', label: 'Softness', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: [[0, 'Regular'], [1, 'Glass edge']] },
+      { id: 'influence', label: 'Color influence %', def: 0, min: 0, max: 100, dec: 0 },
+      { id: 'shadowOnly', label: 'Shadow only', type: 'check', def: false },
+      { id: 'resize', label: 'Resize layer', type: 'check', def: false }],
+    run(E, img, q) {
+      const k = 1 + Math.max(0, q('distance')) / 100, soft = Math.max(0, q('softness')) * E.sc, [lx, ly] = q('light');
+      let sh = E.run('fx_transition', 'ftr_rshadow', fxP({ 0: [q('render') === 1, 0, 0, 0] }, { 0: [lx, ly, k, q('opacity') / 100], 1: [...q('color'), q('influence') / 100] }), img);
+      if (soft > 0) sh = fxGauss(E, sh, soft * .5, soft * .5, false);
+      return q('shadowOnly') ? sh : E.run('fx_transition', 'ftr_under', fxP(), sh, img);
+    } },
+  bevelalpha: { name: 'Bevel Alpha', cat: 'Perspective', kernels: [['fx_extra', 'fxe_alpha'], ['fx_extra', 'fxe_bevel_alpha'], ['fx_pixel2', 'fp2_box']], params: [
+      { id: 'thickness', label: 'Edge thickness', def: 2, min: 0, max: 200, dec: 2 },
+      { id: 'angle', label: 'Light angle°', def: -60, min: -3600, max: 3600, dec: 1 },
+      { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+      { id: 'intensity', label: 'Light intensity', def: .4, min: 0, max: 1, dec: 2 }],
+    run(E, img, q) {
+      // the alpha softened into a height, lit from the light angle: edges facing it brighten, the others darken
+      const t = q('thickness') * E.sc, inten = q('intensity'); if (t <= 0 || !inten) return img;
+      const l = fxLightDir(q('angle') + E.rot * 180 / Math.PI, 45), h = fxGaussPlane(E, E.run('fx_extra', 'fxe_alpha', fxP(), img), t * .5, t * .5);
+      return E.run('fx_extra', 'fxe_bevel_alpha', fxP({}, { 0: [...l, t * 1.25], 1: [...q('lightColor'), inten] }), img, h);
+    } },
+  beveledges: { name: 'Bevel Edges', cat: 'Perspective', kernels: [['fx_extra', 'fxe_bevel_edges']], params: [
+      { id: 'thickness', label: 'Edge thickness', def: .1, min: 0, max: .5, dec: 2 },
+      { id: 'angle', label: 'Light angle°', def: -60, min: -3600, max: 3600, dec: 1 },
+      { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+      { id: 'intensity', label: 'Light intensity', def: .25, min: 0, max: 1, dec: 2 }],
+    run(E, img, q) {
+      // a 45° bevel round the layer's box: each band tilts towards its nearest edge
+      const [x0, y0, w, h] = E.rect, t = clamp(q('thickness'), 0, .5) * Math.min(w, h), inten = q('intensity'); if (t <= 0 || !inten) return img;
+      return E.run('fx_extra', 'fxe_bevel_edges', fxP({}, { 0: [...fxLightDir(q('angle'), 45), t], 1: [...q('lightColor'), inten], 2: [x0, y0, w, h] }), img);
+    } },
+  // the layer wrapped round a cylinder (or a sphere), lit; Render picks the outside, the inside or both
+  cccylinder: { name: 'CC Cylinder', cat: 'Perspective', clip: true, kernels: [['fx_transition', 'ftr_cylinder']], params: [
+      { id: 'radius', label: 'Radius %', def: 100, min: 0, max: 400, dec: 1 },
+      { id: 'position', label: 'Position', type: 'pt', def: [.5, .5] },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'rotX', label: 'Rotation X°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'rotY', label: 'Rotation Y°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'rotZ', label: 'Rotation Z°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: FX_FACES }, ...FX_SHADING],
+    run(E, img, q) {
+      const r = Math.max(.5, q('radius') / 100 * E.lw / (2 * Math.PI)), [cx, cy] = q('position'), rx = q('rotX'), ry = q('rotY'), rz = q('rotZ');
+      return E.run('fx_transition', 'ftr_cylinder', fxP({ 0: [q('render'), rx || ry || rz ? 1 : 0, 0, 0] },
+        { 0: [cx, cy, r, E.lh], 2: [q('rotation') * Math.PI / 180, 0, 0, 0], ...fxShading(E, q), ...fxRotRows(fxRotXYZ(rx, ry, rz)) }), img);
+    } },
+  ccsphere: { name: 'CC Sphere', cat: 'Perspective', clip: true, kernels: [['fx_transition', 'ftr_sphere']], params: [
+      { id: 'radius', label: 'Radius', def: 120, min: 0, max: 4000, dec: 1 },
+      { id: 'offset', label: 'Offset', type: 'pt', def: [.5, .5] },
+      { id: 'rotX', label: 'Rotation X°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'rotY', label: 'Rotation Y°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'rotZ', label: 'Rotation Z°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: FX_FACES }, ...FX_SHADING],
+    run(E, img, q) {
+      const [cx, cy] = q('offset');
+      return E.run('fx_transition', 'ftr_sphere', fxP({ 0: [q('render'), 0, 0, 0] },
+        { 0: [cx, cy, Math.max(.5, q('radius') * E.sc), 0], ...fxShading(E, q), ...fxRotRows(fxRotXYZ(q('rotX'), q('rotY'), q('rotZ'))) }), img);
+    } },
+  ccspotlight: { name: 'CC Spotlight', cat: 'Perspective', clip: q => q('render') === 1, kernels: [['fx_transition', 'ftr_spot']], params: [
+      { id: 'from', label: 'From', type: 'pt', def: [.3, .2] },
+      { id: 'to', label: 'To', type: 'pt', def: [.5, .5] },
+      { id: 'height', label: 'Height %', def: 50, min: 0, max: 1000, dec: 1 },
+      { id: 'cone', label: 'Cone angle°', def: 20, min: .1, max: 89.9, dec: 1 },
+      { id: 'soft', label: 'Edge softness %', def: 25, min: 0, max: 100, dec: 1 },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'intensity', label: 'Intensity %', def: 100, min: 0, max: 400, dec: 1 },
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: [[0, 'Light'], [1, 'Light only']] }],
+    run(E, img, q) {
+      // a cone of light from From (Height above the layer) towards To; outside it the layer goes dark
+      const [fx, fy] = q('from'), [tx, ty] = q('to'), height = Math.max(1e-3, q('height') / 100 * Math.max(E.lw, E.lh));
+      const cone = clamp(q('cone'), .1, 89.9) * Math.PI / 180, soft = clamp(q('soft') / 100, 0, 1), axis = fxNorm3([tx - fx, ty - fy, -height]);
+      return E.run('fx_transition', 'ftr_spot', fxP({ 0: [q('render') === 1, 0, 0, 0] }, { 0: [fx, fy, height, q('intensity') / 100], 1: [...axis, cone * (1 - soft)], 2: [...q('color'), cone] }), img);
+    } },
+  ccenvironment: { name: 'CC Environment', cat: 'Perspective', kernels: [['fx_transition', 'ftr_plane'], ['fx_transition', 'ftr_env'], ...BLUR_K], params: [
+      fxLayerPick('env', 'Environment'),
+      { id: 'mapping', label: 'Mapping', type: 'pick', def: 0, opts: [[0, 'Spherical'], [1, 'Probe'], [2, 'Vertical cross']] },
+      { id: 'filter', label: 'Filter environment', type: 'check', def: true },
+      { id: 'height', label: 'Height %', def: 10, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // the environment layer reflected off a relief made from this layer's brightness, rounded off at its alpha edge
+      const M = q('env') ? byId(q('env')) : null; let env = fxLayerOr(E, img, q('env'), 'env3d');
+      const box = env === img ? { rect: E.rect, sc: E.sc } : fxLayerBox(E, M);
+      if (q('filter')) env = fxGauss(E, env, 2 * box.sc, 2 * box.sc, true);
+      const soft = 1.5 * Math.max(E.sc, .25), hmap = fxGauss(E, E.run('fx_transition', 'ftr_plane', fxP({ 0: [11, 0, 0, 0] }), img), soft, soft, true);
+      const [tab, row] = E.rows(env);
+      return E.run('fx_transition', 'ftr_env', fxP({ 0: [q('mapping'), 0, 0, 0], 3: [row, E.w, E.h, 0] }, { 0: [1 / Math.max(E.sc, 1e-6), q('height') / 100 * 20, 1, 0], 1: box.rect }),
+        img, hmap, null, tab);
+    } },
+  glasses3d: { name: '3D Glasses', cat: 'Perspective', clip: true, kernels: [['fx_transition', 'ftr_shift'], ['fx_transition', 'ftr_glasses']], params: [
+      fxLayerPick('left', 'Left view'), fxLayerPick('right', 'Right view'),
+      { id: 'convergence', label: 'Scene convergence', def: 0, min: -1000, max: 1000, dec: 1 },
+      { id: 'vertical', label: 'Vertical alignment', def: 0, min: -1000, max: 1000, dec: 1 },
+      { id: 'units', label: 'Units', type: 'pick', def: 0, opts: [[0, 'Pixels'], [1, '% of source']] },
+      { id: 'swap', label: 'Swap left-right', type: 'check', def: false },
+      { id: 'view', label: '3D view', type: 'pick', def: 5, opts: GLASSES_VIEWS.map((n, i) => [i, n]) },
+      { id: 'balance', label: 'Balance', def: 7, min: 0, max: 20, dec: 1 }],
+    run(E, img, q) {
+      // a stereo pair or an anaglyph from two views (this layer when none is picked), moved apart by the convergence
+      let l = fxLayerOr(E, img, q('left'), 'left3d'), r = fxLayerOr(E, img, q('right'), 'right3d'); if (q('swap')) [l, r] = [r, l];
+      const unit = q('units') === 1 ? E.lw / 100 : E.sc, conv = q('convergence') * unit, va = q('vertical') * unit;
+      const shift = (x, dx, dy) => dx || dy ? E.run('fx_transition', 'ftr_shift', fxP({}, { 0: [dx, dy, 0, 0] }), x) : x;
+      return E.run('fx_transition', 'ftr_glasses', fxP({ 0: [q('view'), 0, 0, 0] }, { 0: [E.w, E.h, clamp(q('balance') / 20, 0, 1), 0] }), shift(l, conv * .5, 0), shift(r, -conv * .5, va));
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's
