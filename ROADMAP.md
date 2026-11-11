@@ -230,8 +230,25 @@ export) instead of only writing Lumina's code.
     port after off/on) and `apps` (pretend files: added with others kept and a backup, a file made, an unreadable one left
     alone, the uninstaller sees and forgets them, Remove, the window's cards, the address only while on, the key not in the
     page, Copy refused while off). Found by the tests: Copy the key worked while off; fixed.
-  - **Not done:** the window was checked by the tests, not looked at on screen; no real Cursor / Gemini / Devin / VS Code /
-    Codex / LM Studio connection was tried (none are installed here).
+  - **Same day, after the user's screenshot (the window spilled out of the 420 px message box) and their ask for Grok,
+    ChatGPT, OMP, Microsoft Copilot "and other suggestions":**
+    - The modal box gets class `aiwide` (960 px, scrolls inside) only while this window is open; a MutationObserver takes
+      it off when the modal hides. The app list is grouped (Chat apps, Code editors, Terminal agents, Anything else),
+      scrolls, and its buttons don't shrink (`#aiList > * { flex: none }`).
+    - **20 cards.** Buttons for files (as before, with a copy first): Claude app, Cursor, Gemini CLI, Devin, **Copilot CLI**
+      (`~/.copilot/mcp-config.json` or `COPILOT_HOME`, `type: local`, `tools: ["*"]`), **OMP** (`~/.omp/agent/mcp.json`)
+      and **Kiro** (`~/.kiro/settings/mcp.json`). Copy only: Claude Code, VS Code, Codex CLI, LM Studio, **Zed**
+      (`context_servers`), **JetBrains IDEs**, **Cline**, **opencode** (`opencode mcp add … --env …`), **Warp**, Other apps.
+    - **Can't connect, and the card says why (docs read 2026-11-10):** **ChatGPT** (custom MCP servers are added by an
+      internet address; local servers are for OpenAI-approved partners only), **Grok** (xAI only documents remote MCP
+      servers that xAI connects to), **Microsoft Copilot** (Windows' on-device agent registry is a preview for packaged
+      apps and doesn't list the Copilot app; the card points to VS Code and Copilot CLI). Lumina stays local on purpose.
+    - Not checked: Warp's paste format (given as `mcpServers` JSON), JetBrains' env field, Goose (its docs page was gone),
+      OMP's Windows path (its docs only show `~`).
+    - Tests added to step `apps`: wide, fits, every card opens without spilling, ChatGPT/Grok say they can't, the box is
+      narrow again after Close, new apps not installed, Copilot CLI entry added.
+  - **Seen on screen** (a test run's screenshot): fits at 1584 px wide. No real connection from the other apps was tried
+    (none are installed here).
 - **M5 Other AIs connect to Lumina, from the Edit menu (the plan, asked for by the user 2026-11-10).** Today
   the switch (Edit › Allow Claude to control Lumina) and Help › Connect Claude… are about Claude only. The user wants the
   MCP server in the **Edit** menu, so any AI that speaks MCP can connect, not only Claude.

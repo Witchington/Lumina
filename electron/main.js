@@ -973,7 +973,11 @@ const AI_APPS = {
   cursor: { name: 'Cursor', file: () => testApp('cursor', 'mcp.json') || path.join(H(), '.cursor', 'mcp.json'), entry: () => ({ type: 'stdio', ...luminaEntry() }) },
   gemini: { name: 'Gemini CLI', file: () => testApp('gemini', 'settings.json') || path.join(H(), '.gemini', 'settings.json'), entry: luminaEntry },
   devin: { name: 'Devin', file: () => testApp('devin', 'mcp_config.json') || (process.platform === 'win32' ? path.join(process.env.APPDATA || path.join(H(), 'AppData', 'Roaming'), 'devin', 'mcp_config.json')
-    : path.join(process.env.XDG_CONFIG_HOME || path.join(H(), '.config'), 'devin', 'mcp_config.json')), entry: luminaEntry }
+    : path.join(process.env.XDG_CONFIG_HOME || path.join(H(), '.config'), 'devin', 'mcp_config.json')), entry: luminaEntry },
+  copilotcli: { name: 'Copilot CLI', file: () => testApp('copilot', 'mcp-config.json') || path.join(process.env.COPILOT_HOME || path.join(H(), '.copilot'), 'mcp-config.json'),
+    entry: () => ({ type: 'local', ...luminaEntry(), tools: ['*'] }) },
+  omp: { name: 'OMP', file: () => testApp('omp', 'agent', 'mcp.json') || path.join(H(), '.omp', 'agent', 'mcp.json'), entry: luminaEntry },
+  kiro: { name: 'Kiro', file: () => testApp('kiro', 'settings', 'mcp.json') || path.join(H(), '.kiro', 'settings', 'mcp.json'), entry: luminaEntry }
 };
 function jsonState(file) {
   if (!fs.existsSync(file)) return { file, installed: fs.existsSync(path.dirname(file)), exists: false, has: false };
@@ -1003,6 +1007,9 @@ const snippets = () => {
     vscode: JSON.stringify({ servers: { lumina: { type: 'stdio', ...e } } }, null, 2),
     codex: `[mcp_servers.lumina]\ncommand = ${toml(e.command)}\nargs = [${toml(e.args[0])}]\nenv = { ELECTRON_RUN_AS_NODE = "1" }`,
     gemini: `gemini mcp add --scope user -e ELECTRON_RUN_AS_NODE=1 lumina ${q(e.command)} ${q(e.args[0])}`,
+    zed: JSON.stringify({ context_servers: { lumina: e } }, null, 2),
+    copilot: `copilot mcp add --env ELECTRON_RUN_AS_NODE=1 lumina -- ${q(e.command)} ${q(e.args[0])}`,
+    opencode: `opencode mcp add lumina --env ELECTRON_RUN_AS_NODE=1 -- ${q(e.command)} ${q(e.args[0])}`,
     url: port ? `http://127.0.0.1:${port}/mcp` : ''
   };
 };

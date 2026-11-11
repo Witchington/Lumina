@@ -184,7 +184,10 @@
     const editItems = MENUS.Edit().filter(Array.isArray).map(it => it[0]);
     await setAI(true); await aiBox('cursor');
     const w = { menu: editItems.includes('AI connections (MCP)…') && editItems.includes('Allow AI control'), title: $('#mTitle').textContent === 'AI connections (MCP)',
-      cards: $$('#aiList [data-pick]').length === 9, cursorAdd: !!$('#aiBox [data-app="cursor"][data-add="1"]'), cursorJson: /"mcpServers"/.test($('#aiCursor')?.value || ''),
+      cards: $$('#aiList [data-pick]').length === AI_FLAT.length && AI_FLAT.length >= 20 && AI_FLAT.every(([id]) => typeof id === 'string'),
+      wide: $('#modal .box').classList.contains('aiwide') && $('#modal .box').getBoundingClientRect().width > 700,
+      fits: (() => { const b = $('#modal .box').getBoundingClientRect(), c = $('#aiCard').getBoundingClientRect(), l = $('#aiList').getBoundingClientRect();
+        return c.right <= b.right + 1 && l.left >= b.left - 1 && b.right <= innerWidth && $('#aiBox').scrollWidth <= $('#aiBox').clientWidth + 1; })(), cursorAdd: !!$('#aiBox [data-app="cursor"][data-add="1"]'), cursorJson: /"mcpServers"/.test($('#aiCursor')?.value || ''),
       status: /On · 34 tools/.test($('#aiStatus').textContent), tools: /get_project/.test($('#aiBox details').textContent) };
     $('#aiList [data-pick="other"]').click(); await new Promise(r => setTimeout(r, 300));
     const ctl = JSON.parse(await TF({ name: 'claude-control.json' }) || '{}');
@@ -196,7 +199,16 @@
     $('#aiLight').click(); await new Promise(r => setTimeout(r, 300)); w.lightOpens = !$('#modal').hidden && !!$('#aiBox');
     await setAI(false); w.urlGoneWhenOff = (await (async () => { await aiBox('other'); return !$('#aiUrl'); })());
     w.copyOff = await lumina.aiCopy('key').then(() => false, () => true);
-    $('#mOk').click();
+    // every card opens, and none spills out of the box
+    const badList = []; for (const [id] of AI_FLAT) { await aiBox(id); const b = $('#modal .box').getBoundingClientRect(), c = $('#aiCard');
+      if (!c || c.dataset.card !== id || c.getBoundingClientRect().right > b.right + 1 || c.scrollWidth > c.clientWidth + 1) badList.push(id); }
+    w.everyCard = badList.length === 0; w.badCards = badList.join();
+    w.cantSay = await (async () => { await aiBox('chatgpt'); const a = /can't connect/.test($('#aiCard').textContent); await aiBox('grok'); return a && /can't connect/.test($('#aiCard').textContent); })();
+    $('#mOk').click(); await new Promise(r => setTimeout(r, 50)); w.narrowAgain = !$('#modal .box').classList.contains('aiwide');
+    const cp = await lumina.aiApp({ id: 'copilotcli', add: true }).catch(e => String(e)), okp = await lumina.aiApp({ id: 'omp', add: true }).catch(e => String(e));
+    w.newAppsNotThere = cp.apps?.copilotcli?.installed === false && !cp.apps.copilotcli.has && okp.apps?.omp?.installed === false;
+    await TF({ name: 'apps/copilot/x.txt', text: 'x' }); const cp2 = await lumina.aiApp({ id: 'copilotcli', add: true }), cpj = JSON.parse(await TF({ name: 'apps/copilot/mcp-config.json' }) || '{}');
+    w.copilotAdded = cp2.apps.copilotcli.current && cpj.mcpServers?.lumina?.type === 'local' && cpj.mcpServers.lumina.tools?.[0] === '*';
     step('apps', { noneInstalled: Object.values(none.apps).every(a => a.installed === false && !a.has),
       found: seen.apps.cursor.installed && seen.apps.gemini.installed && seen.apps.devin.unreadable,
       cursorAdded: cur.mcpServers.lumina?.type === 'stdio' && cur.mcpServers.lumina.command === none.exe && cur.mcpServers.lumina.env?.ELECTRON_RUN_AS_NODE === '1' && aCur.apps.cursor.current,

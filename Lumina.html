@@ -302,6 +302,21 @@ footer { background: var(--glass); backdrop-filter: blur(16px) saturate(140%); b
 .modal .box { background: var(--glass-strong); backdrop-filter: blur(18px) saturate(150%); border: 1px solid var(--line-strong); border-radius: 14px; padding: 22px; width: min(420px, 92vw); box-shadow: 0 18px 50px rgba(0, 0, 0, .55), inset 0 1px 0 var(--hl); }
 .modal h2 { font: 500 22px var(--brand); margin: 0 0 8px; color: var(--title); }
 .modal .box.wide { width: min(560px, 94vw); }
+.modal .box.aiwide { width: min(960px, 96vw); max-height: 94vh; display: flex; flex-direction: column; }
+.modal .box.aiwide #mText { overflow: auto; min-height: 0; }
+#aiBox { text-align: left; }
+#aiBox .aiCols { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 16px; }
+#aiList { display: flex; flex-direction: column; gap: 2px; max-height: min(62vh, 600px); overflow: auto; padding-right: 4px; }
+#aiList .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .55; margin: 8px 0 2px; }
+#aiList .grp:first-child { margin-top: 0; }
+#aiList > * { flex: none; }
+#aiList button { text-align: left; padding: 4px 10px; font-size: 13px; }
+#aiCard { min-width: 0; max-height: min(62vh, 600px); overflow: auto; padding-right: 4px; }
+#aiCard .cp { display: flex; gap: 6px; align-items: flex-start; margin: 2px 0; }
+#aiCard .cp input, #aiCard .cp textarea { flex: 1; min-width: 0; font: 12px monospace; padding: 5px 7px; box-sizing: border-box; }
+#aiCard .cp textarea { resize: vertical; white-space: pre; overflow: auto; }
+#aiCard .cp button { flex: none; }
+#aiCard .note { border-left: 3px solid var(--line-strong); padding: 6px 10px; margin: 6px 0; opacity: .9; }
 /* B4 welcome + tips */
 .modal .box.wbox { width: min(640px, 94vw); padding: 24px 26px 20px; }
 .whead { display: flex; gap: 14px; align-items: center; margin-bottom: 6px; }
@@ -10760,15 +10775,21 @@ async function setAI(on) {
 }
 // Edit › AI connections (MCP)… (M5; Help › Connect Claude… opens it at Claude): the switch, the status, the tools, and
 // how to connect each AI app. Lumina changes another app's settings file only when its button is pressed, after a copy.
-const AI_CARDS = [['claude', 'Claude app'], ['claudecode', 'Claude Code'], ['cursor', 'Cursor'], ['vscode', 'VS Code'], ['gemini', 'Gemini CLI'],
-  ['codex', 'Codex CLI'], ['devin', 'Devin'], ['lmstudio', 'LM Studio'], ['other', 'Other apps']];
+const AI_CARDS = [['Chat apps', [['claude', 'Claude app'], ['chatgpt', 'ChatGPT'], ['grok', 'Grok'], ['mscopilot', 'Microsoft Copilot'], ['lmstudio', 'LM Studio']]],
+  ['Code editors', [['vscode', 'VS Code'], ['cursor', 'Cursor'], ['zed', 'Zed'], ['jetbrains', 'JetBrains IDEs'], ['kiro', 'Kiro'], ['devin', 'Devin (Windsurf)'], ['cline', 'Cline']]],
+  ['Terminal agents', [['claudecode', 'Claude Code'], ['codex', 'Codex CLI'], ['gemini', 'Gemini CLI'], ['copilotcli', 'Copilot CLI'], ['omp', 'OMP'], ['opencode', 'opencode'], ['warp', 'Warp']]],
+  ['Anything else', [['other', 'Other apps']]]];
+const AI_FLAT = AI_CARDS.flatMap(g => g[1]);
+// the modal box is narrow for messages; this window widens it while it is open (and only then)
+new MutationObserver(() => { if ($('#modal').hidden) $('#modal .box').classList.remove('aiwide'); }).observe($('#modal'), { attributes: true, attributeFilter: ['hidden'] });
 async function aiBox(pick, testResult) {
   let I; try { I = await lumina.claudeSetup(); } catch (e) { return toast('AI connections are only in the desktop app.'); }
   if (pick) AI_PICK = pick;
   AI_ON = I.enabled; aiLight(false, I.client);
   const N = I.snippets, small = t => `<small style="opacity:.75;display:block;margin:4px 0">${t}</small>`;
-  const block = (id, text) => `<div style="display:flex;gap:6px;align-items:flex-start"><textarea id="${id}" readonly spellcheck="false" rows="${Math.min(9, text.split('\n').length)}" style="flex:1;font:12px monospace;resize:none;white-space:pre;overflow:auto">${esc(text)}</textarea><button data-copy="${id}">Copy</button></div>`;
-  const line = (id, text) => `<div style="display:flex;gap:6px"><input id="${id}" readonly value="${esc(text)}" style="flex:1;font:12px monospace"><button data-copy="${id}">Copy</button></div>`;
+  const block = (id, text) => `<div class="cp"><textarea id="${id}" readonly spellcheck="false" rows="${Math.min(10, text.split('\n').length)}">${esc(text)}</textarea><button data-copy="${id}">Copy</button></div>`;
+  const line = (id, text) => `<div class="cp"><input id="${id}" readonly value="${esc(text)}"><button data-copy="${id}">Copy</button></div>`;
+  const note = t => `<div class="note">${t}</div>`;
   const state = (name, a, notThere) => a.unreadable ? `${name}'s settings file couldn't be read, so Lumina leaves it alone.` : a.current ? `✓ ${name} is set up to reach this Lumina.`
     : a.has ? `${name} has an older Lumina entry (Lumina moved or was reinstalled).` : a.installed === false ? notThere : 'Not set up yet.';
   const buttons = (attr, name, a, file, after) => a.unreadable || a.installed === false ? '' : small(`${a.current ? 'Remove takes the' : 'This adds one entry,'} “lumina”${a.current ? ' entry out of' : ', to'} ${name}'s settings file${file ? ` (<code>${esc(file)}</code>)` : ''} and changes nothing else. A copy of the file is kept first, next to it (…before-lumina). ${after}`)
@@ -10788,6 +10809,22 @@ async function aiBox(pick, testResult) {
     gemini: () => fileApp('gemini', 'Gemini CLI', 'Start Gemini CLI again afterwards.') + small('Or run this once in a terminal:') + line('aiGemini', N.gemini),
     codex: () => small('Add this to Codex\'s settings file, <code>.codex\\config.toml</code> in your user folder (make the file if it isn\'t there), then start Codex again:') + block('aiCodex', N.codex),
     devin: () => fileApp('devin', 'Devin', 'Devin was called Windsurf before; restart it afterwards.') + small('Or paste this into that file yourself:') + block('aiDevin', N.mcpServers),
+    chatgpt: () => note('<b>ChatGPT can\'t connect to Lumina yet.</b> OpenAI\'s docs say ChatGPT adds your own MCP servers by an internet address (Plugins › + › Add custom MCP server), and servers that run on your computer are only for partners OpenAI has approved.')
+      + small('Lumina only listens on this computer, on purpose: putting it on the internet would let anyone who finds the address reach your projects. If OpenAI opens local servers to everyone, this card will get a button.'),
+    grok: () => note('<b>Grok can\'t connect to Lumina yet.</b> xAI\'s docs only describe MCP servers given to Grok by an internet address (its “remote MCP tools”), which xAI connects to for you. Nothing there reaches a server on your computer.')
+      + small('Lumina only listens on this computer, on purpose. If xAI adds local servers, this card will get a button.'),
+    mscopilot: () => note('<b>The Copilot app on Windows can\'t use Lumina yet.</b> Windows\' own list of MCP servers (the on-device agent registry, still a preview) takes servers from installed Store-style apps, and Microsoft doesn\'t list the Copilot app as one that uses it.')
+      + small('GitHub Copilot can, though: in <b>VS Code</b> (Copilot\'s Agent mode) and in the terminal with <b>Copilot CLI</b>. Both have their own card on the left.'),
+    zed: () => small('In Zed open Settings › AI › MCP Servers › Add Server › <b>Add Local Server</b>, or run <b>zed: open settings file</b> and paste this in (if there is already a <code>"context_servers"</code>, add only the <code>"lumina"</code> part):') + block('aiZed', N.zed),
+    jetbrains: () => small('In IntelliJ, PyCharm, Rider or another JetBrains IDE with AI Assistant: Settings › Tools › AI Assistant › <b>Model Context Protocol (MCP)</b> › Add, then paste this:') + block('aiJb', N.mcpServers)
+      + small('If the dialog asks for the parts one by one: the command, its argument and the <code>ELECTRON_RUN_AS_NODE=1</code> setting are on the <b>Other apps</b> card.'),
+    kiro: () => fileApp('kiro', 'Kiro', 'Kiro picks it up when the file is saved.') + small('Or in Kiro run <b>Kiro: Open user MCP config (JSON)</b> and paste this in:') + block('aiKiro', N.mcpServers),
+    cline: () => small('In Cline (in VS Code or the terminal) click the <b>MCP Servers</b> icon › Configure › <b>Configure MCP Servers</b>. Paste this in (if there is already a <code>"mcpServers"</code>, add only the <code>"lumina"</code> part) and save:') + block('aiCline', N.mcpServers),
+    copilotcli: () => fileApp('copilotcli', 'Copilot CLI', 'Start Copilot CLI again afterwards.') + small('Or run this once in a terminal (GitHub Copilot CLI):') + line('aiCopilot', N.copilot),
+    omp: () => fileApp('omp', 'OMP', 'In OMP run <code>/mcp reload</code> afterwards.') + small('Or in OMP type <code>/mcp add</code> and give it the command, argument and setting from the <b>Other apps</b> card. OMP also reads Claude Code\'s, Cursor\'s, Gemini\'s and Codex\'s settings by itself, so if one of those already has Lumina, OMP may have it too.'),
+    opencode: () => small('Run this once in a terminal:') + line('aiOpencode', N.opencode) + small('Inside opencode, <code>/mcps</code> shows whether Lumina is there.'),
+    warp: () => small('In Warp open Settings › Agents › <b>MCP servers</b> › + Add, and paste this:') + block('aiWarp', N.mcpServers)
+      + small('Warp also reads Claude Code\'s and Codex\'s settings, so if one of those already has Lumina, Warp may find it.'),
     lmstudio: () => small('In LM Studio open the <b>Program</b> tab on the right, then <b>Install › Edit mcp.json</b>. Paste this in (if it already has <code>"mcpServers"</code>, add only the <code>"lumina"</code> part) and save:') + block('aiLm', N.mcpServers),
     other: () => `<div><b>Apps that start a server themselves (stdio)</b></div>${small('Most MCP apps. Give them this command, its argument and its setting:')}
       ${line('aiCmd', I.exe)}${line('aiArg', I.script)}${line('aiEnv', 'ELECTRON_RUN_AS_NODE=1')}${small('As JSON, the way many apps write it:')}${block('aiJson', N.mcpServers)}
@@ -10797,17 +10834,17 @@ async function aiBox(pick, testResult) {
         : small('Turn on AI control above to get the address.')}`
   };
   const names = (window.LuminaAPI?.tools || []);
-  $('#mTitle').textContent = 'AI connections (MCP)'; $('#mBarWrap').hidden = true;
-  $('#mText').innerHTML = `<div id="aiBox" style="text-align:left;width:min(780px,86vw)">
+  $('#mTitle').textContent = 'AI connections (MCP)'; $('#mBarWrap').hidden = true; $('#modal .box').classList.add('aiwide');
+  $('#mText').innerHTML = `<div id="aiBox">
     <p style="margin:0 0 10px">Let an AI app look at and edit the project open in Lumina, through MCP (the Model Context Protocol). Apps can only connect from <b>this computer</b>, with Lumina's own key. You see every change as it happens, and each one can be undone with Ctrl+Z.</p>
     <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 10px">
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ccOn" ${I.enabled ? 'checked' : ''}> <b>Allow AI control</b></label>
       <span id="aiStatus" style="opacity:.85">${I.enabled ? `On · ${I.tools} tools · ${I.client ? `last app: ${esc(I.client)}` : 'no app has connected yet'}` : 'Off: nothing can connect.'}</span>
     </div>
     ${I.portMoved && I.enabled ? small('Lumina\'s address changed because its old one was in use. Apps given the address (Other apps › Streamable HTTP) need the new one.') : ''}
-    <div style="display:flex;gap:12px;min-height:300px">
-      <div id="aiList" style="display:flex;flex-direction:column;gap:2px;min-width:130px">${AI_CARDS.map(([id, n]) => `<button data-pick="${id}" class="${id === AI_PICK ? 'primary' : ''}" style="text-align:left">${n}</button>`).join('')}</div>
-      <div id="aiCard" data-card="${AI_PICK}" style="flex:1;min-width:0"><div style="margin:0 0 6px"><b>${AI_CARDS.find(c => c[0] === AI_PICK)[1]}</b></div>${card[AI_PICK]()}</div>
+    <div class="aiCols">
+      <div id="aiList">${AI_CARDS.map(([g, list]) => `<div class="grp">${g}</div>` + list.map(([id, n]) => `<button data-pick="${id}" class="${id === AI_PICK ? 'primary' : ''}">${n}</button>`).join('')).join('')}</div>
+      <div id="aiCard" data-card="${AI_PICK}"><div style="margin:0 0 6px;font-size:15px"><b>${AI_FLAT.find(c => c[0] === AI_PICK)[1]}</b></div>${card[AI_PICK]()}</div>
     </div>
     <details style="margin-top:10px"><summary>The ${names.length || I.tools} tools AI apps get</summary><div style="font:12px monospace;opacity:.8;margin-top:4px">${names.map(esc).join(', ')}</div></details>
     <div style="margin-top:10px"><b>Check it</b> <span id="ccTest">${testResult ? esc(testResult) : 'Test the connection the way an AI app starts it.'}</span></div>
@@ -10825,7 +10862,7 @@ async function aiBox(pick, testResult) {
     try { await lumina.aiCopy(b.dataset.http); notice('Copied. It holds Lumina\'s key: paste it only into your AI app\'s settings.'); } catch (e) { toast(clean(e)); }
   });
   box.querySelectorAll('[data-app]').forEach(b => b.onclick = async () => {
-    const add = !!b.dataset.add, n = AI_CARDS.find(c => c[0] === b.dataset.app)[1];
+    const add = !!b.dataset.add, n = AI_FLAT.find(c => c[0] === b.dataset.app)[1];
     try { await lumina.aiApp({ id: b.dataset.app, add }); notice(add ? `Lumina is in ${n}'s settings. Start ${n} again to use it.` : `Lumina was taken out of ${n}'s settings.`); } catch (e) { toast(clean(e)); }
     aiBox();
   });
