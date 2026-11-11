@@ -435,6 +435,7 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
 /* floating panels: the button at the end of a panel's header, and the header as a handle to drag the panel out (or back) */
 .ph { cursor: grab; }
 .ph.tearing { cursor: grabbing; }
+html.nosel, html.nosel * { user-select: none !important; -webkit-user-select: none !important; }
 .ph .ph-float { margin-left: auto; padding: 0 7px; height: 22px; min-width: 0; font-size: 14px; line-height: 1; background: none; border-color: transparent; box-shadow: none; color: var(--muted); }
 .ph .ph-float:hover { color: var(--fg); border-color: var(--line-strong); background: var(--gloss); }
 body.tl-float { grid-template-rows: auto auto 1fr; }
@@ -604,7 +605,7 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
       <div class="pf"><span class="hint" id="fxpCount"></span></div>
     </div>
   </section>
-  <section class="panel p-comp stage">
+  <section class="panel p-comp stage" id="pComp">
     <div class="ph"><span class="tab on" id="compTab">Composition: Main</span></div>
     <div class="viewport" id="viewport">
       <div class="cwrap" id="cwrap">
@@ -7369,7 +7370,7 @@ function fitPreview() {
   PX = Math.max(-mx, Math.min(mx, PX)); PY = Math.max(-my, Math.min(my, PY));
   Object.assign($('#cwrap').style, { width: w + 'px', height: h + 'px', left: (vp.width - w) / 2 + PX + 'px', top: (vp.height - h) / 2 + PY + 'px' });
   // the overlay follows the screen size, capped so a deep zoom doesn't make a giant canvas
-  const dpr = devicePixelRatio || 1, cap = Math.min(1, 8192 / Math.max(w * dpr, h * dpr, 1));
+  const dpr = $('#viewport').ownerDocument.defaultView?.devicePixelRatio || devicePixelRatio || 1, cap = Math.min(1, 8192 / Math.max(w * dpr, h * dpr, 1));
   const ow = Math.max(1, Math.round(w * dpr * cap)), oh = Math.max(1, Math.round(h * dpr * cap));
   if (ov.width !== ow || ov.height !== oh) { ov.width = ow; ov.height = oh; }
   $('#out').style.imageRendering = z * dpr >= 2 ? 'pixelated' : '';
@@ -10036,7 +10037,18 @@ const spaceUp = () => { spaceKey = null; $('#viewport').classList.remove('space'
 document.addEventListener('keyup', e => { if (e.code === 'Space') spaceUp(); });
 window.addEventListener('blur', spaceUp);
 
-function loop() { tick(); requestAnimationFrame(loop); }
+// the drawing loop runs on the frames of the window the viewer is in (Round FP2: Lumina can be minimized while the
+// viewer plays on another screen); floating or docking the viewer starts it again there (loopGen stops the old one).
+// A minimized window gets no frames, so the loop uses whichever of the two is showing, and a check every quarter
+// second starts it again if it stopped (one window was minimized or covered while the loop was waiting on it)
+let loopGen = 0, loopN = 0, loopSeen = 0;
+const loopWin = () => { const cw = POP.comp?.w; return cw && !cw.closed && (cw.document.visibilityState === 'visible' || document.visibilityState !== 'visible') ? cw : window; };
+function loop() {
+  const g = ++loopGen;
+  const run = () => { if (g !== loopGen) return; loopN++; tick(); loopWin().requestAnimationFrame(run); };
+  run();
+}
+setInterval(() => { if (POP.comp && loopN === loopSeen) loop(); loopSeen = loopN; }, 250);
 // one frame of the editor (the self-tests can call this on a timer, since a covered window gets few screen refreshes)
 function tick() {
   // while exporting, follow the wall clock exactly (the recorder does); a slow frame then drops frames instead of stretching the video
@@ -10552,7 +10564,8 @@ function applyPanels() {
   const right = preM || propsM || layM;
   $('.rcol').hidden = !right;
   $('.rcol').style.gridTemplateRows = [preM && 'auto', propsM && 'minmax(0, 1fr)', layM && 'minmax(170px, .85fr)'].filter(Boolean).join(' ') || '1fr';
-  $('main').style.gridTemplateColumns = ['60px', proj && '250px', '1fr', right && PANELS.propsW + 'px'].filter(Boolean).join(' ');
+  $('main').style.gridTemplateColumns = (here('comp') ? ['60px', proj && '250px', '1fr', right && PANELS.propsW + 'px']
+    : ['60px', proj && (right ? 'minmax(250px, 1fr)' : '1fr'), right && `minmax(${PANELS.propsW}px, 2fr)`, !proj && !right && '1fr']).filter(Boolean).join(' ');
   document.body.classList.toggle('tl-float', !here('timeline'));
   Object.values(POP).forEach(floatSync);
   $('#wspaces').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.ws === wsName));
@@ -10578,11 +10591,11 @@ const openToolbarMenu = id => setTimeout(() => $(id).click(), 0);
 const togglePanel = k => { if (POP[k]) dockPanel(k); PANELS[k] = !PANELS[k]; wsName = null; applyPanels(); };
 
 // ---------- Floating panels (Round FP) ----------
-// Any panel but the Composition viewer can leave the Lumina window for a window of its own: drag its header out of the
+// Any panel, the Composition viewer too (Round FP2), can leave the Lumina window for a window of its own: drag its header out of the
 // window, press the button at the end of its header, or use the Window menu. The panel itself moves (the same live
 // panel, not a copy), so it keeps working as it does here; drag its header back over Lumina, press the button again or
 // close its window to put it back. Lumina remembers which panels float and where, and opens them again next time.
-const FLOAT = { project: ['#pProject', 'Project'], preview: ['#pPreview', 'Preview'], props: ['#pProps', 'Properties'], layers: ['#pLayers', 'Layers'], timeline: ['#pTimeline', 'Timeline'] };
+const FLOAT = { project: ['#pProject', 'Project'], comp: ['#pComp', 'Composition'], preview: ['#pPreview', 'Preview'], props: ['#pProps', 'Properties'], layers: ['#pLayers', 'Layers'], timeline: ['#pTimeline', 'Timeline'] };
 let floatSaved = {}, appLeaving = false;
 try { floatSaved = JSON.parse(localStorage.getItem('lumina.floating')) || {}; } catch (e) { }
 const floatKeep = () => { try { localStorage.setItem('lumina.floating', JSON.stringify(floatSaved)); } catch (e) { } };
@@ -10621,6 +10634,7 @@ function floatPanel(key, at) {
   w.addEventListener('pagehide', () => dockPanel(key));
   w.addEventListener('resize', () => { floatBounds(key); floatKeep(); });
   floatWire(w);
+  if (key === 'comp') { w.addEventListener('resize', fitPreview); w.document.addEventListener('visibilitychange', () => { fitPreview(); loop(); }); loop(); }
   floatButtons(); applyPanels(); refresh();
   return w;
 }
@@ -10630,6 +10644,7 @@ function dockPanel(key) {
   delete POP[key];
   p.home.replaceWith(p.sec);
   try { if (!p.w.closed) p.w.close(); } catch (e) { }
+  if (key === 'comp') loop();
   if (appLeaving) return;
   floatButtons(); applyPanels(); refresh();
 }
@@ -10658,7 +10673,8 @@ function floatButtons() {
 const inWin = (W, sx, sy) => sx >= W.screenX && sx < W.screenX + W.outerWidth && sy >= W.screenY && sy < W.screenY + W.outerHeight;
 function floatDrop(key, sx, sy) {
   const p = POP[key];
-  if (p) { if (inWin(window, sx, sy) && !inWin(p.w, sx, sy)) dockPanel(key); return; }
+  // (a hidden or minimized panel window can't be under the pointer, and Windows may report Lumina's place for it then)
+  if (p) { if (inWin(window, sx, sy) && !(p.w.document.visibilityState === 'visible' && inWin(p.w, sx, sy))) dockPanel(key); return; }
   if (inWin(window, sx, sy)) return;
   const r = $(FLOAT[key][0]).getBoundingClientRect();
   floatPanel(key, { x: sx - 60, y: sy - 16, w: Math.max(r.width, 360), h: Math.max(r.height, 200) });
@@ -10668,13 +10684,18 @@ for (const [key, [sel]] of Object.entries(FLOAT)) {
   const b = document.createElement('button'); b.className = 'ph-float'; ph.appendChild(b);
   b.onclick = e => { e.stopPropagation(); POP[key] ? dockPanel(key) : floatPanel(key); };
   let st = null, eat = 0;
+  // pressing on a header never starts a text selection, and while it is dragged nothing gets selected anywhere
+  ph.addEventListener('mousedown', e => { if (e.button === 0 && !e.target.closest('button, input, select')) e.preventDefault(); });
+  const noSel = on => [document, ph.ownerDocument, ...Object.values(POP).map(p => p.w.document)].forEach(d => {
+    try { d.documentElement.classList.toggle('nosel', on); if (on) d.getSelection()?.removeAllRanges(); } catch (_) { }
+  });
   ph.addEventListener('pointerdown', e => {
     if (e.button !== 0 || e.target.closest('button, input, select')) return;
     st = { x: e.screenX, y: e.screenY, moved: false }; try { ph.setPointerCapture(e.pointerId); } catch (_) { }
   });
-  ph.addEventListener('pointermove', e => { if (st && !st.moved && Math.hypot(e.screenX - st.x, e.screenY - st.y) > 8) { st.moved = true; ph.classList.add('tearing'); } });
-  ph.addEventListener('pointerup', e => { const s = st; st = null; ph.classList.remove('tearing'); if (!s?.moved) return; eat = performance.now(); floatDrop(key, e.screenX, e.screenY); });
-  ph.addEventListener('pointercancel', () => { st = null; ph.classList.remove('tearing'); });
+  ph.addEventListener('pointermove', e => { if (st && !st.moved && Math.hypot(e.screenX - st.x, e.screenY - st.y) > 8) { st.moved = true; ph.classList.add('tearing'); noSel(true); } });
+  ph.addEventListener('pointerup', e => { const s = st; st = null; ph.classList.remove('tearing'); noSel(false); if (!s?.moved) return; eat = performance.now(); floatDrop(key, e.screenX, e.screenY); });
+  ph.addEventListener('pointercancel', () => { st = null; ph.classList.remove('tearing'); noSel(false); });
   // a drag that ends on a tab isn't a click on it
   ph.addEventListener('click', e => { if (performance.now() - eat < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
 }

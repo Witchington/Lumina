@@ -13,11 +13,8 @@ Adobe After Effects and Premier Pro have. I also want the screen effects everyth
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
 OK (never push). Round 20 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
-21):** every panel but the Composition viewer can float in a window of its own; **FP2, the Composition viewer in its own
-window, is still to do** (the user agreed to the easier panels first; the viewer's GPU drawing needs its own setup in
-the new window). The user tried FP on 2026-11-10: dragging works, but they want the video player (Composition viewer)
-to pull out too, so FP2 is on the list for later. Also fix then: dragging a panel's header selects text across the
-window (seen in the user's screenshot); stop text selection while the header is dragged. **Also for later (the user, 2026-11-10): M5, the MCP server in the
+21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
+(the video player) floats as well, and dragging a header no longer selects text. **Also for later (the user, 2026-11-10): M5, the MCP server in the
 Edit menu so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
 Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
 Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
@@ -382,6 +379,21 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **Round FP2 done (2026-11-10): the Composition viewer floats too.** The user tried FP: "I cant pull the video player out".
+  - The viewer (`#pComp`, `FLOAT.comp`, "Composition") floats like the other panels: its header, its button, or Window ›
+    Float in its own window. F11 in its window makes it full screen. With it away, Project and the right column share its
+    room in Lumina (applyPanels).
+  - It needed no new GPU setup: `#out` is a 2D canvas the GPU's off-screen pictures are drawn into, so it moves as it is.
+  - **The drawing loop** (`loop`) now runs on the frames of the window the viewer is in, so it keeps playing on another
+    screen with Lumina minimized; a minimized window gets no frames, so `loopWin()` picks the one that is showing, and a
+    check every 250 ms starts the loop again if it stalled. `fitPreview` uses the viewer window's screen scale.
+  - **main.js:** panel windows get `backgroundThrottling: false` (as the main window has); without it the floating
+    viewer stopped drawing when another window covered it.
+  - Dragging back over Lumina ignores a hidden panel window (Windows reports Lumina's own place for it then).
+  - **Header drags don't select text:** a press on a header isn't a selection start, and every window is unselectable
+    (`html.nosel`) while a header is dragged.
+  - Not yet: menus, toasts and the "pick a file" click on the empty viewer still open in the main window.
+  - Test: the timeline suite's floatPanels step (`comp`, `nosel`).
 - **Round FP done (2026-11-10): Floating panels.** The user: "would we be able to drag tabs outside of Lumina that way
   we can expand it and show the full list and scale the Tab". Project, Preview, Properties / Effect Controls, Layers and
   the Timeline can each leave the Lumina window for a window of their own, to move anywhere (a second monitor too), size
@@ -394,7 +406,7 @@ Sources:
     the keyboard works from it (keys are passed on to Lumina's own handlers).
   - Lumina keeps the windows' places and sizes (localStorage `lumina.floating`) and opens them again at start (not in
     self tests). Closing Lumina closes them (electron/main.js).
-  - Not yet (FP2): the Composition viewer; tips that point at a floating panel still show in the main window.
+  - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
 - **EffectCraft Round 20 done (2026-11-10): Generate II (light).** Generate gets **Advanced Lightning**, **Lens Flare**,
   **Beam**, **CC Light Burst 2.5**, **CC Light Sweep**, **CC Glue Gun**, **CC Threads** and **Fractal** (24 in the group now).

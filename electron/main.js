@@ -129,6 +129,8 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url, frameName }) => {
     if (url === 'about:blank' && /^lumina-panel-[a-z]+$/.test(frameName)) return { action: 'allow', overrideBrowserWindowOptions: {
       minWidth: 240, minHeight: 140, autoHideMenuBar: true, backgroundColor: '#111014', title: 'Lumina',
+      // keeps drawing behind other windows, like the main window (the Composition viewer's frames come from this one)
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false },
       icon: path.join(ROOT, process.platform === 'win32' ? 'lumina.ico' : 'lumina-icon.png') } };
     if (/^https?:/.test(url)) require('electron').shell.openExternal(url);
     return { action: 'deny' };

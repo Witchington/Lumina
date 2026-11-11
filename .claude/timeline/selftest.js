@@ -231,11 +231,40 @@
       const pjw = POP.project?.w; drag.win = pjw && [pjw.screenX, pjw.screenY, pjw.outerWidth, pjw.outerHeight]; drag.main = [screenX, screenY, outerWidth, outerHeight];
       floatDrop('project', screenX + outerWidth / 2, screenY + outerHeight / 2); await wait(300); drag.next = $('#pProject').nextElementSibling?.className;
       drag.backOverLumina = !POP.project && inMain('#pProject') && $('#pProject').nextElementSibling?.classList.contains('p-comp');
+      // Round FP2: the Composition viewer floats too: the frame is in its window, the drawing loop runs there, the right
+      // column takes its room here, keys still work; closing its window brings it back and the loop keeps going
+      const rcolW0 = $('.rcol').getBoundingClientRect().width;
+      const cw = floatPanel('comp'); await wait(500);
+      const n0 = loopN; await wait(400);
+      const cwr = $('#cwrap').getBoundingClientRect();
+      const comp = { opened: !!cw && !cw.closed, moved: !inMain('#pComp'), canvasThere: $('#out').ownerDocument === cw?.document && $('#ov').ownerDocument === cw?.document,
+        sized: cwr.width > 50 && cwr.width <= cw.innerWidth + 1, loops: loopN - n0, roomGiven: $('.rcol').getBoundingClientRect().width > rcolW0 + 50,
+        button: $('#pComp .ph-float')?.textContent, inMenu: !!FLOAT.comp, wrapW: Math.round(cwr.width), winW: cw.innerWidth, winAt: [cw.screenX, cw.screenY, cw.outerWidth, cw.outerHeight], vis: cw.document.visibilityState, mainVis: document.visibilityState };
+      const z0 = previewScale(); cw.document.body.dispatchEvent(new cw.KeyboardEvent('keydown', { key: '.', code: 'Period', bubbles: true, cancelable: true }));
+      comp.zoomKey = previewScale() > z0; setPreviewZoom('fit');
+      // clicking a layer in the floating viewer selects it
+      { S.sel = null; refresh(); const hitL = S.layers.find(L => { const m = RT[L.id]?.m; if (!m) return false; const q = m.transformPoint(new DOMPoint(0, 0)); return hitTest(q) === L; });
+        comp.hitLayer = hitL?.name || 'none'; const r = hitL && RT[hitL.id]; if (r?.m) { const o = $('#ov').getBoundingClientRect(), q = r.m.transformPoint(new DOMPoint(0, 0));
+        const at = { clientX: o.left + q.x / W() * o.width, clientY: o.top + q.y / H() * o.height, button: 0, bubbles: true, pointerId: 7 };
+        $('#ov').setPointerCapture = () => { }; $('#ov').dispatchEvent(new cw.PointerEvent('pointerdown', at)); $('#ov').dispatchEvent(new cw.PointerEvent('pointerup', at)); delete $('#ov').setPointerCapture; }
+        comp.clickSelects = !!S.sel; S.sel = V2.id; refresh(); }
+      cw.close(); await wait(600);
+      comp.backAfterClose = inMain('#pComp') && !POP.comp && $('#pComp').nextElementSibling?.classList.contains('rcol') && $('main').style.gridTemplateColumns.split(' ').includes('1fr');
+      const n1 = loopN; await wait(400); comp.loopsAfter = loopN - n1;
+      // dragging a header doesn't select text (the press is not a selection start; the page is unselectable while dragging)
+      const ph = $('#pProject .ph'), tab = ph.querySelector('.tab'), md = new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true });
+      tab.dispatchEvent(md);
+      const px = screenX + 120, py = screenY + 120, pe = (t, x) => new PointerEvent(t, { button: 0, screenX: x, screenY: py, bubbles: true, pointerId: 9 });
+      tab.dispatchEvent(pe('pointerdown', px)); tab.dispatchEvent(pe('pointermove', px + 40));
+      const nosel = { pressNoSelect: md.defaultPrevented, whileDragging: document.documentElement.classList.contains('nosel') && getComputedStyle(document.body).userSelect === 'none' };
+      tab.dispatchEvent(pe('pointerup', px + 40)); nosel.afterDrop = !document.documentElement.classList.contains('nosel') && !POP.project;
       dockAll();
       if (keepFloat == null) localStorage.removeItem('lumina.floating'); else localStorage.setItem('lumina.floating', keepFloat);
-      step('floatPanels', { props, timeline: tl, drag, works: props.opened && props.moved && props.css === 'flex' && props.inspectorThere && props.showsLayer && props.followsSelection
+      step('floatPanels', { props, timeline: tl, drag, comp, nosel, works: props.opened && props.moved && props.css === 'flex' && props.inspectorThere && props.showsLayer && props.followsSelection
         && props.saved && props.keyStep > 0 && props.rowsAfter === 'auto' && props.docked && tl.opened && tl.moved && tl.mainRows === 3 && tl.barsThere && tl.tlFloat
-        && tl.backAfterClose && tl.savedOff && drag.out && drag.stillOutWhenDroppedOutside && drag.backOverLumina });
+        && tl.backAfterClose && tl.savedOff && drag.out && drag.stillOutWhenDroppedOutside && drag.backOverLumina
+        && comp.opened && comp.moved && comp.canvasThere && comp.sized && comp.loops > 3 && comp.roomGiven && comp.zoomKey && comp.clickSelects
+        && comp.backAfterClose && comp.loopsAfter > 3 && nosel.pressNoSelect && nosel.whileDragging && nosel.afterDrop });
     }
 
     // for the screenshot: the two halves of PLAY on one track, B selected
