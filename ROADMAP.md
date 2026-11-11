@@ -7,7 +7,7 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 21 (Noise & Grain); Round 20 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 21 (Noise & Grain) (Round IX done 2026-11-11); Round 20 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
@@ -57,7 +57,13 @@ Its own estimate: ~45% of Photoshop, 2,300–4,100 h to full parity, so Lumina t
 format) and P3 (Image mode basics) are done**; P4 (Painting) is saved for later, to pick up when the user asks; Round PW (Workspaces) comes right after P4. P4 builds on Image mode: a paint layer is a new layer
 kind holding its own pixels, at the canvas size, listed in the Layers panel like the rest.
 
-**For later: Round IX, Image mode fixes (the user, 2026-11-10, with a screenshot of 0.10.0; not started).**
+**Round IX, Image mode fixes: DONE 2026-11-11.** `useWorkspace` now leaves Image mode for any workspace but Image (so the
+Default / Effects / Small Screen tabs and Window › Workspace all go back to video editing; nothing is lost, the layers stay).
+A **Video | Image** switch (`#modeSw`) sits first in the toolbar, left of Import media (the user's pick); `applyPanels`
+lights the current mode. The small Image workspace tab is gone from the top right (the Image workspace stays in Window ›
+Workspace); that also keeps the toolbar on one line at the 1600 px start size. Aero gives the lit half a white glass look.
+Hints now say "click Video (top left)". Test: photo suite step `roundIX` (each workspace tab, Window menu, rail Edit this
+frame / Back, New image, the switch), and step `modes` now uses the switch. The original notes:
 - **Bug: stuck in Image mode.** Clicking the **Image** workspace tab (top right, next to Default / Effects / Small Screen)
   goes into Image mode, and the user can't get back to video editing. P3 says Image › Back to video editing undoes it, but
   that isn't found or doesn't work from there. Fix: clicking **Default** (or any other workspace tab) while in Image mode

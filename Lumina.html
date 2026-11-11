@@ -127,6 +127,9 @@
 }
 :root[data-theme="aero"] .proj-row.hd { background: #e8f6fe; }
 :root[data-theme="aero"] .wspaces button.on { color: #ffffff; border-bottom-color: #ffffff; font-weight: 600; }
+:root[data-theme="aero"] .modesw { border-color: rgba(255,255,255,.55); background: rgba(0,40,90,.18); }
+:root[data-theme="aero"] .modesw button { box-shadow: none; background: transparent; color: rgba(255,255,255,.75); }
+:root[data-theme="aero"] .modesw button.on { background: linear-gradient(#ffffff, #d6f0ff); color: #0b4f8f; box-shadow: 0 1px 3px rgba(0,40,90,.35); }
 :root[data-theme="aero"] body {
   background:
     /* the sun and its flare */
@@ -507,10 +510,15 @@ footer { background: var(--glass); backdrop-filter: blur(16px) saturate(140%); b
 #aiLight[hidden] { display: none; }
 header.toolbar { padding: 6px 10px; gap: 6px; }
 header.toolbar > button, header.toolbar > select, header.toolbar .menu > button { padding: 4px 11px; font-size: 13px; }
-.wspaces { display: flex; gap: 2px; margin-right: 10px; }
+.wspaces { display: flex; gap: 2px; margin-right: 6px; }
 .wspaces button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; color: var(--muted); padding: 4px 10px; font-size: 13px; }
 .wspaces button:hover { background: none; color: var(--fg); }
 .wspaces button.on { color: var(--accent-hi); border-bottom-color: var(--accent); }
+/* Round IX: the Video | Image switch at the left of the toolbar */
+.modesw { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--fg) 6%, transparent); margin-right: 2px; flex: none; }
+.modesw button { border: 0; border-radius: 6px; margin: 0; padding: 4px 8px; font-weight: 600; background: transparent; color: var(--muted); box-shadow: none; }
+.modesw button:hover { color: var(--fg); }
+.modesw button.on, .modesw button.on:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); color: var(--fg); box-shadow: inset 0 0 0 1px var(--accent); }
 main { grid-template-columns: 250px 1fr 340px; gap: 5px; padding: 5px 5px 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; box-shadow: inset 0 1px 0 var(--hl); }
 .ph { flex: none; height: 31px; display: flex; align-items: center; gap: 16px; padding: 0 12px; background: var(--panel-head); border-bottom: 1px solid var(--line); font-size: 13px; }
@@ -682,6 +690,7 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
   <span id="aiLight" hidden onclick="aiBox()">AI</span>
 </nav>
 <header class="toolbar">
+  <div class="modesw" id="modeSw" role="group" aria-label="Editing mode"><button data-mode="video" title="Video editing: the timeline, clips and playback">Video</button><button data-mode="image" title="Image mode: one picture made of layers, like a photo editor">Image</button></div>
   <button id="btnImport" class="primary">Import media</button>
   <select id="place" class="vid-only" title="Where new clips go">
     <option value="line">Line up</option>
@@ -10689,6 +10698,7 @@ function applyPanels() {
   document.body.classList.toggle('tl-float', !here('timeline'));
   Object.values(POP).forEach(floatSync);
   $('#wspaces').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.ws === wsName));
+  $('#modeSw').querySelectorAll('button').forEach(b => { const on = (b.dataset.mode === 'image') === still; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
   fitPreview();
 }
 // tabsToo: also switch the panels' tabs (on a click, not at start-up, so the app always opens on Project + Properties)
@@ -10698,12 +10708,15 @@ function useWorkspace(name, tabsToo = true) {
   try { localStorage.setItem('lumina.workspace', name); } catch (e) { }
   applyPanels();
   if (name === 'image' && !isStill()) setStill(true);   // the Image workspace is Image mode
+  else if (name !== 'image' && isStill()) setStill(false);   // and any other workspace goes back to video editing (Round IX)
   if (!tabsToo) return;
   if (w.ltab) setLeftTab(w.ltab);
   if (w.rtab) setRightTab(w.rtab);
 }
-$('#wspaces').innerHTML = Object.entries(WORKSPACES).map(([k, w]) => `<button data-ws="${k}">${w.label}</button>`).join('');
+// Image mode has its own Video | Image switch at the left of the toolbar (Round IX), so it gets no tab here
+$('#wspaces').innerHTML = Object.entries(WORKSPACES).filter(([k]) => k !== 'image').map(([k, w]) => `<button data-ws="${k}">${w.label}</button>`).join('');
 $('#wspaces').onclick = e => { const k = e.target.closest('[data-ws]')?.dataset.ws; if (k) useWorkspace(k); };
+$('#modeSw').onclick = e => { const m = e.target.closest('[data-mode]')?.dataset.mode; if (m) setStill(m === 'image'); };
 
 // menus: [label, shortcut, run, enabled?] or '-' for a divider; each item runs an existing action
 const zoomTimeline = f => { const z = $('#zoom'); z.value = clamp(+z.value * f, +z.min, +z.max); z.dispatchEvent(new Event('input')); };
@@ -11491,7 +11504,7 @@ function setStill(on) {
   if (!!on === isStill()) { syncStill(); return; }
   if (on) { S.global.still = true; pause(); } else { delete S.global.still; if (CROP) endCrop(false); }
   commit(); refresh();
-  notice(on ? 'Image mode: one picture made of layers. Image › Back to video editing brings the timeline back.' : 'Back to video editing.');
+  notice(on ? 'Image mode: one picture made of layers. Click Video (top left) to bring the timeline back.' : 'Back to video editing.');
 }
 function syncStill() {
   const on = isStill();
@@ -11613,7 +11626,7 @@ function newImageBox() {
   let last = {}; try { last = JSON.parse(localStorage.getItem('lumina.newImage') || '{}'); } catch { }
   const w0 = last.w || 1920, h0 = last.h || 1080, bg0 = last.bg || 'white', col0 = last.col || '#ffffff';
   const pre = IMG_SIZES.findIndex(([w, h]) => w === w0 && h === h0);
-  imgDialog('New image', `<p class="ftext">A blank picture to build up from layers: pictures, text, shapes and stickers. Image mode has no timeline; Image › Back to video editing brings it back.</p>
+  imgDialog('New image', `<p class="ftext">A blank picture to build up from layers: pictures, text, shapes and stickers. Image mode has no timeline; click Video (top left) to bring it back.</p>
     <div class="frow"><label for="ni-size">Size</label><select id="ni-size">${IMG_SIZES.map(([w, h, n], i) => `<option value="${i}"${i === pre ? ' selected' : ''}>${n} · ${w}×${h}</option>`).join('')}<option value=""${pre < 0 ? ' selected' : ''}>Custom</option></select></div>
     <div class="frow"><label for="ni-w">Width (px)</label><input id="ni-w" type="number" min="1" max="${MAX_SIDE}" step="1" value="${w0}"></div>
     <div class="frow"><label for="ni-h">Height (px)</label><input id="ni-h" type="number" min="1" max="${MAX_SIDE}" step="1" value="${h0}"></div>
@@ -11883,7 +11896,7 @@ function imagePanel() {
     + railNote('No timeline: one picture made of layers. Pictures, text, shapes, stickers, effects and colour grades all work on it. Save it as PNG, JPEG, PSD and more.')
     + `<div class="rrow"><button class="primary" data-radd="img:new">New image…</button></div>`
     + (window.lumina ? `<div class="rrow"><button data-radd="img:open">Open a picture…</button></div>` : '')
-    + `<div class="rrow"><button data-radd="img:here" title="Keeps this project's layers. Image › Back to video editing brings the timeline back.">Edit this frame as a picture</button></div>`;
+    + `<div class="rrow"><button data-radd="img:here" title="Keeps this project's layers. Click Video (top left) to bring the timeline back.">Edit this frame as a picture</button></div>`;
   return railHead('Canvas', `${W()}×${H()} pixels`)
     + `<div class="rgrid r2">${card('size', 'Image size…', '⤢', 'Resize the whole picture (Ctrl+Alt+I)')}${card('canvas', 'Canvas size…', '⬚', 'Add or cut away space around the picture (Ctrl+Alt+C)')}${card('crop', 'Crop', '✂', 'Drag a box on the picture, then press Enter (C)')}</div>`
     + railHead('Rotate and flip') + `<div class="rgrid r2">${card('rotl', 'Rotate left', '↺', 'Turn the picture 90° counter-clockwise')}${card('rotr', 'Rotate right', '↻', 'Turn the picture 90° clockwise')}${card('rot180', 'Rotate 180°', '⟲', 'Turn the picture upside down')}${card('flipx', 'Flip across', '⇆', 'Mirror the picture left to right')}${card('flipy', 'Flip up-down', '⇅', 'Mirror the picture top to bottom')}</div>`

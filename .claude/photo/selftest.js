@@ -188,9 +188,32 @@
       setStill(false); await wait(50);
       const backStill = isStill(), backLayers = shown($('#pLayers'));
       const back = { mode: backStill ? 'image' : 'video', timeline: shown($('#pTimeline')), layersPanel: backLayers ? 'shown' : 'hidden', button: $('#btnExport').textContent, workspace: wsName, res: $('#res').value };
-      $('#wspaces [data-ws=image]').click(); await wait(50);
+      $('#modeSw [data-mode=image]').click(); await wait(50);
       const again = { still: isStill(), workspace: wsName, layers: shown($('#pLayers')) };
       step('modes', { back, again, works: !backStill && back.timeline && !backLayers && back.button === 'Export video' && back.workspace === 'default' && again.still && again.layers });
+    }
+
+    // ---- Round IX: never stuck in Image mode. Every way in has a way out, and the switch shows the mode.
+    {
+      const sw = () => [...$('#modeSw').querySelectorAll('.on')].map(b => b.dataset.mode).join();
+      const st = () => ({ still: isStill(), ws: wsName, sw: sw(), timeline: shown($('#pTimeline')) });
+      const out = st => !st.still && st.ws !== 'image' && st.sw === 'video' && st.timeline;
+      const r = {};
+      r.switchIn = st();   // Image mode from the step above
+      for (const k of ['default', 'effects', 'small']) {
+        setStill(true); await wait(30);
+        $(`#wspaces [data-ws=${k}]`).click(); await wait(30); r[k] = st();
+      }
+      setStill(true); await wait(30);
+      const win = [...document.querySelectorAll('#menubar .menu')].find(x => x.dataset.menu === 'Window');
+      win.firstElementChild.click(); [...win.querySelectorAll('.pop [data-mi]')].find(b => /Workspace: Default/.test(b.textContent)).click(); await wait(30); r.windowMenu = st();
+      IMG_ACTS.here(); await wait(30); r.railIn = st(); IMG_ACTS.back(); await wait(30); r.railBack = st();
+      blankImage(640, 480, 'white'); await wait(50); r.newImage = st();
+      $('#modeSw [data-mode=video]').click(); await wait(30); r.switchOut = st(); r.size = `${W()}x${H()}`;
+      const noImageTab = !$('#wspaces [data-ws=image]');
+      step('roundIX', { ...r, noImageTab, works: r.switchIn.still && r.switchIn.sw === 'image' && out(r.default) && out(r.effects) && out(r.small) && out(r.windowMenu)
+        && r.railIn.still && r.railIn.sw === 'image' && out(r.railBack) && r.newImage.still && r.newImage.sw === 'image' && out(r.switchOut) && r.size === '640x480' && noImageTab });
+      setStill(true); await wait(30);   // back into Image mode for the steps below
     }
 
     // ---- Open a picture as an image: the canvas takes the picture's size, nothing to undo, nothing unsaved
