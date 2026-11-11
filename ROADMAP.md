@@ -57,6 +57,17 @@ Its own estimate: ~45% of Photoshop, 2,300–4,100 h to full parity, so Lumina t
 format) and P3 (Image mode basics) are done**; P4 (Painting) is saved for later, to pick up when the user asks; Round PW (Workspaces) comes right after P4. P4 builds on Image mode: a paint layer is a new layer
 kind holding its own pixels, at the canvas size, listed in the Layers panel like the rest.
 
+**For later: Round IX, Image mode fixes (the user, 2026-11-10, with a screenshot of 0.10.0; not started).**
+- **Bug: stuck in Image mode.** Clicking the **Image** workspace tab (top right, next to Default / Effects / Small Screen)
+  goes into Image mode, and the user can't get back to video editing. P3 says Image › Back to video editing undoes it, but
+  that isn't found or doesn't work from there. Fix: clicking **Default** (or any other workspace tab) while in Image mode
+  goes back to video editing, the same as Image › Back to video editing (ask first only if leaving would lose something).
+  Also check the Image rail tab and the welcome screen's New image… for the same problem, and add a test step for each.
+- **Move the Image editor somewhere easy to see.** Today it is a small text tab in the far top-right corner ("very
+  hidden"). Give it a clear place, for example a **Video | Image** switch at the left of the toolbar next to Import media,
+  that shows which mode you are in and switches both ways in one click. Ask the user which spot before building it. Fits
+  with Round PW (Workspaces), which redoes this corner later.
+
 The CapCut phase (C1–C14), the beginner layout (B1–B4) and C15 Friends test release are all done (2026-11-07).
 The Converter tab (links → MP3/MP4 via yt-dlp) was added the same day, then the timeline scrolling fix, layer mute
 and impact copy/paste; see "Where things stand".
