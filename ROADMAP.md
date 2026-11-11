@@ -68,6 +68,26 @@ kind holding its own pixels, at the canvas size, listed in the Layers panel like
   that shows which mode you are in and switches both ways in one click. Ask the user which spot before building it. Fits
   with Round PW (Workspaces), which redoes this corner later.
 
+**For later: Round TI, an icon for each theme (the user, 2026-11-10; not started).** The "L" logo is purple in every
+theme today, and Greyscale only turns it grey with a filter. Each theme should get its own matching icon.
+- **The icons:** one per theme, the same "L" shape in that theme's colors.
+  - Default: the purple one Lumina has now.
+  - Greyscale: a proper grey and silver version, not the filtered one.
+  - Cozy Home Theatre: the old warm orange one (the files kept in `old-warm-theme\`).
+  - Frutiger Aero: a glossy aqua-blue glass "L" with a white shine on the top half, maybe a little green and a bubble.
+  - Each one is made as `lumina-icon-<theme>.png` (several sizes) plus a `.ico` for Windows.
+- **Where it changes with the theme:**
+  - The logo in the top left of the menu bar, the welcome window, and the floating panel windows.
+  - The taskbar button while Lumina is open (`win.setIcon(...)` in electron/main.js, sent from `setTheme`), and the
+    window's title-bar icon. The tab icon (`<link rel="icon">`) too.
+  - Lumina starts with the saved theme's icon, so the taskbar doesn't show purple first and then switch.
+- **What can't change:** the Desktop shortcut, a shortcut pinned to the taskbar, the Start menu and the installer use the
+  icon built into Lumina.exe, so they stay the default purple. Windows only shows the theme icon on the taskbar button
+  while Lumina is running. (Possible later: a "Use this icon for my shortcuts too" button that points the Desktop and
+  Start menu shortcuts at the chosen `.ico`. That changes files outside Lumina, so it would ask first.)
+- **Tests:** for each theme, the top-left logo and the welcome logo use that theme's file; main gets the right icon path
+  and every icon file exists in the build; switching back to Default puts the purple icon back; the floating panels match.
+
 **For later: Rounds SM1 + SM2, Style Match (the user, 2026-11-10; not started, after Round IX).** The idea: someone connected
 through AI control (Claude or another AI) sends a link or imports a video with an editing style they like (cuts and effects
 synced to the beat of the song), uploads their own clips and pictures, and the AI makes a new edit in the same style with
