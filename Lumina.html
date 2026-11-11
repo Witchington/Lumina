@@ -432,6 +432,16 @@ footer .tl-bar { gap: 16px; padding: 0 12px; }
 #pProject[hidden], #pPreview[hidden], #pProps[hidden] { display: none !important; }
 .ph .tab[data-ltab], .ph .tab[data-rtab] { cursor: pointer; }
 .ph .tab[data-ltab]:hover, .ph .tab[data-rtab]:hover { color: var(--fg); }
+/* floating panels: the button at the end of a panel's header, and the header as a handle to drag the panel out (or back) */
+.ph { cursor: grab; }
+.ph.tearing { cursor: grabbing; }
+.ph .ph-float { margin-left: auto; padding: 0 7px; height: 22px; min-width: 0; font-size: 14px; line-height: 1; background: none; border-color: transparent; box-shadow: none; color: var(--muted); }
+.ph .ph-float:hover { color: var(--fg); border-color: var(--line-strong); background: var(--gloss); }
+body.tl-float { grid-template-rows: auto auto 1fr; }
+body.floatwin { display: flex !important; padding: 5px; box-sizing: border-box; overflow: hidden; }
+body.floatwin > .panel { flex: 1; margin: 0 !important; min-width: 0; min-height: 0; }
+body.floatwin.pnone > .panel { display: none !important; }
+body.floatwin.pnone::before { content: "This panel isn't used in this mode. Close this window to put it back in Lumina."; margin: auto; padding: 20px; text-align: center; color: var(--muted); }
 #ecTab { max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
 .pbody { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 /* B1 tool rail */
@@ -690,7 +700,11 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
 </svg>
 
 <script>
-const $ = s => document.querySelector(s);
+// floating panels (Round FP) live in windows of their own; $ and $$ look there too
+const POP = {};
+const $ = s => document.querySelector(s) || popFind(s);
+function popFind(s) { for (const k in POP) { const r = POP[k].w.document.querySelector(s); if (r) return r; } return null; }
+const $$ = s => [...document.querySelectorAll(s), ...Object.values(POP).flatMap(p => [...p.w.document.querySelectorAll(s)])];
 const canvas = $('#out'), mainCtx = canvas.getContext('2d');
 let ctx = mainCtx;   // swapped to an offscreen context while a layer is composited on its own
 const ov = $('#ov'), octx = ov.getContext('2d');
@@ -7967,7 +7981,7 @@ function selectAll() { if (S.layers.length) setMulti(S.layers.map(x => x.id), se
 // the clips a box (client coordinates) touches
 function boxHits(x0, y0, x1, y1) {
   const [l, r, t, b] = [Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1)];
-  return [...document.querySelectorAll('.trow[data-id] .bar')].filter(el => { const q = el.getBoundingClientRect(); return q.right >= l && q.left <= r && q.bottom >= t && q.top <= b; })
+  return $$('.trow[data-id] .bar').filter(el => { const q = el.getBoundingClientRect(); return q.right >= l && q.left <= r && q.bottom >= t && q.top <= b; })
     .map(el => +(el.closest('[data-lid]') || el.closest('.trow')).dataset[el.closest('[data-lid]') ? 'lid' : 'id']);
 }
 function drawSelBox() {
@@ -8551,7 +8565,7 @@ function drawCurveBox(cv) {
   x.fillStyle = ink; x.strokeStyle = '#000';
   for (const [u, v] of curvePts(d, str)) { x.beginPath(); x.rect(X(u) - 4 * dpr, Y(v) - 4 * dpr, 8 * dpr, 8 * dpr); x.fill(); x.stroke(); }
 }
-function drawCurveBoxes() { document.querySelectorAll('#inspector canvas.curvebox').forEach(drawCurveBox); }
+function drawCurveBoxes() { $('#inspector').querySelectorAll('canvas.curvebox').forEach(drawCurveBox); }
 function fxcAt(e, cv) { const r = cv.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp(1 - (e.clientY - r.top) / r.height, 0, 1), r]; }
 function fxcNear(pts, u, v, r) { let bi = -1, bd = 10; pts.forEach(([x, y], i) => { const dd = Math.hypot((x - u) * r.width, (y - v) * r.height); if (dd < bd) { bd = dd; bi = i; } }); return bi; }
 function curveApply(g, pts) {
@@ -8931,11 +8945,11 @@ let lastSync = 0;
 function syncInspector(force) {
   const L = selLayer(); if (!L) return;
   if (!force && performance.now() - lastSync < 80) return; lastSync = performance.now();
-  for (const row of document.querySelectorAll('.prow')) {
+  for (const row of $$('.prow')) {
     const p = row.dataset.p, d = PROPS[p], mul = d.mul ? d.mul() : 1, v = val(L, p);
     const [r, n] = row.querySelectorAll('input');
-    if (document.activeElement !== r) r.value = v * mul;
-    if (document.activeElement !== n) n.value = (v * mul).toFixed(d.dec);
+    if (r.ownerDocument.activeElement !== r) r.value = v * mul;
+    if (n.ownerDocument.activeElement !== n) n.value = (v * mul).toFixed(d.dec);
     const kf = row.querySelector('.kf');
     kf.classList.toggle('has', !!(L.keys[p] || []).length); kf.classList.toggle('on', !!keyAt(L, p));
   }
@@ -10531,12 +10545,16 @@ $('#fxpList').onclick = e => {
 let wsName = 'default';
 function applyPanels() {
   // in Image mode there's nothing to play, and the Layers panel goes under Properties
-  const still = isStill(), pre = PANELS.preview && !still, lay = still && !PANELS.layersOff;
-  $('#pProject').hidden = !PANELS.project; $('#pPreview').hidden = !pre; $('#pProps').hidden = !PANELS.props; $('#pLayers').hidden = !lay;
-  const right = pre || PANELS.props || lay;
+  // a floating panel (Round FP) stays shown in its own window and takes no room here
+  const still = isStill(), pre = PANELS.preview && !still, lay = still && !PANELS.layersOff, here = k => !POP[k];
+  $('#pProject').hidden = !PANELS.project && here('project'); $('#pPreview').hidden = !pre; $('#pProps').hidden = !PANELS.props && here('props'); $('#pLayers').hidden = !lay;
+  const proj = PANELS.project && here('project'), preM = pre && here('preview'), propsM = PANELS.props && here('props'), layM = lay && here('layers');
+  const right = preM || propsM || layM;
   $('.rcol').hidden = !right;
-  $('.rcol').style.gridTemplateRows = [pre && 'auto', PANELS.props && 'minmax(0, 1fr)', lay && 'minmax(170px, .85fr)'].filter(Boolean).join(' ') || '1fr';
-  $('main').style.gridTemplateColumns = ['60px', PANELS.project && '250px', '1fr', right && PANELS.propsW + 'px'].filter(Boolean).join(' ');
+  $('.rcol').style.gridTemplateRows = [preM && 'auto', propsM && 'minmax(0, 1fr)', layM && 'minmax(170px, .85fr)'].filter(Boolean).join(' ') || '1fr';
+  $('main').style.gridTemplateColumns = ['60px', proj && '250px', '1fr', right && PANELS.propsW + 'px'].filter(Boolean).join(' ');
+  document.body.classList.toggle('tl-float', !here('timeline'));
+  Object.values(POP).forEach(floatSync);
   $('#wspaces').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.ws === wsName));
   fitPreview();
 }
@@ -10557,7 +10575,112 @@ $('#wspaces').onclick = e => { const k = e.target.closest('[data-ws]')?.dataset.
 // menus: [label, shortcut, run, enabled?] or '-' for a divider; each item runs an existing action
 const zoomTimeline = f => { const z = $('#zoom'); z.value = clamp(+z.value * f, +z.min, +z.max); z.dispatchEvent(new Event('input')); };
 const openToolbarMenu = id => setTimeout(() => $(id).click(), 0);
-const togglePanel = k => { PANELS[k] = !PANELS[k]; wsName = null; applyPanels(); };
+const togglePanel = k => { if (POP[k]) dockPanel(k); PANELS[k] = !PANELS[k]; wsName = null; applyPanels(); };
+
+// ---------- Floating panels (Round FP) ----------
+// Any panel but the Composition viewer can leave the Lumina window for a window of its own: drag its header out of the
+// window, press the button at the end of its header, or use the Window menu. The panel itself moves (the same live
+// panel, not a copy), so it keeps working as it does here; drag its header back over Lumina, press the button again or
+// close its window to put it back. Lumina remembers which panels float and where, and opens them again next time.
+const FLOAT = { project: ['#pProject', 'Project'], preview: ['#pPreview', 'Preview'], props: ['#pProps', 'Properties'], layers: ['#pLayers', 'Layers'], timeline: ['#pTimeline', 'Timeline'] };
+let floatSaved = {}, appLeaving = false;
+try { floatSaved = JSON.parse(localStorage.getItem('lumina.floating')) || {}; } catch (e) { }
+const floatKeep = () => { try { localStorage.setItem('lumina.floating', JSON.stringify(floatSaved)); } catch (e) { } };
+function floatBounds(key) {
+  const w = POP[key]?.w; if (!w || w.closed) return;
+  try { floatSaved[key] = { x: w.screenX, y: w.screenY, w: w.innerWidth, h: w.innerHeight, on: true }; } catch (e) { }
+}
+// the window looks like Lumina: the same theme and mode; a panel the mode doesn't use leaves a note
+function floatSync(p) {
+  const d = p.w.document, s = document.documentElement;
+  for (const a of ['data-theme', 'style']) { const v = s.getAttribute(a); if (v == null) d.documentElement.removeAttribute(a); else d.documentElement.setAttribute(a, v); }
+  const shown = !p.sec.hidden && !(p.key === 'timeline' && isStill());
+  d.body.className = document.body.className + ' floatwin' + (shown ? '' : ' pnone');
+}
+const floatMO = new MutationObserver(() => Object.values(POP).forEach(floatSync));
+floatMO.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
+floatMO.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// at: { x, y, w, h } in screen pixels (where the header was dropped); otherwise where it was last time, or just off its place here
+function floatPanel(key, at) {
+  const F = FLOAT[key]; if (!F) return null;
+  if (POP[key]) { POP[key].w.focus(); return POP[key].w; }
+  const sec = $(F[0]), r = sec.getBoundingClientRect(), sv = floatSaved[key];
+  const tall = key === 'props' || key === 'project' || key === 'layers';
+  const ww = Math.round(at?.w || sv?.w || Math.max(r.width, 360)), hh = Math.round(at?.h || sv?.h || Math.max(r.height, tall ? Math.min(screen.availHeight - 120, 820) : 200));
+  const x = Math.round(at ? at.x : sv ? sv.x : screenX + r.left + 40), y = Math.round(at ? at.y : sv ? sv.y : screenY + (outerHeight - innerHeight) + r.top + 40);
+  const w = window.open('', 'lumina-panel-' + key, `popup,width=${ww},height=${hh},left=${x},top=${y}`);
+  if (!w) { toast('Lumina could not open a window for that panel.'); return null; }
+  const d = w.document;
+  d.title = `${F[1]} · Lumina`;
+  const base = d.createElement('base'); base.href = location.href; d.head.appendChild(base);
+  for (const n of document.head.querySelectorAll('style, link[rel=stylesheet]')) d.head.appendChild(d.importNode(n, true));
+  const home = document.createComment('panel ' + key); sec.before(home);
+  d.body.appendChild(sec);
+  const p = POP[key] = { key, w, sec, home };
+  floatSaved[key] = { ...(sv || {}), on: true }; floatKeep();
+  w.addEventListener('pagehide', () => dockPanel(key));
+  w.addEventListener('resize', () => { floatBounds(key); floatKeep(); });
+  floatWire(w);
+  floatButtons(); applyPanels(); refresh();
+  return w;
+}
+function dockPanel(key) {
+  const p = POP[key]; if (!p) return;
+  floatBounds(key); if (floatSaved[key]) floatSaved[key].on = appLeaving; floatKeep();
+  delete POP[key];
+  p.home.replaceWith(p.sec);
+  try { if (!p.w.closed) p.w.close(); } catch (e) { }
+  if (appLeaving) return;
+  floatButtons(); applyPanels(); refresh();
+}
+const dockAll = () => Object.keys(POP).forEach(dockPanel);
+// in a panel's window the keyboard works as it does in Lumina (Space plays, Ctrl+Z undoes...), and a click there closes
+// Lumina's open menus; F11 makes that window full screen
+function floatWire(w) {
+  const d = w.document;
+  w.addEventListener('keydown', e => {
+    if (e.key === 'F11') { e.preventDefault(); if (d.fullscreenElement) d.exitFullscreen(); else d.documentElement.requestFullscreen?.().catch(() => { }); return; }
+    if (e.target.matches?.('input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]):not([type=button]), textarea, select, [contenteditable=true]')) return;
+    const c = new KeyboardEvent('keydown', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, repeat: e.repeat, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(c); if (c.defaultPrevented) e.preventDefault();
+  });
+  w.addEventListener('keyup', e => document.body.dispatchEvent(new KeyboardEvent('keyup', { key: e.key, code: e.code, bubbles: true })));
+  w.addEventListener('pointerdown', () => document.body.dispatchEvent(new MouseEvent('click', { bubbles: true })), true);
+}
+function floatButtons() {
+  for (const [key, [sel, name]] of Object.entries(FLOAT)) {
+    const b = $(sel)?.querySelector('.ph-float'); if (!b) continue;
+    b.textContent = POP[key] ? '⇲' : '⧉';
+    b.title = POP[key] ? `Put the ${name} panel back in Lumina` : `Float the ${name} panel in its own window (or drag its header out of Lumina)`;
+  }
+}
+// each panel's header: a button, and a handle to drag the panel out of Lumina (or, from its window, back over Lumina)
+const inWin = (W, sx, sy) => sx >= W.screenX && sx < W.screenX + W.outerWidth && sy >= W.screenY && sy < W.screenY + W.outerHeight;
+function floatDrop(key, sx, sy) {
+  const p = POP[key];
+  if (p) { if (inWin(window, sx, sy) && !inWin(p.w, sx, sy)) dockPanel(key); return; }
+  if (inWin(window, sx, sy)) return;
+  const r = $(FLOAT[key][0]).getBoundingClientRect();
+  floatPanel(key, { x: sx - 60, y: sy - 16, w: Math.max(r.width, 360), h: Math.max(r.height, 200) });
+}
+for (const [key, [sel]] of Object.entries(FLOAT)) {
+  const ph = $(sel).querySelector('.ph'); if (!ph) continue;
+  const b = document.createElement('button'); b.className = 'ph-float'; ph.appendChild(b);
+  b.onclick = e => { e.stopPropagation(); POP[key] ? dockPanel(key) : floatPanel(key); };
+  let st = null, eat = 0;
+  ph.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('button, input, select')) return;
+    st = { x: e.screenX, y: e.screenY, moved: false }; try { ph.setPointerCapture(e.pointerId); } catch (_) { }
+  });
+  ph.addEventListener('pointermove', e => { if (st && !st.moved && Math.hypot(e.screenX - st.x, e.screenY - st.y) > 8) { st.moved = true; ph.classList.add('tearing'); } });
+  ph.addEventListener('pointerup', e => { const s = st; st = null; ph.classList.remove('tearing'); if (!s?.moved) return; eat = performance.now(); floatDrop(key, e.screenX, e.screenY); });
+  ph.addEventListener('pointercancel', () => { st = null; ph.classList.remove('tearing'); });
+  // a drag that ends on a tab isn't a click on it
+  ph.addEventListener('click', e => { if (performance.now() - eat < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
+}
+floatButtons();
+// leaving Lumina: the panels come home first (so nothing is lost), and float again next time
+window.addEventListener('pagehide', () => { appLeaving = true; dockAll(); });
 const SHORTCUTS = 'Space play/pause · ←/→ one frame (Shift: one second) · Home/End start/end · S split · I impact · T text · K keyframe position · B bookmark · [ / ] previous/next bookmark · Shift while dragging: no snapping · Ctrl+click add/remove a clip · Shift+click select a range of rows · drag on empty timeline: selection box · Ctrl+A select all clips · Esc keep just the main clip · Del delete (a picked keyframe, or the clips) · Ctrl+C / Ctrl+X / Ctrl+V copy, cut, paste (clips, a keyframe, or a picture, file or text from anywhere) · Ctrl+D duplicate · Ctrl+Z undo · Ctrl+Shift+Z redo · Ctrl+scroll or . / , zoom the preview · / fit the preview · Space+drag or middle-drag pan the preview';
 const ABOUT = 'Drop your media, layer your clips, and make it yours.';
 // Help › About Lumina: left blank for now (the item is greyed out until this has text)
@@ -11107,7 +11230,10 @@ const MENUS = {
     ['Project', '', () => togglePanel('project'), true, PANELS.project], ['Preview', '', () => togglePanel('preview'), true, PANELS.preview],
     ['Properties', '', () => togglePanel('props'), true, PANELS.props], ['Layers', '', () => { PANELS.layersOff = !PANELS.layersOff; applyPanels(); layersPanel(); }, isStill(), isStill() && !PANELS.layersOff], '-',
     ['Effect Controls', '', () => setRightTab('fx'), true, PANELS.props && RTAB === 'fx'],
-    ['Effects & Presets', '', () => { if (!PANELS.project) { PANELS.project = true; applyPanels(); } setLeftTab('fxp'); }, true, PANELS.project && LTAB === 'fxp']],
+    ['Effects & Presets', '', () => { if (!PANELS.project) { PANELS.project = true; applyPanels(); } setLeftTab('fxp'); }, true, PANELS.project && LTAB === 'fxp'], '-',
+    { head: 'Float in its own window' },
+    ...Object.entries(FLOAT).map(([k, [, name]]) => [name, '', () => POP[k] ? dockPanel(k) : floatPanel(k), !(k === 'timeline' && isStill()), !!POP[k]]),
+    ['Put all panels back', '', dockAll, Object.keys(POP).length > 0]],
   Help: () => [{ head: 'Lumina ~ An editor for everything.', text: ABOUT }, '-', ['Welcome screen…', '', () => showWelcome()],
     ['Show tips again', '', () => { tipsReset(); notice('Tips are back on. They show up as you use Lumina.'); tipNext(); }], '-',
     ['Keyboard shortcuts', '', () => toast(SHORTCUTS)], ['Connect Claude…', '', () => claudeBox(), !!window.lumina?.claudeSetup], ['Send feedback…', '', feedbackBox], '-', ['About Lumina', '', aboutBox]],
@@ -11448,7 +11574,7 @@ function layersPanel() {
       <input type="color" class="lyr-th" data-lyr="bgcol" value="${g.bg === 'color' ? g.bgColor || '#202020' : g.bg === 'none' ? g.bgColor || '#ffffff' : '#000000'}" title="Background colour"><span class="lyr-nm">Background</span><span class="lyr-op">${BG_NAME[g.bg || 'black'] ?? ''}</span></div>`;
   const ok = L && L.kind !== 'audio', v = ok ? Math.round(val(L, 'opacity') * 100) : 100;
   $('#lyrOp').disabled = $('#lyrOpN').disabled = !ok || !!L.locked;
-  $('#lyrOp').value = v; if (document.activeElement !== $('#lyrOpN')) $('#lyrOpN').value = v;
+  $('#lyrOp').value = v; if ($('#lyrOpN').ownerDocument.activeElement !== $('#lyrOpN')) $('#lyrOpN').value = v;
   scheduleThumbs();
 }
 function placeLayer(L, before) {   // move L to just above the layer that is now at index `before` (index 0 is drawn on top)
@@ -11599,6 +11725,7 @@ buildMenubar();
 try { const w = localStorage.getItem('lumina.workspace'); if (WORKSPACES[w] && w !== 'image') wsName = w; } catch (e) { }   // Image mode belongs to a project, not to start-up
 useWorkspace(wsName, false);
 fitPreview(); commit(); updateTitle(); refresh(); loop();
+if (window.lumina && !APP_INFO.selftest) for (const [k, v] of Object.entries(floatSaved)) if (v?.on && FLOAT[k]) floatPanel(k);
 startIntro();
 </script>
 </body>

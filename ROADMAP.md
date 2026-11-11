@@ -12,7 +12,10 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
 OK (never push). Round 20 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
-is done too (see its section).
+is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
+21):** every panel but the Composition viewer can float in a window of its own; **FP2, the Composition viewer in its own
+window, is still to do** (the user agreed to the easier panels first; the viewer's GPU drawing needs its own setup in
+the new window).
 Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
 Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
 Noise. Check first which of them Lumina already has (some came in early Rounds), then find the rest's host code in
@@ -359,6 +362,20 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **Round FP done (2026-11-10): Floating panels.** The user: "would we be able to drag tabs outside of Lumina that way
+  we can expand it and show the full list and scale the Tab". Project, Preview, Properties / Effect Controls, Layers and
+  the Timeline can each leave the Lumina window for a window of their own, to move anywhere (a second monitor too), size
+  freely or make full screen (F11 in that window).
+  - Three ways: drag the panel's header out of Lumina, press the button at the end of its header (it turns into a
+    "put back" button), or Window › Float in its own window. Back: drag the header over Lumina, press the button, close
+    the window, or Window › Put all panels back.
+  - The panel itself moves (Electron's window.open of a blank same-origin page, the panel's node moved in), so it is the
+    same live panel; `$` / `$$` also look in the floating windows (`POP`). Lumina's styles, theme and mode follow it there;
+    the keyboard works from it (keys are passed on to Lumina's own handlers).
+  - Lumina keeps the windows' places and sizes (localStorage `lumina.floating`) and opens them again at start (not in
+    self tests). Closing Lumina closes them (electron/main.js).
+  - Not yet (FP2): the Composition viewer; tips that point at a floating panel still show in the main window.
+  - Test: the timeline suite's floatPanels step.
 - **EffectCraft Round 20 done (2026-11-10): Generate II (light).** Generate gets **Advanced Lightning**, **Lens Flare**,
   **Beam**, **CC Light Burst 2.5**, **CC Light Sweep**, **CC Glue Gun**, **CC Threads** and **Fractal** (24 in the group now).
   - Kernels: fx_gen2's fg2_segs (linear core), fg2_pair, fg2_adv_bolt, fg2_beam, fg2_flare, fg2_glue, fg2_threads, and

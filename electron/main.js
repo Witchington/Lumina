@@ -124,8 +124,22 @@ function createWindow() {
     }
   });
   win.loadURL('lumina://app/Lumina.html');
-  // links to websites open in the normal browser, never inside Lumina
-  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) require('electron').shell.openExternal(url); return { action: 'deny' }; });
+  // links to websites open in the normal browser, never inside Lumina. The one window Lumina opens itself is a floating
+  // panel (Window › Float panel, or a panel's tab dragged out): a blank page of the same app the editor moves the panel into
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (url === 'about:blank' && /^lumina-panel-[a-z]+$/.test(frameName)) return { action: 'allow', overrideBrowserWindowOptions: {
+      minWidth: 240, minHeight: 140, autoHideMenuBar: true, backgroundColor: '#111014', title: 'Lumina',
+      icon: path.join(ROOT, process.platform === 'win32' ? 'lumina.ico' : 'lumina-icon.png') } };
+    if (/^https?:/.test(url)) require('electron').shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('did-create-window', cw => {
+    cw.setMenu(null);
+    cw.webContents.on('will-navigate', e => e.preventDefault());
+    cw.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) require('electron').shell.openExternal(url); return { action: 'deny' }; });
+  });
+  // the floating panels belong to this window: they go when it goes
+  win.on('closed', () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.destroy(); });
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.webContents.on('did-finish-load', () => {
     if (pendingOpen) { win.webContents.send('open-path', pendingOpen); pendingOpen = null; }
@@ -782,7 +796,7 @@ ipcMain.on('dirty', (e, v) => { dirty = !!v; });
 ipcMain.on('close-now', () => { closing = true; win && win.close(); });
 ipcMain.on('title', (e, t) => { if (win) win.setTitle(t); });
 // the version and Windows version, for the About box and Help › Send feedback
-ipcMain.on('app:info', e => { e.returnValue = { version: app.getVersion(), os: `${process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'} ${require('os').release()}` }; });
+ipcMain.on('app:info', e => { e.returnValue = { selftest: SELFTEST, version: app.getVersion(), os: `${process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'} ${require('os').release()}` }; });
 
 // ---------- Claude control (MCP step M1) ----------
 // Off until the user ticks Edit › Allow Claude to control Lumina. Then a small door listens on 127.0.0.1 only (a random

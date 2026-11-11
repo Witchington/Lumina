@@ -196,6 +196,48 @@
       S.impacts = S.impacts.filter(x => x !== show);
     }
 
+    // ---- Round FP: floating panels. A panel moves into a window of its own, keeps working there, and comes back
+    {
+      const keepFloat = localStorage.getItem('lumina.floating'), wait = ms => new Promise(r => setTimeout(r, ms));
+      const inMain = sel => $(sel)?.ownerDocument === document;
+      S.sel = V2.id; refresh();
+      const colsBefore = $('main').style.gridTemplateColumns, rowsBefore = $('.rcol').style.gridTemplateRows;
+      const pw = floatPanel('props'); await wait(400);
+      const props = { opened: !!pw && !pw.closed, moved: !inMain('#pProps'), title: pw?.document.title, css: pw ? getComputedStyle(pw.document.body).display : null,
+        inspectorThere: $('#inspector')?.ownerDocument === pw?.document, showsLayer: $$('#inspector .prow').length > 0,
+        saved: JSON.parse(localStorage.getItem('lumina.floating') || '{}').props?.on === true, button: $('#pProps .ph-float')?.textContent };
+      // selecting another layer in Lumina updates the floating panel
+      S.sel = null; refresh(); props.followsSelection = /nothing selected/i.test($('#inspector')?.textContent || '') && !$$('#inspector .prow').length; S.sel = V2.id; refresh();
+      // the keyboard works in the panel's window: → steps one frame
+      pause(); seek(1); pw.document.body.dispatchEvent(new pw.KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true, cancelable: true }));
+      props.keyStep = +(S.time - 1).toFixed(4);
+      props.rowsBefore = rowsBefore; props.rowsAfter = $('.rcol').style.gridTemplateRows;
+      // the timeline floats too: the main window gives its row to the preview, the bars are drawn in the new window
+      const tw = floatPanel('timeline'); await wait(400); buildTimeline();
+      const bars = $$('.trow[data-id] .bar');
+      const tl = { opened: !!tw && !tw.closed, moved: !inMain('#pTimeline'), mainRows: getComputedStyle(document.body).gridTemplateRows.split(' ').length,
+        bars: bars.length, barsThere: bars.length > 0 && bars.every(b => b.ownerDocument === tw.document), tlFloat: document.body.classList.contains('tl-float') };
+      // closing a panel's window puts the panel back
+      tw.close(); await wait(500);
+      tl.backAfterClose = inMain('#pTimeline') && !POP.timeline && !document.body.classList.contains('tl-float');
+      tl.savedOff = JSON.parse(localStorage.getItem('lumina.floating') || '{}').timeline?.on === false;
+      // the button docks it, back in its place under Preview
+      $('#pProps .ph-float').click(); await wait(300);
+      props.docked = inMain('#pProps') && $('#pProps').parentElement === $('.rcol') && !POP.props && $('main').style.gridTemplateColumns === colsBefore;
+      // dragging a header out of Lumina floats it where it was dropped; dragging it back over Lumina docks it
+      floatDrop('project', screenX + outerWidth + 200, screenY + 100); await wait(400);
+      const drag = { out: !!POP.project && !inMain('#pProject') };
+      floatDrop('project', screenX + outerWidth + 250, screenY + 120); drag.stillOutWhenDroppedOutside = !!POP.project;
+      const pjw = POP.project?.w; drag.win = pjw && [pjw.screenX, pjw.screenY, pjw.outerWidth, pjw.outerHeight]; drag.main = [screenX, screenY, outerWidth, outerHeight];
+      floatDrop('project', screenX + outerWidth / 2, screenY + outerHeight / 2); await wait(300); drag.next = $('#pProject').nextElementSibling?.className;
+      drag.backOverLumina = !POP.project && inMain('#pProject') && $('#pProject').nextElementSibling?.classList.contains('p-comp');
+      dockAll();
+      if (keepFloat == null) localStorage.removeItem('lumina.floating'); else localStorage.setItem('lumina.floating', keepFloat);
+      step('floatPanels', { props, timeline: tl, drag, works: props.opened && props.moved && props.css === 'flex' && props.inspectorThere && props.showsLayer && props.followsSelection
+        && props.saved && props.keyStep > 0 && props.rowsAfter === 'auto' && props.docked && tl.opened && tl.moved && tl.mainRows === 3 && tl.barsThere && tl.tlFloat
+        && tl.backAfterClose && tl.savedOff && drag.out && drag.stillOutWhenDroppedOutside && drag.backOverLumina });
+    }
+
     // for the screenshot: the two halves of PLAY on one track, B selected
     setMulti([V1.id, V2.id], V1.id); putOnOneTrack(selLayers()); clearMulti(); S.sel = V2.id; refresh(); await settle(2);
     R.errors = __errs;
