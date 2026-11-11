@@ -12,7 +12,7 @@ Go to **Releases** (right side of this page) and pick the newest version:
 
 The converter only downloads media you have the rights to use.
 
-## Licence
+## License
 
 Lumina is free to download and use, but its own code is all rights reserved (see `LICENSE`).
 The parts made by other people (EffectCraft, FFmpeg, three.js, MediaPipe, Transformers.js, the fonts)
