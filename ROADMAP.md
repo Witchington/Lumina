@@ -68,6 +68,29 @@ kind holding its own pixels, at the canvas size, listed in the Layers panel like
   that shows which mode you are in and switches both ways in one click. Ask the user which spot before building it. Fits
   with Round PW (Workspaces), which redoes this corner later.
 
+**For later: Rounds SM1 + SM2, Style Match (the user, 2026-11-10; not started, after Round IX).** The idea: someone connected
+through AI control (Claude or another AI) sends a link or imports a video with an editing style they like (cuts and effects
+synced to the beat of the song), uploads their own clips and pictures, and the AI makes a new edit in the same style with
+their footage. Not a copy of the video itself: the style (timing, beat sync, zooms, shakes, flashes, transitions, look).
+Today the AI can already import, cut, trim, place, add effects and keyframes, and see single frames (snapshot), but it can't
+hear the song or see where cuts and moves happen in time. These Rounds give it that.
+- **SM1 Study the reference.** The reference comes in as an imported video, or a link through the existing Converter tab
+  (yt-dlp). Say in the window that the user should only use videos they're allowed to, and that posting the song is up to
+  them. A new MCP tool (e.g. `analyze_reference`, also in a menu for people without an AI) writes a breakdown:
+  - every cut (scene change) with its time, and each shot's length;
+  - the song's beats and tempo (reuse Lumina's beat detection), and which cuts land on a beat;
+  - per shot: zoom in/out, shake, speed ramps (from how the picture moves), white/black flashes, text on screen;
+  - a few frames per shot so the AI can see the look (color, blur, glow).
+  - The breakdown is saved as an **edit recipe** (JSON), so a style can be kept and used again as a template.
+- **SM2 Apply the recipe to the user's clips.** A new MCP tool (e.g. `apply_recipe`) with the user's clips and pictures:
+  - picks the best part of each clip (movement, faces, sharp, not blurry);
+  - puts clips on the cut points, adds the matching zooms, shakes, flashes and transitions as keyframes and effects;
+  - snaps to the beats; keeps the reference's song, or re-fits the timing to another song the user picks;
+  - the AI then compares snapshots of the result with the reference frames and fixes color and timing.
+- **What to expect:** cuts, beat timing, zooms, shakes, flashes and color can match closely; masks, 3D and tracking only
+  roughly. Tests: a made-up reference with known cut and beat times (found within a frame), and a recipe applied to test
+  clips (cuts on the right frames, effects present, nothing changed when undone).
+
 The CapCut phase (C1–C14), the beginner layout (B1–B4) and C15 Friends test release are all done (2026-11-07).
 The Converter tab (links → MP3/MP4 via yt-dlp) was added the same day, then the timeline scrolling fix, layer mute
 and impact copy/paste; see "Where things stand".
