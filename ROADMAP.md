@@ -15,7 +15,9 @@ OK (never push). Round 20 is committed (2026-11-10; all twelve suites pass). The
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel but the Composition viewer can float in a window of its own; **FP2, the Composition viewer in its own
 window, is still to do** (the user agreed to the easier panels first; the viewer's GPU drawing needs its own setup in
-the new window).
+the new window). The user tried FP on 2026-11-10: dragging works, but they want the video player (Composition viewer)
+to pull out too, so FP2 is on the list for later. Also fix then: dragging a panel's header selects text across the
+window (seen in the user's screenshot); stop text selection while the header is dragged.
 Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
 Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
 Noise. Check first which of them Lumina already has (some came in early Rounds), then find the rest's host code in
