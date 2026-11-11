@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('lumina', {
   claudeTest: () => ipcRenderer.invoke('claude:test'),
   claudeTestFile: opts => ipcRenderer.invoke('claude:testfile', opts),   // self tests only
   claudeCli: flag => ipcRenderer.invoke('claude:cli', flag),              // self tests only
+  aiCopy: kind => ipcRenderer.invoke('ai:copy', kind),                    // M5: the HTTP address with the key, straight to the clipboard
+  aiApp: opts => ipcRenderer.invoke('ai:app', opts),                      // M5: add / remove Lumina in Cursor, Gemini CLI, Devin
+  aiHttp: opts => ipcRenderer.invoke('ai:http', opts),                    // self tests only
   setDirty: v => ipcRenderer.send('dirty', v),
   setTitle: t => ipcRenderer.send('title', t),
   closeNow: () => ipcRenderer.send('close-now'),

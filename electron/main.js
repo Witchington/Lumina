@@ -800,8 +800,8 @@ ipcMain.on('title', (e, t) => { if (win) win.setTitle(t); });
 // the version and Windows version, for the About box and Help › Send feedback
 ipcMain.on('app:info', e => { e.returnValue = { selftest: SELFTEST, version: app.getVersion(), os: `${process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'} ${require('os').release()}` }; });
 
-// ---------- Claude control (MCP step M1) ----------
-// Off until the user ticks Edit › Allow Claude to control Lumina. Then a small door listens on 127.0.0.1 only (a random
+// ---------- AI control (MCP steps M1-M5) ----------
+// Off until the user ticks Edit › Allow AI control (before M5: "Allow Claude to control Lumina"). Then a small door listens on 127.0.0.1 only (a random
 // free port, never the network) and every call needs the key kept in claude-control.json in Lumina's settings folder.
 // electron/mcp.js, which Claude Code starts, reads that file and passes Claude's tool calls through the door to
 // LuminaAPI in the window. Self tests use their own control file in the test folder.
@@ -810,31 +810,56 @@ const CTRL_FILE = () => SELFTEST && process.env.LUMINA_TESTDIR ? path.join(proce
 const readCtrl = () => { try { return JSON.parse(fs.readFileSync(CTRL_FILE(), 'utf8')); } catch { return {}; } };
 const writeCtrl = c => { fs.mkdirSync(path.dirname(CTRL_FILE()), { recursive: true }); fs.writeFileSync(CTRL_FILE(), JSON.stringify(c, null, 2)); };
 let door = null;
+// M5: the app that called last (its clientInfo from initialize), shown next to the AI light and in AI connections
+let aiClient = '';
+const MCP = require('./mcp.js');
+const runTool = async (tool, args, who) => {
+  if (!win || win.isDestroyed()) return { ok: false, error: 'Lumina has no window open.' };
+  const js = `window.LuminaAPI ? LuminaAPI.call(${JSON.stringify(String(tool || ''))}, ${JSON.stringify(args ?? {})}, ${JSON.stringify(who || '')}) : { ok: false, error: 'Lumina is still starting.' }`;
+  return win.webContents.executeJavaScript(js, true);
+};
+// two ways in, both on 127.0.0.1 with the key: POST /call (electron/mcp.js, the stdio server AI apps start) and
+// POST /mcp (MCP's Streamable HTTP, for apps that want an address: one JSON answer per request, no event stream)
 function doorRequest(req, res, key) {
-  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  const send = (code, obj, head = {}) => { res.writeHead(code, { 'Content-Type': 'application/json', ...head }); res.end(JSON.stringify(obj)); };
   // web pages always send an Origin and can't fake the Host, so this keeps browsers out; the key keeps other programs out
-  if (req.headers.origin || !/^127\.0\.0\.1:\d+$/.test(req.headers.host || '')) return send(403, { ok: false, error: 'Refused: only Claude Code on this computer may connect.' });
-  const given = Buffer.from(String(req.headers['x-lumina-key'] || '')), want = Buffer.from(key);
+  if (req.headers.origin || !/^(127\.0\.0\.1|localhost):\d+$/.test(req.headers.host || '')) return send(403, { ok: false, error: 'Refused: only AI apps on this computer may connect.' });
+  const auth = String(req.headers.authorization || ''), bearer = /^Bearer\s+/i.test(auth) ? auth.replace(/^Bearer\s+/i, '').trim() : '';
+  const given = Buffer.from(String(req.headers['x-lumina-key'] || bearer)), want = Buffer.from(key);
   if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return send(401, { ok: false, error: 'Wrong or missing key.' });
-  if (req.method !== 'POST' || req.url !== '/call') return send(404, { ok: false, error: 'Unknown request.' });
+  const url = String(req.url || '').split('?')[0];
+  if (url === '/mcp' && req.method !== 'POST') return send(405, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Lumina only answers POST here (no event stream).' } }, { Allow: 'POST' });
+  if (req.method !== 'POST' || (url !== '/call' && url !== '/mcp')) return send(404, { ok: false, error: 'Unknown request.' });
   let body = ''; req.setEncoding('utf8');
   req.on('data', d => { body += d; if (body.length > 1e6) req.destroy(); });
   req.on('end', async () => {
-    let msg; try { msg = JSON.parse(body); } catch { return send(400, { ok: false, error: 'The request was not JSON.' }); }
-    if (!win || win.isDestroyed()) return send(503, { ok: false, error: 'Lumina has no window open.' });
-    try {
-      const js = `window.LuminaAPI ? LuminaAPI.call(${JSON.stringify(String(msg.tool || ''))}, ${JSON.stringify(msg.args ?? {})}) : { ok: false, error: 'Lumina is still starting.' }`;
-      send(200, await win.webContents.executeJavaScript(js, true));
-    } catch (e) { send(500, { ok: false, error: String(e && e.message || e) }); }
+    let msg; try { msg = JSON.parse(body); } catch { return url === '/mcp' ? send(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) : send(400, { ok: false, error: 'The request was not JSON.' }); }
+    if (url === '/call') {
+      let who = ''; try { who = decodeURIComponent(String(req.headers['x-lumina-client'] || '')).slice(0, 60); } catch { }
+      if (who) aiClient = who;
+      if (!win || win.isDestroyed()) return send(503, { ok: false, error: 'Lumina has no window open.' });
+      try { send(200, await runTool(msg.tool, msg.args, who)); } catch (e) { send(500, { ok: false, error: String(e && e.message || e) }); }
+      return;
+    }
+    if (Array.isArray(msg) || !msg || typeof msg !== 'object') return send(400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Send one JSON-RPC message per request.' } });
+    if (msg.id === undefined || msg.id === null) { res.writeHead(202); return res.end(); }   // a notification or a reply: nothing to answer
+    if (msg.method === 'initialize') aiClient = String(msg.params?.clientInfo?.title || msg.params?.clientInfo?.name || 'an AI app').slice(0, 60);
+    try { send(200, { jsonrpc: '2.0', id: msg.id, result: await MCP.handle(msg, (t, a) => runTool(t, a, aiClient)) }); }
+    catch (e) { send(200, { jsonrpc: '2.0', id: msg.id, error: { code: e.code || -32603, message: String(e && e.message || e) } }); }
   });
 }
+// the door keeps its port from one start to the next (httpPort), so an app given the address can find Lumina again;
+// only if that port is taken does it get a new one (AI connections then shows the new address)
 function openDoor() {
   return new Promise((ok, bad) => {
     if (door) return ok();
     const c = readCtrl(); c.key ||= crypto.randomBytes(32).toString('hex');
-    const srv = http.createServer((req, res) => doorRequest(req, res, c.key));
-    srv.on('error', bad);
-    srv.listen(0, '127.0.0.1', () => { door = srv; Object.assign(c, { enabled: true, port: srv.address().port, pid: process.pid }); writeCtrl(c); ok(); });
+    const start = port => {
+      const srv = http.createServer((req, res) => doorRequest(req, res, c.key));
+      srv.once('error', e => port ? start(0) : bad(e));
+      srv.listen(port, '127.0.0.1', () => { door = srv; srv.on('error', () => { }); const p = srv.address().port; c.portMoved = !!c.httpPort && c.httpPort !== p; Object.assign(c, { enabled: true, port: p, httpPort: p, pid: process.pid }); writeCtrl(c); ok(); });
+    };
+    start(c.httpPort || 0);
   });
 }
 // off = the switch is unticked; quitting keeps the switch on but the door is gone until Lumina opens again
@@ -939,9 +964,76 @@ function codeState() {
   try { const s = readJson(f).mcpServers?.lumina; return { has: !!s, current: !!s && samePath(s.command, process.execPath) && samePath(s.args?.[0], MCP_SCRIPT()) }; }
   catch { return { has: false, current: false }; }
 }
-const setupInfo = () => ({ enabled: !!door, exe: process.execPath, script: MCP_SCRIPT(), codeLine: codeLine(), codeRemove: 'claude mcp remove lumina --scope user', code: codeState(), desktop: desktopState() });
+// ---------- Edit › AI connections (MCP)… (M5): other AI apps ----------
+// Apps whose settings file Lumina may change, only on the person's button press, with a copy kept first (…before-lumina),
+// and only when the app's folder is there (it is installed). Paths are each app's own docs (checked 2026-11-10).
+const H = () => require('os').homedir();
+const testApp = (...p) => SELFTEST && process.env.LUMINA_TESTDIR ? path.join(process.env.LUMINA_TESTDIR, 'apps', ...p) : null;
+const AI_APPS = {
+  cursor: { name: 'Cursor', file: () => testApp('cursor', 'mcp.json') || path.join(H(), '.cursor', 'mcp.json'), entry: () => ({ type: 'stdio', ...luminaEntry() }) },
+  gemini: { name: 'Gemini CLI', file: () => testApp('gemini', 'settings.json') || path.join(H(), '.gemini', 'settings.json'), entry: luminaEntry },
+  devin: { name: 'Devin', file: () => testApp('devin', 'mcp_config.json') || (process.platform === 'win32' ? path.join(process.env.APPDATA || path.join(H(), 'AppData', 'Roaming'), 'devin', 'mcp_config.json')
+    : path.join(process.env.XDG_CONFIG_HOME || path.join(H(), '.config'), 'devin', 'mcp_config.json')), entry: luminaEntry }
+};
+function jsonState(file) {
+  if (!fs.existsSync(file)) return { file, installed: fs.existsSync(path.dirname(file)), exists: false, has: false };
+  try { const s = readJson(file).mcpServers?.lumina; return { file, installed: true, exists: true, has: !!s, ours: isOurs(s), current: isCurrent(s) }; }
+  catch { return { file, installed: true, exists: true, unreadable: true, has: false }; }
+}
+// the same careful change as the Claude app's: only mcpServers.lumina, after a copy of the file as it was
+function jsonEdit(file, add, onlyOurs, entry, what) {
+  let j = {};
+  if (fs.existsSync(file)) {
+    try { j = readJson(file); } catch { throw new Error(`${what}'s settings file couldn't be read, so it was left alone:\n${file}`); }
+    if (!add && !(j.mcpServers?.lumina && (!onlyOurs || isOurs(j.mcpServers.lumina)))) return false;
+    fs.copyFileSync(file, file + '.before-lumina');
+  } else if (!add || !fs.existsSync(path.dirname(file))) return false;
+  j.mcpServers ||= {};
+  if (add) j.mcpServers.lumina = entry(); else delete j.mcpServers.lumina;
+  fs.writeFileSync(file, JSON.stringify(j, null, 2));
+  return true;
+}
+const appsState = () => Object.fromEntries(Object.entries(AI_APPS).map(([id, a]) => [id, jsonState(a.file())]));
+// the text each app wants (shown with Copy); the HTTP way needs the key, which only ever goes to the clipboard
+const toml = s => `'${s}'`;
+const snippets = () => {
+  const e = luminaEntry(), port = readCtrl().httpPort;
+  return {
+    mcpServers: JSON.stringify({ mcpServers: { lumina: e } }, null, 2),
+    vscode: JSON.stringify({ servers: { lumina: { type: 'stdio', ...e } } }, null, 2),
+    codex: `[mcp_servers.lumina]\ncommand = ${toml(e.command)}\nargs = [${toml(e.args[0])}]\nenv = { ELECTRON_RUN_AS_NODE = "1" }`,
+    gemini: `gemini mcp add --scope user -e ELECTRON_RUN_AS_NODE=1 lumina ${q(e.command)} ${q(e.args[0])}`,
+    url: port ? `http://127.0.0.1:${port}/mcp` : ''
+  };
+};
+const httpText = kind => {
+  const c = readCtrl(), url = `http://127.0.0.1:${c.httpPort}/mcp`;
+  if (!door || !c.key || !c.httpPort) throw new Error('Turn on AI control first.');
+  if (kind === 'key') return c.key;
+  if (kind === 'claude') return `claude mcp add --transport http --scope user lumina ${url} --header "Authorization: Bearer ${c.key}"`;
+  return JSON.stringify({ mcpServers: { lumina: { url, headers: { Authorization: `Bearer ${c.key}` } } } }, null, 2);
+};
+ipcMain.handle('ai:copy', (e, kind) => { require('electron').clipboard.writeText(httpText(kind)); return true; });
+ipcMain.handle('ai:app', (e, { id, add }) => {
+  const a = AI_APPS[id]; if (!a) throw new Error('Unknown app.');
+  jsonEdit(a.file(), !!add, false, a.entry, a.name);
+  return setupInfo();
+});
+const setupInfo = () => { const c = readCtrl(); return { enabled: !!door, port: door ? door.address().port : null, portMoved: !!c.portMoved, client: aiClient, tools: MCP.TOOLS.length,
+  exe: process.execPath, script: MCP_SCRIPT(), codeLine: codeLine(), codeRemove: 'claude mcp remove lumina --scope user', code: codeState(), desktop: desktopState(), apps: appsState(), snippets: snippets() }; };
 ipcMain.handle('claude:setup', () => setupInfo());
 ipcMain.handle('claude:desktop', (e, add) => { const files = desktopEdit(!!add, false); return { files, ...setupInfo() }; });
+// self tests: the HTTP way, asked the way an AI app asks (the key, an Origin, the method or the Host can be changed to see them refused)
+if (SELFTEST) ipcMain.handle('ai:http', (e, { body, key, origin, method = 'POST', host }) => new Promise(done => {
+  const c = readCtrl(), data = typeof body === 'string' ? body : JSON.stringify(body ?? {});
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(key !== null ? { Authorization: `Bearer ${key ?? c.key}` } : {}), ...(origin ? { Origin: origin } : {}), ...(host ? { Host: host } : {}) };
+  const r = http.request({ host: '127.0.0.1', port: c.httpPort, path: '/mcp', method, headers, timeout: 30000 }, res => {
+    let t = ''; res.setEncoding('utf8'); res.on('data', d => t += d);
+    res.on('end', () => { let j = null; try { j = JSON.parse(t); } catch { } done({ status: res.statusCode, type: res.headers['content-type'] || '', json: j, text: t.slice(0, 500) }); });
+  });
+  r.on('error', err => done({ status: 0, error: err.code || String(err.message) })); r.on('timeout', () => r.destroy(new Error('timeout')));
+  r.end(method === 'POST' ? data : undefined);
+}));
 // "Test the connection": the same start-up Claude does, then one look at the project
 ipcMain.handle('claude:test', async () => {
   const r = await runMcp([{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lumina-test', version: '1' } } },
@@ -972,11 +1064,15 @@ async function runSelftest() {
 }
 
 // ---------- app lifecycle ----------
-// for the uninstaller: --claude-check exits 1 when the Claude app's settings start this Lumina, --claude-forget takes it out
+// for the uninstaller: --claude-check exits 1 when the Claude app's (or Cursor's, Gemini CLI's, Devin's) settings start this
+// Lumina, --claude-forget takes it out of them
 const CLAUDE_CLI = process.argv.find(a => a === '--claude-check' || a === '--claude-forget');
 if (CLAUDE_CLI) {
   let code = 0;
-  try { if (CLAUDE_CLI === '--claude-check') code = desktopState().some(d => d.ours) ? 1 : 0; else desktopEdit(false, true); } catch { code = 2; }
+  try {
+    if (CLAUDE_CLI === '--claude-check') code = desktopState().some(d => d.ours) || Object.values(appsState()).some(d => d.ours) ? 1 : 0;
+    else { desktopEdit(false, true); for (const a of Object.values(AI_APPS)) try { jsonEdit(a.file(), false, true, a.entry, a.name); } catch { } }
+  } catch { code = 2; }
   app.exit(code);
 }
 else if (!SELFTEST && !app.requestSingleInstanceLock()) app.quit();

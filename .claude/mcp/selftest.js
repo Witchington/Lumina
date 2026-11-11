@@ -14,8 +14,8 @@
 
     // ---- 1. the switch and the light: off at the start, in the Edit menu
     const g0 = await lumina.claudeGet();
-    const editItem = MENUS.Edit().find(it => Array.isArray(it) && it[0] === 'Allow Claude to control Lumina');
-    step('switch', { offAtStart: g0.enabled === false, inEditMenu: !!editItem, unticked: editItem?.[4] === false, lightHidden: $('#claudeLight').hidden === true });
+    const editItem = MENUS.Edit().find(it => Array.isArray(it) && it[0] === 'Allow AI control');
+    step('switch', { offAtStart: g0.enabled === false, inEditMenu: !!editItem, unticked: editItem?.[4] === false, lightHidden: $('#aiLight').hidden === true });
 
     // ---- 2. the tools straight in the page
     const P = await LuminaAPI.call('get_project', {});
@@ -50,12 +50,12 @@
     step('mcpOff', {
       initialize: o(1)?.result?.serverInfo?.name === 'lumina' && o(1).result.protocolVersion === '2025-06-18' && !!o(1).result.capabilities?.tools,
       tools: (o(2)?.result?.tools || []).map(t => t.name).join(), allReadOnly: (o(2)?.result?.tools || []).filter(t => ['get_project', 'get_layer', 'list_effects', 'snapshot'].includes(t.name)).every(t => t.annotations?.readOnlyHint === true),
-      saysTurnOn: o(3)?.result?.isError === true && /Allow Claude to control Lumina/.test(o(3).result.content[0].text),
+      saysTurnOn: o(3)?.result?.isError === true && /Allow AI control/.test(o(3).result.content[0].text),
       onlyJsonOut: off.replies.every(r => !r.notJson), stderr: off.stderr
     });
 
     // ---- 4. switch on: the light shows; the full conversation through the door
-    await setClaude(true); await new Promise(r => setTimeout(r, 200));
+    await setAI(true); await new Promise(r => setTimeout(r, 200));
     const g1 = await lumina.claudeGet();
     const on = await lumina.claudeProbe({ want: 9, lines: [init, { jsonrpc: '2.0', method: 'notifications/initialized' },
       { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_project', arguments: {} } },
@@ -67,8 +67,8 @@
     const a = id => on.replies.find(r => r.id === id), txt = id => { try { return JSON.parse(a(id).result.content.find(c => c.type === 'text').text); } catch { return null; } };
     const sImg = a(5)?.result?.content?.find(c => c.type === 'image');
     step('mcpOn', {
-      switchOn: g1.enabled === true && g1.port > 0, menuTicked: MENUS.Edit().find(it => Array.isArray(it) && it[0] === 'Allow Claude to control Lumina')?.[4] === true,
-      lightShown: $('#claudeLight').hidden === false,
+      switchOn: g1.enabled === true && g1.port > 0, menuTicked: MENUS.Edit().find(it => Array.isArray(it) && it[0] === 'Allow AI control')?.[4] === true,
+      lightShown: $('#aiLight').hidden === false,
       project: txt(2)?.layers?.length === 2 && txt(2).name === projectName(), layer: txt(3)?.effects?.[0]?.settings?.brightness === 40,
       effect: txt(4)?.name === 'Brightness & Contrast',
       image: sImg?.mimeType === 'image/png' && sImg.data.length > 500 && txt(5)?.width === 200,
@@ -76,6 +76,36 @@
       parseError: on.replies.some(r => r.id === null && r.error?.code === -32700),
       onlyJsonOut: on.replies.every(r => !r.notJson), stderr: on.stderr,
       stillUnchanged: JSON.stringify(S.layers) === before && S.time === t0
+    });
+
+    // ---- 4b. M5: the app's name (clientInfo) reaches Lumina; the local HTTP address (Streamable HTTP) with the key
+    const who1 = (await lumina.claudeSetup()).client, lightWho = $('#aiLight').textContent;
+    const ctl0 = JSON.parse(await lumina.claudeTestFile({ name: 'claude-control.json' }) || '{}');
+    const X = (body, o = {}) => lumina.aiHttp({ body, ...o });
+    const hInit = await X({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'http-test', title: 'HTTP Test', version: '1' } } });
+    const hNote = await X({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    const hList = await X({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    const hCall = await X({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_project', arguments: {} } });
+    const hLight = $('#aiLight').textContent;
+    const hSnap = await X({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'snapshot', arguments: { time: 1, max_width: 120 } } });
+    const hBadM = await X({ jsonrpc: '2.0', id: 5, method: 'what/ever' });
+    const hGet = await X(null, { method: 'GET' }), hNoKey = await X({ jsonrpc: '2.0', id: 6, method: 'ping' }, { key: null });
+    const hWrong = await X({ jsonrpc: '2.0', id: 7, method: 'ping' }, { key: '0'.repeat(64) }), hOrigin = await X({ jsonrpc: '2.0', id: 8, method: 'ping' }, { origin: 'https://evil.example' });
+    const hHost = await X({ jsonrpc: '2.0', id: 9, method: 'ping' }, { host: 'evil.example:80' }), hParse = await X('not json'), hBatch = await X([{ jsonrpc: '2.0', id: 10, method: 'ping' }]);
+    const hText = (() => { try { return JSON.parse(hCall.json.result.content[0].text); } catch { return null; } })();
+    // the address stays the same after the switch is turned off and on again
+    await setAI(false); const hOff = await X({ jsonrpc: '2.0', id: 11, method: 'ping' }); await setAI(true);
+    const ctl1 = JSON.parse(await lumina.claudeTestFile({ name: 'claude-control.json' }) || '{}');
+    step('http', {
+      stdioName: who1 === 'selftest' && /selftest/.test(lightWho), lightWho,
+      initialize: hInit.status === 200 && /application\/json/.test(hInit.type) && hInit.json?.result?.serverInfo?.name === 'lumina' && hInit.json.result.protocolVersion === '2025-06-18',
+      notification202: hNote.status === 202, tools: hList.json?.result?.tools?.length === 34,
+      call: hCall.status === 200 && !hCall.json?.result?.isError && hText?.layers?.length === 2, image: hSnap.json?.result?.content?.some(c => c.type === 'image'),
+      nameShown: /HTTP Test/.test(hLight) && (await lumina.claudeSetup()).client === 'HTTP Test', hLight,
+      unknownMethod: hBadM.json?.error?.code === -32601, getRefused: hGet.status === 405, noKey: hNoKey.status === 401, wrongKey: hWrong.status === 401,
+      webPage: hOrigin.status === 403, otherHost: hHost.status === 403, parseError: hParse.json?.error?.code === -32700, batchRefused: hBatch.status === 400,
+      offWhenOff: hOff.status === 0, samePort: !!ctl0.httpPort && ctl1.httpPort === ctl0.httpPort && ctl1.port === ctl0.httpPort,
+      unchanged: JSON.stringify(S.layers) === before
     });
 
     // ---- 5. what is kept out: a wrong key, and a web page (it sends an Origin)
@@ -86,11 +116,11 @@
     step('keptOut', { wrongKey: w2?.result?.isError === true && /Wrong or missing key/.test(w2.result.content[0].text), webPage: web, webRefused: web !== 200 });
 
     // ---- 6. switch off again: the door closes
-    await setClaude(false);
+    await setAI(false);
     const after = await lumina.claudeProbe({ want: 2, lines: [init, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_project', arguments: {} } }] });
     const f2 = after.replies.find(r => r.id === 2);
-    step('offAgain', { switchOff: (await lumina.claudeGet()).enabled === false, lightHidden: $('#claudeLight').hidden === true,
-      refused: f2?.result?.isError === true && /Allow Claude to control Lumina/.test(f2.result.content[0].text) });
+    step('offAgain', { switchOff: (await lumina.claudeGet()).enabled === false, lightHidden: $('#aiLight').hidden === true,
+      refused: f2?.result?.isError === true && /Allow AI control/.test(f2.result.content[0].text) });
 
     // ---- 7. M1b, Help › Connect Claude…: pretend Claude settings files in this test folder (never the real ones)
     const TF = lumina.claudeTestFile, CF = 'claude-desktop/claude_desktop_config.json';
@@ -127,14 +157,55 @@
     });
     // the window, and its test button the way a friend would press it
     await TF({ name: CF, text: seed });
-    await claudeBox(); const box = { open: !$('#modal').hidden && !!$('#ccBox'), line: $('#ccLine')?.value === noApp.codeLine, addBtn: !!$('#ccAdd'), helpItem: MENUS.Help().some(it => Array.isArray(it) && it[0] === 'Connect Claude…') };
+    await aiBox('claude'); const box = { open: !$('#modal').hidden && !!$('#aiBox'), line: $('#ccLine')?.value === noApp.codeLine, addBtn: !!$('#ccAdd'), helpItem: MENUS.Help().some(it => Array.isArray(it) && it[0] === 'Connect Claude…') };
+    aiBox('claudecode'); await new Promise(r => setTimeout(r, 300)); box.line = $('#ccLine')?.value === noApp.codeLine;
     const tOff = await lumina.claudeTest(); $('#ccOn').checked = true; $('#ccOn').onchange({ target: $('#ccOn') }); await new Promise(r => setTimeout(r, 300));
     const tOn = await lumina.claudeTest();
     $('#ccTestBtn').click(); for (let i = 0; i < 50 && !/Working|can't|didn't/.test($('#ccTest').textContent); i++) await new Promise(r => setTimeout(r, 200));
-    const shown = $('#ccTest').textContent; $('#mOk').click(); await setClaude(false);
+    const shown = $('#ccTest').textContent; $('#mOk').click(); await setAI(false);
     step('window', { ...box, testOffStarts: tOff.started && tOff.tools.length === 34 && !tOff.reached, testOnReaches: tOn.started && tOn.reached,
       buttonSaysWorking: /Working/.test(shown), shown, closed: $('#modal').hidden });
     await TF({ name: 'claude-desktop', remove: true }); await TF({ name: 'claude-code.json', remove: true });
+
+    // ---- 7b. M5, Edit › AI connections (MCP)…: Cursor, Gemini CLI, Devin (pretend settings files in this test folder)
+    await TF({ name: 'apps', remove: true });
+    const none = await lumina.claudeSetup();
+    const other = JSON.stringify({ mcpServers: { Other: { command: 'other.exe' } }, theme: 'dark' }, null, 2);
+    await TF({ name: 'apps/cursor/mcp.json', text: other }); await TF({ name: 'apps/gemini/keep.txt', text: 'x' }); await TF({ name: 'apps/devin/mcp_config.json', text: '{ broken' });
+    const seen = await lumina.claudeSetup();
+    const aCur = await lumina.aiApp({ id: 'cursor', add: true }), aGem = await lumina.aiApp({ id: 'gemini', add: true });
+    let devinMsg = ''; try { await lumina.aiApp({ id: 'devin', add: true }); } catch (e) { devinMsg = String(e.message || e); }
+    const cur = JSON.parse(await TF({ name: 'apps/cursor/mcp.json' })), gem = JSON.parse(await TF({ name: 'apps/gemini/settings.json' }) || '{}');
+    const curBackup = await TF({ name: 'apps/cursor/mcp.json.before-lumina' }), devinLeft = await TF({ name: 'apps/devin/mcp_config.json' });
+    const chk = await lumina.claudeCli('--claude-check'), fgt = await lumina.claudeCli('--claude-forget'), chk2 = await lumina.claudeCli('--claude-check');
+    const cur2 = JSON.parse(await TF({ name: 'apps/cursor/mcp.json' })), gem2 = JSON.parse(await TF({ name: 'apps/gemini/settings.json' }) || '{}');
+    await lumina.aiApp({ id: 'cursor', add: true }); const rm = await lumina.aiApp({ id: 'cursor', add: false });
+    // the window: the Edit menu, one card per app, the HTTP address only while on, the key only to the clipboard
+    const editItems = MENUS.Edit().filter(Array.isArray).map(it => it[0]);
+    await setAI(true); await aiBox('cursor');
+    const w = { menu: editItems.includes('AI connections (MCP)…') && editItems.includes('Allow AI control'), title: $('#mTitle').textContent === 'AI connections (MCP)',
+      cards: $$('#aiList [data-pick]').length === 9, cursorAdd: !!$('#aiBox [data-app="cursor"][data-add="1"]'), cursorJson: /"mcpServers"/.test($('#aiCursor')?.value || ''),
+      status: /On · 34 tools/.test($('#aiStatus').textContent), tools: /get_project/.test($('#aiBox details').textContent) };
+    $('#aiList [data-pick="other"]').click(); await new Promise(r => setTimeout(r, 300));
+    const ctl = JSON.parse(await TF({ name: 'claude-control.json' }) || '{}');
+    w.url = $('#aiUrl')?.value === `http://127.0.0.1:${ctl.httpPort}/mcp`; w.keyNotShown = !$('#aiBox').innerHTML.includes(ctl.key); w.httpButtons = $$('#aiBox [data-http]').length === 3;
+    w.cmd = $('#aiCmd')?.value === none.exe && $('#aiArg')?.value === none.script;
+    $('#aiList [data-pick="vscode"]').click(); await new Promise(r => setTimeout(r, 300)); w.vscode = (() => { try { return JSON.parse($('#aiVscode').value).servers.lumina.type === 'stdio'; } catch { return false; } })();
+    $('#aiList [data-pick="codex"]').click(); await new Promise(r => setTimeout(r, 300)); w.codex = /^\[mcp_servers\.lumina\]/.test($('#aiCodex')?.value || '') && $('#aiCodex').value.includes(`'${none.exe}'`);
+    w.copyOn = await lumina.aiCopy('json').then(() => true, () => false);
+    $('#aiLight').click(); await new Promise(r => setTimeout(r, 300)); w.lightOpens = !$('#modal').hidden && !!$('#aiBox');
+    await setAI(false); w.urlGoneWhenOff = (await (async () => { await aiBox('other'); return !$('#aiUrl'); })());
+    w.copyOff = await lumina.aiCopy('key').then(() => false, () => true);
+    $('#mOk').click();
+    step('apps', { noneInstalled: Object.values(none.apps).every(a => a.installed === false && !a.has),
+      found: seen.apps.cursor.installed && seen.apps.gemini.installed && seen.apps.devin.unreadable,
+      cursorAdded: cur.mcpServers.lumina?.type === 'stdio' && cur.mcpServers.lumina.command === none.exe && cur.mcpServers.lumina.env?.ELECTRON_RUN_AS_NODE === '1' && aCur.apps.cursor.current,
+      cursorKeptOthers: cur.mcpServers.Other?.command === 'other.exe' && cur.theme === 'dark' && curBackup === other,
+      geminiMade: gem.mcpServers?.lumina?.args?.[0] === none.script && aGem.apps.gemini.current,
+      devinLeftAlone: /couldn't be read/.test(devinMsg) && devinLeft === '{ broken',
+      uninstallSees: chk === 1, uninstallForgets: fgt === 0 && chk2 === 0 && !cur2.mcpServers.lumina && cur2.mcpServers.Other?.command === 'other.exe' && !gem2.mcpServers?.lumina,
+      removeButton: !rm.apps.cursor.has, ...w });
+    await TF({ name: 'apps', remove: true });
 
     // ---- 8. M2 editing: each tool does its job, is exactly one undo step, and says why when it can't
     S.layers = []; for (const k in RT) delete RT[k]; clearMulti(); S.global.bg = 'black'; seek(0); undoStack.length = 0; redoStack.length = 0; commit(); refresh();
@@ -188,11 +259,11 @@
     step('deleteUndo', { locked: !lk.ok && /locked/.test(lk.error), deleted: d1.ok && gone && S.layers.length === n0 - 1 && d1.steps === 1,
       undo: u1.ok && u1.result.undone && back, redo: r1.ok && r1.result.redone && again });
     // through Claude's own path: the 19 tools, an edit, and a look at the result
-    await setClaude(true);
+    await setAI(true);
     const m2 = await lumina.claudeProbe({ want: 4, lines: [init, { jsonrpc: '2.0', id: 2, method: 'tools/list' },
       { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'add_solid', arguments: { color: '#ff0000', start: 0, duration: 5 } } },
       { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'snapshot', arguments: { time: 2.5, max_width: 160 } } }] });
-    await setClaude(false);
+    await setAI(false);
     const b = id => m2.replies.find(r => r.id === id), names = (b(2)?.result?.tools || []).map(t => t.name);
     const img2 = b(4)?.result?.content?.find(c => c.type === 'image'); let red = null;
     if (img2) { const im = new Image(); im.src = 'data:image/png;base64,' + img2.data; await im.decode(); const c2 = document.createElement('canvas'); c2.width = im.width; c2.height = im.height; const x2 = c2.getContext('2d'); x2.drawImage(im, 0, 0); red = [...x2.getImageData(4, 4, 1, 1).data].slice(0, 3); }

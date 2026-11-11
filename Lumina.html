@@ -381,10 +381,10 @@ footer { background: var(--glass); backdrop-filter: blur(16px) saturate(140%); b
 .menubar .pop .mhead span { display: block; margin-top: 4px; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12.5px; color: var(--muted); white-space: normal; line-height: 1.45; }
 .menubar [data-menu="Help"] .pop { left: auto; right: 0; }
 [data-menu="Help"] .pop .mhead b { font: 500 16px var(--brand); text-transform: none; letter-spacing: .01em; color: var(--title); }
-#claudeLight { order: 99; margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: .8; }
-#claudeLight::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #6b6b74; }
-#claudeLight.busy::before { background: #4be37a; box-shadow: 0 0 7px #4be37a; }
-#claudeLight[hidden] { display: none; }
+#aiLight { order: 99; margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: .8; cursor: pointer; white-space: nowrap; }
+#aiLight::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #6b6b74; }
+#aiLight.busy::before { background: #4be37a; box-shadow: 0 0 7px #4be37a; }
+#aiLight[hidden] { display: none; }
 header.toolbar { padding: 6px 10px; gap: 6px; }
 header.toolbar > button, header.toolbar > select, header.toolbar .menu > button { padding: 4px 11px; font-size: 13px; }
 .wspaces { display: flex; gap: 2px; margin-right: 10px; }
@@ -559,7 +559,7 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
   <div class="logo"><img src="lumina-icon.png" alt="">Lumina</div>
   <div class="menu" id="fileMenu" hidden></div>
   <!-- Edit / Composition / Layer / View / Window / Help are built in script (buildMenubar) -->
-  <span id="claudeLight" hidden>Claude</span>
+  <span id="aiLight" hidden onclick="aiBox()">AI</span>
 </nav>
 <header class="toolbar">
   <button id="btnImport" class="primary">Import media</button>
@@ -10739,61 +10739,108 @@ function toggleFullscreen() {
 }
 document.addEventListener('keydown', e => { if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); } });
 
-// ---------- Claude control (MCP step M1) ----------
-// Edit › Allow Claude to control Lumina turns on a door in main.js (127.0.0.1 only, with a key). Claude's MCP server
-// (electron/mcp.js) calls LuminaAPI.call(name, args) through it. M1's tools only look; M2's (below) edit, one undo step each.
-let CLAUDE_ON = false, claudeLightT = 0;
-function claudeLight(busy) {
-  const el = $('#claudeLight'); if (!el) return;
-  el.hidden = !CLAUDE_ON; el.classList.toggle('busy', !!busy);
-  el.title = busy ? 'Claude is working in this project right now' : 'Claude may control Lumina (Edit › Allow Claude to control Lumina)';
+// ---------- AI control (MCP steps M1-M5) ----------
+// Edit › Allow AI control turns on a door in main.js (127.0.0.1 only, with a key). An AI app's MCP server (electron/mcp.js),
+// or since M5 the app itself over Lumina's local HTTP address, calls LuminaAPI.call(name, args) through it.
+// M1's tools only look; M2's (below) edit, one undo step each.
+let AI_ON = false, aiLightT = 0, AI_WHO = '', AI_PICK = 'claude';
+function aiLight(busy, who) {
+  if (who) AI_WHO = who;
+  const el = $('#aiLight'); if (!el) return;
+  el.hidden = !AI_ON; el.classList.toggle('busy', !!busy);
+  el.textContent = AI_WHO ? `AI · ${AI_WHO}` : 'AI';
+  el.title = busy ? `${AI_WHO || 'An AI app'} is working in this project right now`
+    : `AI apps on this computer may control Lumina${AI_WHO ? ` (last one: ${AI_WHO})` : ''}. Click for AI connections.`;
 }
-async function setClaude(on) {
-  try { CLAUDE_ON = !!(await lumina.claudeSet(!!on)).enabled; } catch (e) { toast('Could not change Claude control: ' + (e.message || e)); }
-  claudeLight();
-  notice(CLAUDE_ON ? 'Claude can now work in Lumina. Only Claude on this computer can connect, with Lumina\'s own key, and every change it makes can be undone with Ctrl+Z.' : 'Claude control is off. Nothing can connect to Lumina.');
-  if (!$('#modal').hidden && $('#ccBox')) claudeBox();
+async function setAI(on) {
+  try { AI_ON = !!(await lumina.claudeSet(!!on)).enabled; } catch (e) { toast('Could not change AI control: ' + (e.message || e)); }
+  aiLight();
+  notice(AI_ON ? 'AI control is on. Only AI apps on this computer can connect, with Lumina\'s own key, and every change they make can be undone with Ctrl+Z.' : 'AI control is off. Nothing can connect to Lumina.');
+  if (!$('#modal').hidden && $('#aiBox')) aiBox();
 }
-// Help › Connect Claude… (M1b): everything a friend needs to let their Claude reach their Lumina, in one window
-async function claudeBox(testResult) {
-  let I; try { I = await lumina.claudeSetup(); } catch (e) { return toast('Connect Claude is only in the desktop app.'); }
-  CLAUDE_ON = I.enabled; claudeLight();
-  const D = I.desktop, has = D.some(d => d.has), current = D.length && D.filter(d => d.has).every(d => d.current) && has, bad = D.find(d => d.unreadable);
-  const appState = !D.length ? 'The Claude app isn\'t on this computer.' : bad ? 'Claude\'s settings file couldn\'t be read, so Lumina leaves it alone.'
-    : current ? '✓ The Claude app is set up to reach this Lumina.' : has ? 'The Claude app has an older Lumina entry (Lumina moved or was reinstalled).' : 'Not set up yet.';
-  const codeState = I.code.current ? '✓ Claude Code already has this Lumina.' : I.code.has ? 'Claude Code has an older Lumina entry: run the remove line, then the add line.' : 'Not set up yet (or set up for one folder only).';
-  const sec = (n, title, body) => `<div style="margin:0 0 14px"><b>${n}. ${title}</b><div style="margin:4px 0 0 18px">${body}</div></div>`;
-  $('#mTitle').textContent = 'Connect Claude'; $('#mBarWrap').hidden = true;
-  $('#mText').innerHTML = `<div id="ccBox" style="text-align:left;max-width:640px">
-    <p style="margin:0 0 12px">Let Claude look at and edit the project open in Lumina. Claude can only connect from <b>this computer</b>, with Lumina's own key. You see every change as it happens, and each one can be undone with Ctrl+Z.</p>
-    ${sec(1, 'Turn it on', `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ccOn" ${I.enabled ? 'checked' : ''}> Allow Claude to control Lumina</label>
-      <small style="opacity:.75">Also in Edit. While it's on, the Claude light shows in the menu bar.</small>`)}
-    ${sec(2, 'The Claude app', `<div id="ccApp">${esc(appState)}</div>
-      ${D.length && !bad ? `<small style="opacity:.75;display:block;margin:4px 0">${current ? 'Remove takes the' : 'This adds one entry,'} “lumina”${current ? ' entry out of' : ', to'} Claude's settings file and changes nothing else. A copy of the file is kept first, next to it (…before-lumina). Restart the Claude app afterwards.</small>
-      <div style="display:flex;gap:6px">${current ? '' : `<button id="ccAdd" class="primary">${has ? 'Update Lumina in Claude' : 'Add Lumina to Claude'}</button>`}${has ? '<button id="ccRemove">Remove Lumina from Claude</button>' : ''}</div>` : ''}`)}
-    ${sec(3, 'Claude Code (the command line)', `<div>${esc(codeState)}</div>
-      <small style="opacity:.75;display:block;margin:4px 0">Paste this into a terminal once. It works in every folder:</small>
-      <div style="display:flex;gap:6px"><input id="ccLine" readonly value="${esc(I.codeLine)}" style="flex:1;font:12px monospace"><button id="ccCopy">Copy</button></div>
-      <small style="opacity:.75;display:block;margin-top:4px">To take it out again: <code>${esc(I.codeRemove)}</code></small>`)}
-    ${sec(4, 'Check it', `<div id="ccTest">${testResult ? esc(testResult) : 'Test the connection the way Claude starts it.'}</div>`)}
+// Edit › AI connections (MCP)… (M5; Help › Connect Claude… opens it at Claude): the switch, the status, the tools, and
+// how to connect each AI app. Lumina changes another app's settings file only when its button is pressed, after a copy.
+const AI_CARDS = [['claude', 'Claude app'], ['claudecode', 'Claude Code'], ['cursor', 'Cursor'], ['vscode', 'VS Code'], ['gemini', 'Gemini CLI'],
+  ['codex', 'Codex CLI'], ['devin', 'Devin'], ['lmstudio', 'LM Studio'], ['other', 'Other apps']];
+async function aiBox(pick, testResult) {
+  let I; try { I = await lumina.claudeSetup(); } catch (e) { return toast('AI connections are only in the desktop app.'); }
+  if (pick) AI_PICK = pick;
+  AI_ON = I.enabled; aiLight(false, I.client);
+  const N = I.snippets, small = t => `<small style="opacity:.75;display:block;margin:4px 0">${t}</small>`;
+  const block = (id, text) => `<div style="display:flex;gap:6px;align-items:flex-start"><textarea id="${id}" readonly spellcheck="false" rows="${Math.min(9, text.split('\n').length)}" style="flex:1;font:12px monospace;resize:none;white-space:pre;overflow:auto">${esc(text)}</textarea><button data-copy="${id}">Copy</button></div>`;
+  const line = (id, text) => `<div style="display:flex;gap:6px"><input id="${id}" readonly value="${esc(text)}" style="flex:1;font:12px monospace"><button data-copy="${id}">Copy</button></div>`;
+  const state = (name, a, notThere) => a.unreadable ? `${name}'s settings file couldn't be read, so Lumina leaves it alone.` : a.current ? `✓ ${name} is set up to reach this Lumina.`
+    : a.has ? `${name} has an older Lumina entry (Lumina moved or was reinstalled).` : a.installed === false ? notThere : 'Not set up yet.';
+  const buttons = (attr, name, a, file, after) => a.unreadable || a.installed === false ? '' : small(`${a.current ? 'Remove takes the' : 'This adds one entry,'} “lumina”${a.current ? ' entry out of' : ', to'} ${name}'s settings file${file ? ` (<code>${esc(file)}</code>)` : ''} and changes nothing else. A copy of the file is kept first, next to it (…before-lumina). ${after}`)
+    + `<div style="display:flex;gap:6px">${a.current ? '' : `<button ${attr}="1" class="primary">${a.has ? 'Update' : 'Add'} Lumina in ${name}</button>`}${a.has ? `<button ${attr}="">Remove Lumina from ${name}</button>` : ''}</div>`;
+  const fileApp = (id, name, after) => { const a = I.apps[id]; return `<div>${esc(state(name, a, `${name} isn't on this computer (Lumina looked for ${a.file}).`))}</div>${buttons(`data-app="${id}" data-add`, name, a, a.file, after)}`; };
+  const D = I.desktop, dHas = D.some(d => d.has), dCur = D.length && D.filter(d => d.has).every(d => d.current) && dHas, dBad = D.find(d => d.unreadable);
+  const card = {
+    claude: () => `<div id="ccApp">${esc(!D.length ? 'The Claude app isn\'t on this computer.' : state('The Claude app', { has: dHas, current: dCur, unreadable: dBad }))}</div>
+      ${D.length && !dBad ? small(`${dCur ? 'Remove takes the' : 'This adds one entry,'} “lumina”${dCur ? ' entry out of' : ', to'} Claude's settings file and changes nothing else. A copy of the file is kept first, next to it (…before-lumina). Restart the Claude app afterwards.`)
+        + `<div style="display:flex;gap:6px">${dCur ? '' : `<button id="ccAdd" class="primary">${dHas ? 'Update Lumina in Claude' : 'Add Lumina to Claude'}</button>`}${dHas ? '<button id="ccRemove">Remove Lumina from Claude</button>' : ''}</div>` : ''}`,
+    claudecode: () => `<div>${esc(I.code.current ? '✓ Claude Code already has this Lumina.' : I.code.has ? 'Claude Code has an older Lumina entry: run the remove line, then the add line.' : 'Not set up yet (or set up for one folder only).')}</div>
+      ${small('Paste this into a terminal once. It works in every folder:')}${line('ccLine', I.codeLine)}
+      ${small(`To take it out again: <code>${esc(I.codeRemove)}</code>`)}`,
+    cursor: () => fileApp('cursor', 'Cursor', 'Cursor picks it up in Settings › MCP.') + small('Or paste this into that file yourself:') + block('aiCursor', N.mcpServers),
+    vscode: () => small('In VS Code press Ctrl+Shift+P and run <b>MCP: Open User Configuration</b>. Paste this in (if the file already has <code>"servers"</code>, add only the <code>"lumina"</code> part inside it), then save:')
+      + block('aiVscode', N.vscode) + small('Copilot\'s Agent mode then shows Lumina\'s tools.'),
+    gemini: () => fileApp('gemini', 'Gemini CLI', 'Start Gemini CLI again afterwards.') + small('Or run this once in a terminal:') + line('aiGemini', N.gemini),
+    codex: () => small('Add this to Codex\'s settings file, <code>.codex\\config.toml</code> in your user folder (make the file if it isn\'t there), then start Codex again:') + block('aiCodex', N.codex),
+    devin: () => fileApp('devin', 'Devin', 'Devin was called Windsurf before; restart it afterwards.') + small('Or paste this into that file yourself:') + block('aiDevin', N.mcpServers),
+    lmstudio: () => small('In LM Studio open the <b>Program</b> tab on the right, then <b>Install › Edit mcp.json</b>. Paste this in (if it already has <code>"mcpServers"</code>, add only the <code>"lumina"</code> part) and save:') + block('aiLm', N.mcpServers),
+    other: () => `<div><b>Apps that start a server themselves (stdio)</b></div>${small('Most MCP apps. Give them this command, its argument and its setting:')}
+      ${line('aiCmd', I.exe)}${line('aiArg', I.script)}${line('aiEnv', 'ELECTRON_RUN_AS_NODE=1')}${small('As JSON, the way many apps write it:')}${block('aiJson', N.mcpServers)}
+      <div style="margin-top:10px"><b>Apps that want an address (Streamable HTTP)</b></div>
+      ${I.enabled ? small('This address works while Lumina is open with AI control on. It needs Lumina\'s key, sent as <code>Authorization: Bearer &lt;key&gt;</code>. The buttons put it on the clipboard without showing it; paste it only into your AI app\'s settings.')
+        + line('aiUrl', N.url) + `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button data-http="json">Copy as JSON with the key</button><button data-http="claude">Copy a Claude Code line with the key</button><button data-http="key">Copy the key only</button></div>`
+        : small('Turn on AI control above to get the address.')}`
+  };
+  const names = (window.LuminaAPI?.tools || []);
+  $('#mTitle').textContent = 'AI connections (MCP)'; $('#mBarWrap').hidden = true;
+  $('#mText').innerHTML = `<div id="aiBox" style="text-align:left;width:min(780px,86vw)">
+    <p style="margin:0 0 10px">Let an AI app look at and edit the project open in Lumina, through MCP (the Model Context Protocol). Apps can only connect from <b>this computer</b>, with Lumina's own key. You see every change as it happens, and each one can be undone with Ctrl+Z.</p>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 10px">
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ccOn" ${I.enabled ? 'checked' : ''}> <b>Allow AI control</b></label>
+      <span id="aiStatus" style="opacity:.85">${I.enabled ? `On · ${I.tools} tools · ${I.client ? `last app: ${esc(I.client)}` : 'no app has connected yet'}` : 'Off: nothing can connect.'}</span>
+    </div>
+    ${I.portMoved && I.enabled ? small('Lumina\'s address changed because its old one was in use. Apps given the address (Other apps › Streamable HTTP) need the new one.') : ''}
+    <div style="display:flex;gap:12px;min-height:300px">
+      <div id="aiList" style="display:flex;flex-direction:column;gap:2px;min-width:130px">${AI_CARDS.map(([id, n]) => `<button data-pick="${id}" class="${id === AI_PICK ? 'primary' : ''}" style="text-align:left">${n}</button>`).join('')}</div>
+      <div id="aiCard" data-card="${AI_PICK}" style="flex:1;min-width:0"><div style="margin:0 0 6px"><b>${AI_CARDS.find(c => c[0] === AI_PICK)[1]}</b></div>${card[AI_PICK]()}</div>
+    </div>
+    <details style="margin-top:10px"><summary>The ${names.length || I.tools} tools AI apps get</summary><div style="font:12px monospace;opacity:.8;margin-top:4px">${names.map(esc).join(', ')}</div></details>
+    <div style="margin-top:10px"><b>Check it</b> <span id="ccTest">${testResult ? esc(testResult) : 'Test the connection the way an AI app starts it.'}</span></div>
   </div>`;
   $('#mRow').innerHTML = '<button id="ccTestBtn">Test the connection</button><button id="mOk" class="primary">Close</button>';
   $('#modal').hidden = false; $('#mOk').onclick = () => $('#modal').hidden = true;
-  $('#ccOn').onchange = e => setClaude(e.target.checked);
-  $('#ccCopy').onclick = async () => { try { await lumina.clipWrite({ text: I.codeLine }); notice('Copied. Paste it into a terminal and press Enter.'); } catch { $('#ccLine').select(); notice('Select the line and press Ctrl+C.'); } };
-  const edit = async add => { try { await lumina.claudeDesktop(add); notice(add ? 'Lumina is in Claude\'s settings. Restart the Claude app to use it.' : 'Lumina was taken out of Claude\'s settings.'); } catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method [^:]+: (Error: )?/, '')); } claudeBox(); };
+  $('#ccOn').onchange = e => setAI(e.target.checked);
+  const box = $('#aiBox'), clean = e => String(e.message || e).replace(/^Error invoking remote method [^:]+: (Error: )?/, '');
+  box.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => aiBox(b.dataset.pick));
+  box.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+    const el = $('#' + b.dataset.copy);
+    try { await lumina.clipWrite({ text: el.value }); notice('Copied.'); } catch { el.select(); notice('Select it and press Ctrl+C.'); }
+  });
+  box.querySelectorAll('[data-http]').forEach(b => b.onclick = async () => {
+    try { await lumina.aiCopy(b.dataset.http); notice('Copied. It holds Lumina\'s key: paste it only into your AI app\'s settings.'); } catch (e) { toast(clean(e)); }
+  });
+  box.querySelectorAll('[data-app]').forEach(b => b.onclick = async () => {
+    const add = !!b.dataset.add, n = AI_CARDS.find(c => c[0] === b.dataset.app)[1];
+    try { await lumina.aiApp({ id: b.dataset.app, add }); notice(add ? `Lumina is in ${n}'s settings. Start ${n} again to use it.` : `Lumina was taken out of ${n}'s settings.`); } catch (e) { toast(clean(e)); }
+    aiBox();
+  });
+  const edit = async add => { try { await lumina.claudeDesktop(add); notice(add ? 'Lumina is in Claude\'s settings. Restart the Claude app to use it.' : 'Lumina was taken out of Claude\'s settings.'); } catch (e) { toast(clean(e)); } aiBox(); };
   if ($('#ccAdd')) $('#ccAdd').onclick = () => edit(true);
   if ($('#ccRemove')) $('#ccRemove').onclick = () => edit(false);
   $('#ccTestBtn').onclick = async () => {
     $('#ccTest').textContent = 'Testing…';
     const r = await lumina.claudeTest();
-    const msg = !r.started ? 'Lumina\'s Claude connection didn\'t start. ' + (r.stderr || '')
-      : !r.reached ? `It starts and offers ${r.tools.length} tools, but can't reach Lumina: ${CLAUDE_ON ? r.message : 'turn on step 1 first.'}`
-      : `✓ Working: Claude can start it, sees ${r.tools.length} tools and can look at this project.`;
-    $('#ccTest').textContent = msg;
+    $('#ccTest').textContent = !r.started ? 'Lumina\'s MCP server didn\'t start. ' + (r.stderr || '')
+      : !r.reached ? `It starts and offers ${r.tools.length} tools, but can't reach Lumina: ${AI_ON ? r.message : 'turn on Allow AI control first.'}`
+      : `✓ Working: an AI app can start it, sees ${r.tools.length} tools and can look at this project.`;
   };
 }
-if (window.lumina?.claudeGet) lumina.claudeGet().then(s => { CLAUDE_ON = !!s.enabled; claudeLight(); }).catch(() => { });
+if (window.lumina?.claudeGet) lumina.claudeGet().then(s => { AI_ON = !!s.enabled; aiLight(); }).catch(() => { });
 const apiNum = v => typeof v === 'number' && isFinite(v) ? +v.toFixed(4) : v;
 const apiLayer = id => {
   const L = S.layers.find(x => x.id === +id);
@@ -11018,7 +11065,7 @@ Object.assign(API_TOOLS, {
       else if (d.type === 'check') { if (typeof v !== 'boolean') throw new Error(`${k} must be true or false.`); put.push(() => f[k] = v); }
       else if (d.type === 'color') { const c = apiColor(v, k); put.push(() => f[k] = c); }
       else if (d.type === 'text') { const t = String(v).slice(0, 2000); put.push(() => f[k] = t); }
-      else if (d.type !== 'pick') throw new Error(`${D.name}'s "${k}" can't be set by Claude yet (it is a ${d.type}). Set it in Effect Controls.`);
+      else if (d.type !== 'pick') throw new Error(`${D.name}'s "${k}" can't be set by an AI app yet (it is a ${d.type}). Set it in Effect Controls.`);
       else {
         const opts = typeof d.opts === 'function' ? d.opts(L) : d.opts;
         if (Array.isArray(opts) && !opts.some(o => (Array.isArray(o) ? o[0] : o) === v)) throw new Error(`${k} must be one of: ${opts.map(o => JSON.stringify(Array.isArray(o) ? o[0] : o)).join(', ')}.`);
@@ -11206,12 +11253,12 @@ Object.assign(API_TOOLS, {
 window.LuminaAPI = {
   version: 4,
   tools: Object.keys(API_TOOLS),
-  async call(name, args) {
+  async call(name, args, who) {
     if (!Object.hasOwn(API_TOOLS, name)) return { ok: false, error: `Lumina has no tool called "${name}".` };
-    clearTimeout(claudeLightT); claudeLight(true);
+    clearTimeout(aiLightT); aiLight(true, who);
     try { return { ok: true, result: await API_TOOLS[name](args || {}) }; }
     catch (e) { return { ok: false, error: String(e?.message || e) }; }
-    finally { claudeLightT = setTimeout(() => claudeLight(false), 1500); }
+    finally { aiLightT = setTimeout(() => aiLight(false), 1500); }
   }
 };
 
@@ -11223,7 +11270,7 @@ const MENUS = {
     ['Duplicate', 'Ctrl+D', () => action('dup'), !!selLayer()], ['Split at playhead', 'S', split, !!selLayer()], ['Delete', 'Del', del, S.sel != null], '-',
     ['Select all clips', 'Ctrl+A', selectAll, S.layers.length > 0], ['Deselect', '', () => { clearMulti(); S.sel = null; S.selKey = null; refresh(); }, S.sel != null], '-',
     ['Ripple editing', '', () => setRipple(!rippleOn), true, rippleOn], '-',
-    ['Allow Claude to control Lumina', '', () => setClaude(!CLAUDE_ON), !!window.lumina?.claudeSet, CLAUDE_ON]],
+    ['Allow AI control', '', () => setAI(!AI_ON), !!window.lumina?.claudeSet, AI_ON], ['AI connections (MCP)…', '', () => aiBox(), !!window.lumina?.claudeSetup]],
   Composition: () => [['Import media…', '', () => $('#file').click()], '-',
     ['Add impact marker', 'I', addImpact], ['Add color grade layer', '', () => $('#btnGrade').click()], '-',
     [bookmarkAt(S.time) ? 'Remove bookmark at playhead' : 'Add bookmark at playhead', 'B', toggleBookmark],
@@ -11257,7 +11304,7 @@ const MENUS = {
     ['Put all panels back', '', dockAll, Object.keys(POP).length > 0]],
   Help: () => [{ head: 'Lumina ~ An editor for everything.', text: ABOUT }, '-', ['Welcome screen…', '', () => showWelcome()],
     ['Show tips again', '', () => { tipsReset(); notice('Tips are back on. They show up as you use Lumina.'); tipNext(); }], '-',
-    ['Keyboard shortcuts', '', () => toast(SHORTCUTS)], ['Connect Claude…', '', () => claudeBox(), !!window.lumina?.claudeSetup], ['Send feedback…', '', feedbackBox], '-', ['About Lumina', '', aboutBox]],
+    ['Keyboard shortcuts', '', () => toast(SHORTCUTS)], ['Connect Claude…', '', () => aiBox('claude'), !!window.lumina?.claudeSetup], ['Send feedback…', '', feedbackBox], '-', ['About Lumina', '', aboutBox]],
 };
 let menuRun = [];
 function menuItems(name) {

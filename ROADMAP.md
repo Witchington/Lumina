@@ -14,8 +14,8 @@ Adobe After Effects and Premier Pro have. I also want the screen effects everyth
 OK (never push). Round 20 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
-(the video player) floats as well, and dragging a header no longer selects text. **Also for later (the user, 2026-11-10): M5, the MCP server in the
-Edit menu so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
+(the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
+AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
 Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
 Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
 Noise. Check first which of them Lumina already has (some came in early Rounds), then find the rest's host code in
@@ -201,7 +201,38 @@ export) instead of only writing Lumina's code.
   - **Tests:** mcp-suite steps `saveProject`, `saveImage`, `exportVideo` and `imageMode`. The export test has a 90 s limit
     and a progress log (`R.exLog`), so a stuck export can't freeze the suite again.
 - **M4 Output + Image mode (the plan):** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.
-- **M5 Other AIs connect to Lumina, from the Edit menu (asked for by the user 2026-11-10; for later, not started).** Today
+- **M5 done (2026-11-10).** What was built:
+  - **Edit › Allow AI control** (was "Allow Claude to control Lumina") and **Edit › AI connections (MCP)…**. Help › Connect
+    Claude… opens the same window at Claude. The menu-bar light says "AI", then "AI · <app>" once an app has called
+    (the clientInfo title or name from `initialize`); clicking it opens the window.
+  - **The window:** the switch, the status (tools, the last app), a list of cards on the left (Claude app, Claude Code,
+    Cursor, VS Code, Gemini CLI, Codex CLI, Devin, LM Studio, Other apps), the tool names, and Test the connection.
+    - Buttons that change another app's file (only `mcpServers.lumina`, a `…before-lumina` copy first, refused when the
+      file can't be read, only when the app's folder is there): the Claude app (as M1b), **Cursor**
+      (`~/.cursor/mcp.json`, with `type: stdio`), **Gemini CLI** (`~/.gemini/settings.json`), **Devin** (was Windsurf;
+      `%APPDATA%\devin\mcp_config.json`).
+    - Copy only: Claude Code (the `claude mcp add` line), VS Code (`"servers"` JSON for MCP: Open User Configuration),
+      Codex CLI (`[mcp_servers.lumina]` TOML for `~/.codex/config.toml`), LM Studio (Program tab › Install › Edit
+      mcp.json), Gemini's `gemini mcp add` line, and Other apps (command, argument, setting, JSON).
+    - Paths and shapes come from each app's docs, read 2026-11-10. **ChatGPT has no card:** its docs page couldn't be
+      read, so whether it can reach a server on this computer is not checked.
+  - **The HTTP way in:** `POST /mcp` on the same door (Streamable HTTP: one JSON answer per request, 202 for
+    notifications, 405 for GET, no event stream, no sessions). The key goes in `Authorization: Bearer <key>` (or
+    `X-Lumina-Key`). Origin refused, Host must be 127.0.0.1 or localhost. **The door keeps its port** (`httpPort` in
+    claude-control.json) so the address stays the same; a taken port gets a new one and the window says so. The key is
+    never shown: three buttons put the JSON, a `claude mcp add --transport http` line, or the key on the clipboard, only
+    while AI control is on.
+  - mcp.js is shared: `module.exports = { TOOLS, PROTOCOLS, handle }`, and it reads stdin only when run itself. It sends
+    the app's name as `X-Lumina-Client`. `2025-11-25` was added to the protocol versions.
+  - The uninstaller flags (`--claude-check` / `--claude-forget`) cover Cursor, Gemini CLI and Devin too.
+  - **Tests:** mcp-suite steps `http` (initialize, 202, 34 tools, a call, an image, the app's name in the light, an
+    unknown method, GET refused, no key, wrong key, a web page, another Host, a parse error, a batch, off when off, the same
+    port after off/on) and `apps` (pretend files: added with others kept and a backup, a file made, an unreadable one left
+    alone, the uninstaller sees and forgets them, Remove, the window's cards, the address only while on, the key not in the
+    page, Copy refused while off). Found by the tests: Copy the key worked while off; fixed.
+  - **Not done:** the window was checked by the tests, not looked at on screen; no real Cursor / Gemini / Devin / VS Code /
+    Codex / LM Studio connection was tried (none are installed here).
+- **M5 Other AIs connect to Lumina, from the Edit menu (the plan, asked for by the user 2026-11-10).** Today
   the switch (Edit › Allow Claude to control Lumina) and Help › Connect Claude… are about Claude only. The user wants the
   MCP server in the **Edit** menu, so any AI that speaks MCP can connect, not only Claude.
   - **Edit › AI connections (MCP)…**: one window with the on/off switch (the same door and key as now), the server's

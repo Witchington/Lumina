@@ -1,14 +1,15 @@
-// Lumina's MCP server (Claude control, step M1). Claude Code starts it and talks JSON-RPC to it over stdin / stdout,
-// one message per line. It runs with Lumina itself, so nothing has to be installed:
+// Lumina's MCP server (AI control, steps M1-M5). An AI app (Claude, Cursor, Gemini CLI…) starts it and talks JSON-RPC
+// to it over stdin / stdout, one message per line. main.js also loads it (require) for the local HTTP way in (M5): then
+// only TOOLS and handle() are used, and nothing reads stdin. It runs with Lumina itself, so nothing has to be installed:
 //   ELECTRON_RUN_AS_NODE=1  <Lumina.exe>  <Lumina>\resources\app.asar\electron\mcp.js
-// It reads Lumina's claude-control.json (the door's port and key, written when Edit › Allow Claude to control Lumina
-// is ticked) and passes each tool call to the open Lumina. It never listens on anything itself.
+// It reads Lumina's claude-control.json (the door's port and key, written when Edit › Allow AI control is ticked) and passes each tool call to the open Lumina. It never listens on anything itself.
 'use strict';
 const fs = require('fs'), path = require('path'), os = require('os'), http = require('http'), readline = require('readline');
 
 const VERSION = (() => { try { return require('../package.json').version; } catch { return '0'; } })();
-const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
-const OFF = 'Lumina is not open, or Claude control is off. Open Lumina and tick Edit › Allow Claude to control Lumina, then try again.';
+const PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+const OFF = 'Lumina is not open, or AI control is off. Open Lumina and tick Edit › Allow AI control, then try again.';
+let client = '';   // the app that started this server (clientInfo from initialize), shown next to Lumina's AI light
 
 function controlFile() {
   if (process.env.LUMINA_CONTROL_FILE) return process.env.LUMINA_CONTROL_FILE;
@@ -126,7 +127,7 @@ function callLumina(tool, args) {
   const body = JSON.stringify({ tool, args });
   return new Promise(done => {
     const req = http.request({ host: '127.0.0.1', port: c.port, path: '/call', method: 'POST', timeout: { auto_captions: 1800000, export_video: 10800000 }[tool] || 120000,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Lumina-Key': c.key } }, res => {
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Lumina-Key': c.key, 'X-Lumina-Client': encodeURIComponent(client) } }, res => {
       let text = ''; res.setEncoding('utf8');
       res.on('data', d => text += d);
       res.on('end', () => { try { done(JSON.parse(text)); } catch { done({ ok: false, error: `Lumina answered something unexpected (HTTP ${res.statusCode}).` }); } });
@@ -137,9 +138,9 @@ function callLumina(tool, args) {
   });
 }
 
-async function toolCall(name, args) {
+async function toolCall(name, args, call = callLumina) {
   if (!TOOLS.some(t => t.name === name)) return { content: [{ type: 'text', text: `Lumina has no tool called "${name}".` }], isError: true };
-  const r = await callLumina(name, args || {});
+  const r = await call(name, args || {});
   if (!r || !r.ok) return { content: [{ type: 'text', text: (r && r.error) || 'Lumina did not answer.' }], isError: true };
   const res = r.result, content = [];
   if (res && res.__image) { const { __image, ...rest } = res; content.push({ type: 'image', data: __image.data, mimeType: __image.mimeType }, { type: 'text', text: JSON.stringify(rest) }); }
@@ -147,10 +148,11 @@ async function toolCall(name, args) {
   return { content };
 }
 
-async function handle(msg) {
-  const { id, method, params = {} } = msg;
+// call: how a tool reaches Lumina (over the door from here; main.js passes its own for the HTTP way)
+async function handle(msg, call) {
+  const { method, params = {} } = msg;
   switch (method) {
-    case 'initialize': return {
+    case 'initialize': client = String(params.clientInfo?.title || params.clientInfo?.name || '').slice(0, 60); return {
       protocolVersion: PROTOCOLS.includes(params.protocolVersion) ? params.protocolVersion : PROTOCOLS[0],
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'lumina', title: 'Lumina', version: VERSION },
@@ -158,13 +160,14 @@ async function handle(msg) {
     };
     case 'ping': return {};
     case 'tools/list': return { tools: TOOLS };
-    case 'tools/call': return toolCall(params.name, params.arguments);
+    case 'tools/call': return toolCall(params.name, params.arguments, call);
     default: { const e = new Error(`Unknown method: ${method}`); e.code = -32601; throw e; }
   }
 }
 
+module.exports = { TOOLS, PROTOCOLS, handle };
 const send = m => process.stdout.write(JSON.stringify(m) + '\n');
-readline.createInterface({ input: process.stdin }).on('line', async line => {
+if (require.main === module) readline.createInterface({ input: process.stdin }).on('line', async line => {
   if (!line.trim()) return;
   let msg; try { msg = JSON.parse(line); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); }
   if (msg.id === undefined || msg.id === null) return;   // a notification (e.g. notifications/initialized): nothing to answer
