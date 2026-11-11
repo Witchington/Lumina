@@ -91,6 +91,56 @@ hear the song or see where cuts and moves happen in time. These Rounds give it t
   roughly. Tests: a made-up reference with known cut and beat times (found within a frame), and a recipe applied to test
   clips (cuts on the right frames, effects present, nothing changed when undone).
 
+**More advanced Style Match, SM3–SM7 (the user, 2026-11-10: "make copying easier and more accurate"; not started, after
+SM1 + SM2).** Everything runs on this computer; no video, clip or recipe is uploaded anywhere.
+- **SM3 Deeper study (more accurate recipes).**
+  - **Exact motion curves:** follow the picture between frames (optical flow) to get each shot's pan, zoom and rotation
+    as keyframe curves with their easing (ease in/out, bounce, overshoot), not just "zoom in". The same for speed ramps
+    (how fast it slows and speeds back up) and shake (how strong, how fast, which way).
+  - **Transitions by name:** tell apart a hard cut, flash, whip pan, zoom blur, spin, glitch / RGB split, slide, dissolve
+    and luma fade, and how many frames each lasts; each one maps to a Lumina transition or effect preset.
+  - **The music in more detail:** beats, downbeats (the "1" of each bar), kicks vs snares, the drop, and the song's parts
+    (intro, build, drop, outro), so the recipe knows "cuts every beat in the build, every half beat on the drop, slow-mo
+    on the outro". Also find added sound effects (whooshes, hits, risers).
+  - **The look per shot:** a color grade taken from the reference as a LUT, plus grain, vignette, blur, glow, black bars
+    and the frame size (9:16, 16:9, 1:1).
+  - **Text and captions:** read the words on screen (OCR), where they sit, size, color, a close font from the installed
+    fonts, and how they animate in and out (pop, typewriter, slide, shake), with their timing.
+  - **Other tricks:** freeze frames, reverse, repeats ("stutter"), split screen, picture-in-picture, overlays, masks.
+  - **What's in each shot:** close-up, medium or wide; where the person or subject sits in the frame; which way things
+    move. Reference shots get these tags so SM4 can pick clips that fit.
+- **SM4 Smarter clip picking.**
+  - Score every user clip and picture: sharp or blurry, how much movement, faces, close-up or wide, brightness, which way
+    it moves; done once and saved, so it's fast next time.
+  - Match each reference shot to the clip that fits best (a fast drop shot gets a high-motion clip, a close-up gets a
+    close-up), and use different clips instead of repeating one, unless there aren't enough.
+  - Reframe each clip so its subject sits where the reference's subject sits (auto crop / follow the face), also when the
+    frame size changes (16:9 clips into a 9:16 edit).
+  - The user can lock a clip to a spot ("this clip on the drop"), mark favorites, or say "don't use this one".
+- **SM5 Fit any length and any song.**
+  - A different song: map the reference's parts onto the new song's parts (build onto build, drop onto drop) and re-time
+    every cut to the new beats.
+  - A longer or shorter edit: repeat or drop parts of the recipe in a way that still follows the music.
+  - A **"how closely to copy" slider:** from "exact copy of the timing and effects" to "same feel, looser".
+- **SM6 Compare and fix (the accuracy check).**
+  - A **compare view:** the reference and the result side by side (or as an overlay / difference), playing in sync, with
+    the reference's cut and beat marks on the timeline.
+  - A **match score** per shot and overall: cut timing (in frames), motion (curve against curve), color (how far apart),
+    transitions and text (there or not). Shots that score low are marked in red.
+  - The AI (and a "Fix the low ones" button) goes over the low shots: moves cuts, re-fits keyframes, adjusts color, and
+    runs the score again until it stops getting better. Each fix is one undo step.
+- **SM7 Recipe editor and style library.**
+  - Show the recipe as a list and as marks on the timeline; change a shot's length, effect or transition by hand.
+  - Save styles to a **Style library** (a `.lumistyle` file: only timings, effects, curves, colors and text styles, never
+    the reference video or the song), give them names and a preview picture, use them again, or send the file to a
+    friend.
+  - Mix styles: the cuts from one and the color from another.
+- **Tests for SM3–SM7:** made-up references with known answers: zoom/pan curves (within 2% per frame), each transition
+  type (named correctly), downbeats and the drop (within a frame), a known LUT (colors within a small difference), known
+  on-screen words (read correctly), subject position after reframing, a re-timed edit on a second song (cuts on its
+  beats), the match score going up after Fix the low ones, and a saved `.lumistyle` that contains no video, audio or
+  file paths.
+
 The CapCut phase (C1–C14), the beginner layout (B1–B4) and C15 Friends test release are all done (2026-11-07).
 The Converter tab (links → MP3/MP4 via yt-dlp) was added the same day, then the timeline scrolling fix, layer mute
 and impact copy/paste; see "Where things stand".
