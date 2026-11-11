@@ -27,6 +27,7 @@
       "Lumina.html",
       "lumina-icon.png",
       "lumina.ico",
+      "icons/**",
       "LICENSE",
       "THIRD-PARTY-NOTICES.md",
       "electron/**",

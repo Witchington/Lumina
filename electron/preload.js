@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('lumina', {
   aiHttp: opts => ipcRenderer.invoke('ai:http', opts),                    // self tests only
   setDirty: v => ipcRenderer.send('dirty', v),
   setTitle: t => ipcRenderer.send('title', t),
+  setThemeIcon: t => ipcRenderer.send('theme-icon', t),                 // Round TI: the taskbar and title-bar icon
+  themeIconGet: () => ipcRenderer.invoke('theme-icon:get'),              // self tests only
   closeNow: () => ipcRenderer.send('close-now'),
   on: (channel, fn) => { if (['open-path', 'save-and-close'].includes(channel)) ipcRenderer.on(channel, (e, ...a) => fn(...a)); }
 });

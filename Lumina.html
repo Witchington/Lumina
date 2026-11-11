@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lumina</title>
-<link rel="icon" href="lumina-icon.png">
+<link rel="icon" id="favIcon" href="icons/lumina-icon-default.png">
 <script>
 // Fonts: the desktop app ships its own copies (works offline); in a plain browser, use Google Fonts.
 (function () {
@@ -201,7 +201,6 @@
 :root[data-theme="aero"] button:active { box-shadow: inset 0 1px 3px rgba(20, 90, 150, .35); }
 :root[data-theme="aero"] button.primary { text-shadow: 0 1px 1px rgba(0, 60, 110, .45); }
 /* greyscale also drains the colour from the logo */
-:root[data-theme="grey"] .logo img { filter: grayscale(1); }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
@@ -684,7 +683,7 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
 </head>
 <body>
 <nav class="menubar" id="menubar">
-  <div class="logo"><img src="lumina-icon.png" alt="">Lumina</div>
+  <div class="logo"><img class="themeicon" src="icons/lumina-icon-default.png" alt="">Lumina</div>
   <div class="menu" id="fileMenu" hidden></div>
   <!-- Edit / Composition / Layer / View / Window / Help are built in script (buildMenubar) -->
   <span id="aiLight" hidden onclick="aiBox()">AI</span>
@@ -808,7 +807,7 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
 
 <div class="modal welcome" id="welcome" hidden>
   <div class="box wbox" role="dialog" aria-modal="true" aria-labelledby="wTitle">
-    <div class="whead"><img src="lumina-icon.png" alt=""><div><h2 id="wTitle">Welcome to Lumina</h2><p class="empty">Make a video: drop in clips, add text, music and effects, then export.</p></div></div>
+    <div class="whead"><img class="themeicon" src="icons/lumina-icon-default.png" alt=""><div><h2 id="wTitle">Welcome to Lumina</h2><p class="empty">Make a video: drop in clips, add text, music and effects, then export.</p></div></div>
     <h3 class="wsub">Start a new video</h3>
     <div class="wsizes" id="wSizes"></div>
     <div class="wrow" id="wOpenRow"><button id="wOpen">Open a project…</button><button id="wNewImg" title="Image mode: one picture with layers, no timeline">New image…</button><span class="hint">or drop videos, photos and music anywhere</span></div>
@@ -10859,9 +10858,15 @@ function feedbackBox() {
 // View › Theme: '' is the default purple-grey look; the others set <html data-theme>
 const THEMES = { '': 'Default', grey: 'Greyscale', cozy: 'Cozy Home Theatre', aero: 'Frutiger Aero' };
 let themeName = '';
+const themeIcon = (k = themeName) => `icons/lumina-icon-${k || 'default'}.png`;
 function setTheme(k, save = true) {
   themeName = THEMES[k] ? k : '';
   if (themeName) document.documentElement.dataset.theme = themeName; else delete document.documentElement.dataset.theme;
+  // Round TI: the theme's own icon in the top-left logo, the welcome window, the tab, and (desktop) the taskbar and title bars
+  const ic = themeIcon();
+  document.querySelectorAll('img.themeicon').forEach(i => { if (i.getAttribute('src') !== ic) i.src = ic; });
+  const fav = $('#favIcon'); if (fav && fav.getAttribute('href') !== ic) fav.href = ic;
+  window.lumina?.setThemeIcon?.(themeName || 'default');
   if (!save) return;
   try { localStorage.setItem('lumina.theme', themeName); } catch (e) { }
   drawOverlay();

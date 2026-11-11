@@ -280,6 +280,25 @@
       step('aeroTheme', { ...aero, works: Object.values(aero).every(v => v === true) });
     }
 
+    // Round TI: every theme has its own icon in the top-left logo, the welcome window, the tab and the taskbar
+    {
+      const keepTheme = themeName, ti = {}, imgs = () => [...document.querySelectorAll('img.themeicon')];
+      const loaded = src => new Promise(ok => { const i = new Image(); i.onload = () => ok(i.naturalWidth); i.onerror = () => ok(0); i.src = src; });
+      const pw = floatPanel('project'); await wait(300);
+      for (const k of ['', 'grey', 'cozy', 'aero']) {
+        setTheme(k); await wait(60);
+        const name = k || 'default', want = `icons/lumina-icon-${name}.png`, m = await window.lumina.themeIconGet();
+        ti[name] = { logos: imgs().length === 2 && imgs().every(i => i.getAttribute('src') === want), tab: $('#favIcon').getAttribute('href') === want,
+          loads: (await loaded(want)) === 512, main: m.theme === name && m.file.endsWith(`lumina-icon-${name}.ico`),
+          panel: !!pw && (pw.document.documentElement.dataset.theme || '') === k, noFilter: getComputedStyle(imgs()[0]).filter === 'none' };
+        ti.files = m.files;
+      }
+      dockAll(); setTheme(keepTheme); await wait(60);
+      const back = await window.lumina.themeIconGet();
+      ti.restored = imgs()[0].getAttribute('src') === themeIcon(keepTheme) && back.theme === (keepTheme || 'default');
+      step('themeIcons', { ...ti, works: ti.files === 8 && ti.restored && ['default', 'grey', 'cozy', 'aero'].every(n => Object.values(ti[n]).every(v => v === true)) });
+    }
+
     // for the screenshot: the two halves of PLAY on one track, B selected
     setMulti([V1.id, V2.id], V1.id); putOnOneTrack(selLayers()); clearMulti(); S.sel = V2.id; refresh(); await settle(2);
     R.errors = __errs;

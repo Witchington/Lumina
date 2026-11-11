@@ -110,12 +110,19 @@ ipcMain.handle('speech:download', e => {
 });
 
 let win = null, dirty = false, pendingOpen = null, closing = false;
+// Round TI: each theme has its own icon (icons/lumina-icon-<theme>). The taskbar button and the title bars use it while
+// Lumina runs; the saved theme is kept here too so Lumina starts with the right one instead of purple first
+const THEME_ICONS = ['default', 'grey', 'cozy', 'aero'];
+const THEME_FILE = () => SELFTEST && process.env.LUMINA_TESTDIR ? path.join(process.env.LUMINA_TESTDIR, 'theme.json') : path.join(app.getPath('userData'), 'theme.json');
+let iconTheme = 'default';
+try { const t = JSON.parse(fs.readFileSync(THEME_FILE(), 'utf8')).theme; if (THEME_ICONS.includes(t)) iconTheme = t; } catch { }
+const themeIcon = (t = iconTheme) => path.join(ROOT, 'icons', `lumina-icon-${t}.${process.platform === 'win32' ? 'ico' : 'png'}`);
 const projectArg = argv => argv.find(a => /\.lumina$/i.test(a) && fs.existsSync(a));
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1600, height: 950, minWidth: 1100, minHeight: 680,
-    title: 'Lumina', icon: path.join(ROOT, process.platform === 'win32' ? 'lumina.ico' : 'lumina-icon.png'), backgroundColor: '#111014',
+    title: 'Lumina', icon: themeIcon(), backgroundColor: '#111014',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -131,7 +138,7 @@ function createWindow() {
       minWidth: 240, minHeight: 140, autoHideMenuBar: true, backgroundColor: '#111014', title: 'Lumina',
       // keeps drawing behind other windows, like the main window (the Composition viewer's frames come from this one)
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false },
-      icon: path.join(ROOT, process.platform === 'win32' ? 'lumina.ico' : 'lumina-icon.png') } };
+      icon: themeIcon() } };
     if (/^https?:/.test(url)) require('electron').shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -797,6 +804,12 @@ ipcMain.handle('show-in-folder',(e, p) => require('electron').shell.showItemInFo
 ipcMain.on('dirty', (e, v) => { dirty = !!v; });
 ipcMain.on('close-now', () => { closing = true; win && win.close(); });
 ipcMain.on('title', (e, t) => { if (win) win.setTitle(t); });
+ipcMain.on('theme-icon', (e, t) => {
+  t = THEME_ICONS.includes(t) ? t : 'default';
+  if (t !== iconTheme) { iconTheme = t; try { fs.writeFileSync(THEME_FILE(), JSON.stringify({ theme: t })); } catch { } }
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.setIcon(themeIcon());
+});
+if (SELFTEST) ipcMain.handle('theme-icon:get', () => ({ theme: iconTheme, file: themeIcon(), files: THEME_ICONS.flatMap(t => ['png', 'ico'].map(x => path.join(ROOT, 'icons', `lumina-icon-${t}.${x}`))).filter(f => fs.existsSync(f)).length }));
 // the version and Windows version, for the About box and Help › Send feedback
 ipcMain.on('app:info', e => { e.returnValue = { selftest: SELFTEST, version: app.getVersion(), os: `${process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'} ${require('os').release()}` }; });
 

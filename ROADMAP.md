@@ -74,7 +74,7 @@ frame / Back, New image, the switch), and step `modes` now uses the switch. The 
   that shows which mode you are in and switches both ways in one click. Ask the user which spot before building it. Fits
   with Round PW (Workspaces), which redoes this corner later.
 
-**For later: Round TI, an icon for each theme (the user, 2026-11-10; not started).** The "L" logo is purple in every
+**Round TI, an icon for each theme (the user, 2026-11-10; DONE 2026-11-11).** Built: `icons\lumina-icon-<default|grey|cozy|aero>` (512px .png + .ico with 16–256), sources for the new ones in `brand\themes\`; `setTheme` swaps the top-left and welcome logos and the tab icon, and sends the theme to main, which sets the icon on every Lumina window (floating panels too) and keeps it in `theme.json` so the next start uses it; the Greyscale filter is gone; test `timeline › themeIcons`. The original plan: The "L" logo is purple in every
 theme today, and Greyscale only turns it grey with a filter. Each theme should get its own matching icon.
 - **The icons:** one per theme, the same "L" shape in that theme's colors.
   - Default: the purple one Lumina has now.
