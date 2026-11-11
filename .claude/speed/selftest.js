@@ -466,9 +466,15 @@
       await new Promise(r => { const i = setInterval(() => { x.fillStyle = (performance.now() / 300 | 0) % 2 ? '#336' : '#363'; x.fillRect(0, 0, 320, 180); if (performance.now() - t0 > secs * 1000) { clearInterval(i); r(); } }, 16); });
       rec.stop(); await done; osc.stop();
       const buf = await new Blob(ch, { type: 'video/webm' }).arrayBuffer();
+      if (buf.byteLength < 5000) return { size: buf.byteLength };   // empty: keep the last good tone.webm on disk for the later steps
       const f = new File([buf], 'tone.webm', { type: 'video/webm' }); f.__path = await lumina.saveExport(buf, 'tone.webm', dir + 'tone.webm'); return f;
     };
-    const saTV = await load(await makeTone(4)); saTV.start = 0; saTV.cover = true;
+    // an empty recording means Windows sound gave Lumina nothing to record (a headset off, or held by another app);
+    // loading it would stop on a "Couldn't read" box forever, so this step fails with a clear reason and the rest go on
+    const toneFile = await makeTone(4);
+    if (toneFile.size < 5000) step('separateAudio', { error: `The 4-second test recording came out empty (${toneFile.size} bytes): Windows sound gave Lumina nothing to record. Check the sound output, then run the test again.`, works: false });
+    else {
+    const saTV = await load(toneFile); saTV.start = 0; saTV.cover = true;
     for (let i = 0; i < 40 && !(MEDIA[saTV.media].duration > 3); i++) await new Promise(r => setTimeout(r, 100));
     commit(); refresh();
     const saAn = AC.createAnalyser(); saAn.fftSize = 2048; AC.createMediaStreamSource(recDest.stream).connect(saAn);
@@ -529,6 +535,7 @@
       works: saBefore > .05 && saAfter > .05 && Math.abs(saAfter / saBefore - 1) < .35 && hiddenA < .01 && saQuarter > saAfter * .15 && saQuarter < saAfter * .4 && unmuted > .05 && keptLoud > .05
         && saGains[0] === 0 && saGains[1] > .9 && saGains[2] === true && sepMenuOn && sepMenuOff && sepBtn && saMade && saMarks === 3 && linkPanel
         && linkedMove.join() === '1,1' && altMove.join() === '1,0' && linkedTrim[0] === 3 && linkedTrim[1] === 3 && splitOk && saDelLeft && unlinked && relinked && muteBoxOn && muteMark === 2 && sepKept });
+    }
 
     // ---- 17. C12 clipboard and keyframe tools, through the real system clipboard (the test overwrites it)
     S.layers = []; for (const k in RT) delete RT[k]; clearMulti(); S.global.bg = 'black'; seek(0); refresh();
@@ -767,12 +774,14 @@
     }
 
     // ---- 21. B2 clip quick bar: buttons above the timeline for the picked clip
-    {
+    quick: {
       S.layers = []; for (const k in RT) delete RT[k]; clearMulti(); S.sel = null; seek(0); refresh();
       const qbNone = $('#qbar').hidden && !$('#tlHint').hidden;
       // a video (pasted from the clipboard as a file, like step 17), a picture and a text
       await lumina.clipWrite({ uris: 'file:///' + (dir + 'tone.webm').replace(/\\/g, '/') }); seek(0); pasteNow(); await cbWait(() => S.layers.some(x => x.kind === 'video'));
-      const qV = S.layers.find(x => x.kind === 'video'); qV.start = 0;
+      const qV = S.layers.find(x => x.kind === 'video');
+      if (!qV) { step('quickBar', { error: 'No test video to paste: the tone.webm recording came out empty (see separateAudio).', works: false }); break quick; }
+      qV.start = 0;
       const qI = await load(cbCard); qI.start = 0; qI.dur = 6; addText(); const qT = selLayer(); commit(); refresh();
       const ids = L => { clearMulti(); S.sel = L.id; S.selKey = null; refresh(); return [...document.querySelectorAll('#qbar [data-qb]')].map(b => b.dataset.qb).join(); };
       const qbVideo = ids(qV), qbImage = ids(qI), qbText = ids(qT);
@@ -890,7 +899,8 @@
         await wait(30);
         const cvQueued = CONV.jobs.length === 2 && CONV.jobs[0].state === 'run' && CONV.jobs[1].state === 'wait' && $('#cvUrl').value === '' && $('#cvQueue').querySelectorAll('.cvjob').length >= 2;
         let sawStages = new Set(), t0 = performance.now();
-        while (CONV.jobs.length && performance.now() - t0 < 90000) { CONV.jobs.forEach(j => j.stageText && sawStages.add(j.stageText.split('…')[0])); await wait(100); }
+        // a failed job stays in the list until dismissed, so stop waiting once only failed jobs are left
+        while (CONV.jobs.some(j => j.state !== 'fail') && performance.now() - t0 < 90000) { CONV.jobs.forEach(j => j.stageText && sawStages.add(j.stageText.split('…')[0])); await wait(100); }
         const cvDone = CONV.jobs.length === 0 && CONV.recent.length === 2 && CONV.recent[1].fmt === 'mp3' && CONV.recent[0].fmt === 'mp4';
         const mp3 = CONV.recent[1], mp4 = CONV.recent[0];
         const cvNames = /^tone( \(\d+\))?\.mp3$/.test(mp3?.name) && /^ramp( \(\d+\))?\.mp4$/.test(mp4?.name) && mp4.path.startsWith(out);
