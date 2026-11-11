@@ -1177,7 +1177,9 @@ Sources:
   - The menu bar, tools bar and fixed panels (Project / Composition / Preview + Properties / Timeline).
   - Effects & Presets and Effect Controls panels.
   - Workspace tabs.
-  - View › Theme: Default (purple-grey), Greyscale, Cozy Home Theatre.
+  - View › Theme: Default (purple-grey), Greyscale, Cozy Home Theatre, **Frutiger Aero** (added 2026-11-10: a bright sky
+    with bubbles, white frosted-glass panels, glossy aqua buttons, dark navy text; the preview stays dark slate; tested by
+    the timeline suite's `aeroTheme` step).
   - View › Toggle fullscreen (F11).
   - The Help menu tagline.
 

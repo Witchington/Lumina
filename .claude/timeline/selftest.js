@@ -267,6 +267,19 @@
         && comp.backAfterClose && comp.loopsAfter > 3 && nosel.pressNoSelect && nosel.whileDragging && nosel.afterDrop });
     }
 
+    // View › Theme › Frutiger Aero: in the menu, light glass and glossy buttons, saved, and back to the old theme
+    {
+      const keepTheme = themeName, cs = () => getComputedStyle(document.documentElement);
+      const inMenu = MENUS.View().some(it => Array.isArray(it) && it[0] === 'Frutiger Aero');
+      setTheme('aero');
+      const btn = getComputedStyle([...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Split')), aero = { inMenu, attr: document.documentElement.dataset.theme === 'aero',
+        darkText: cs().getPropertyValue('--fg').trim() === '#0e2c47', light: cs().colorScheme === 'light',
+        gloss: /gradient/.test(btn.backgroundImage) && /255, 255, 255/.test(btn.backgroundImage),
+        saved: localStorage.getItem('lumina.theme') === 'aero', stageDark: cs().getPropertyValue('--stage').trim() === '#1b1e22' };
+      setTheme(keepTheme); aero.restored = themeName === keepTheme && (document.documentElement.dataset.theme || '') === keepTheme;
+      step('aeroTheme', { ...aero, works: Object.values(aero).every(v => v === true) });
+    }
+
     // for the screenshot: the two halves of PLAY on one track, B selected
     setMulti([V1.id, V2.id], V1.id); putOnOneTrack(selLayers()); clearMulti(); S.sel = V2.id; refresh(); await settle(2);
     R.errors = __errs;
