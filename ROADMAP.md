@@ -7,16 +7,20 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 20 (Generate II, light); Round 19 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 21 (Noise & Grain); Round 20 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 19 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
+OK (never push). Round 20 is committed (2026-11-10; all twelve suites pass). The setup that replaces the old Lumina
 is done too (see its section).
-Rounds 8–19 and the Round 6 leftovers are done. **Round 20 is next, Generate II (light)** (WORKPLAN.md's round
-table): Advanced Lightning, Lens Flare, Beam, CC Light Burst, CC Light Sweep, CC Glue Gun, CC Threads, Fractal. Their host
-code is in EffectCraft's crates/gpu/src/fx_gen2.rs (bolts, beam, flare, glue, threads; Fractal stays on the CPU there) and
-the CC lights in generate2.rs; the kernels are fx_gen2.wgsl's (already a Lumina family). Round 19's helpers: `fxMaskPoly(E)`
+Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
+Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
+Noise. Check first which of them Lumina already has (some came in early Rounds), then find the rest's host code in
+EffectCraft's crates/gpu/src (fx_noise.rs is likely; check each file's `IDS` list). Round 20's helpers: `fxRng(seed)`
+(util::Rng, xorshift64* on BigInt), `fxPlaneAt` (Plane::sample), `fxBolt` / `fxLightningSegs` (generate2's bolts),
+`fxHslRgb` (common::hsl_to_rgb), `fxFractal` (the CPU fractal, in doubles); `E.texFrom8(bytes, w, h)` (an 8-bit RGBA
+picture from the CPU); lumina_gen.wgsl gained `lg_alpha` (Plane::alpha) and `lg_put` (a CPU picture, optionally over the
+original). Round 19's helpers: `fxMaskPoly(E)`
 (the layer's mask as a frame-pixel polygon, raster::mask_px), `fxRasterSegs` / `fxRasterConvex` / `fxPaint` (fx_gen2's
 tiled raster and fg2_paint), `fxItems` / `fxItemPush` / `fxItemData` (its tile tables), `fxPolyLen` / `fxPolyCum` /
 `fxPolyAt` / `fxTrimPoly` / `fxPolySegs` / `fxChaikin` / `fxStrokeOutline`, `fxContours` (marching squares), `fxGaussCPU`,
@@ -245,7 +249,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 20 (Generate II, light)**.
+EffectCraft carries on at **Round 21 (Noise & Grain)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -267,8 +271,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–19 and the Round 6 leftovers are done; Round 20 (Generate II, light) is next.** About 141
-   effects are left, in Rounds 20–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–20 and the Round 6 leftovers are done; Round 21 (Noise & Grain) is next.** About 133
+   effects are left, in Rounds 21–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -355,6 +359,17 @@ Sources:
 ---
 
 ## Where things stand (updated 2026-11-08)
+- **EffectCraft Round 20 done (2026-11-10): Generate II (light).** Generate gets **Advanced Lightning**, **Lens Flare**,
+  **Beam**, **CC Light Burst 2.5**, **CC Light Sweep**, **CC Glue Gun**, **CC Threads** and **Fractal** (24 in the group now).
+  - Kernels: fx_gen2's fg2_segs (linear core), fg2_pair, fg2_adv_bolt, fg2_beam, fg2_flare, fg2_glue, fg2_threads, and
+    fx_light's flt_burst / flt_sweep; host code from fx_gen2.rs and fx_light.rs, CPU plans from generate2.rs / generate3.
+  - Advanced Lightning's bolt is EffectCraft's lightning_segments ported to JS with its own 64-bit random numbers (BigInt),
+    so the same Conductivity State grows the same bolt; Alpha Obstacle reads the layer's alpha back.
+  - Fractal stays on the CPU in doubles, as in EffectCraft (f32 escape counts differ near the set): about 0.3 s to work out
+    at 1080p, then kept until a setting, the frame size or the layer's place changes (about 9 ms a frame after that).
+  - CC Light Sweep and CC Threads' directions turn with the layer; CC Glue Gun's Time Span is left out (EffectCraft draws
+    the beads at the brush only, on the CPU and the GPU).
+  - Speeds 5.6–9.3 ms a frame; Advanced Lightning 17.8 ms (its glow blur).
 - **EffectCraft Round 19 done (2026-11-10): Generate I (shapes & fills).** Generate gets **Fill**, **Checkerboard**,
   **Circle**, **Ellipse**, **Cell Pattern**, **Stroke**, **Scribble**, **Vegas**, **Write-on**, **Paint Bucket**,
   **Eyedropper Fill** and **Radio Waves** (16 in the group now).

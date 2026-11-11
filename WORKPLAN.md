@@ -48,7 +48,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 17 ✅ | Stylize I | Brush Strokes, Cartoon, Color Emboss, Roughen Edges, Scatter, Texturize, CC Threshold, CC Threshold RGB |
 | 18 ✅ | Stylize II (CC) | CC Block Load, Burn Film, Glass, HexTile, Kaleida, Mr. Smoothie, Plastic, RepeTile |
 | 19 ✅ | Generate I (shapes & fills) | Fill, Circle, Ellipse, Checkerboard, Cell Pattern, Stroke, Write-on, Scribble, Vegas, Paint Bucket, Eyedropper Fill, Radio Waves |
-| 20 | Generate II (light) | Advanced Lightning, Lens Flare, Beam, CC Light Burst, CC Light Sweep, CC Glue Gun, CC Threads, Fractal |
+| 20 ✅ | Generate II (light) | Advanced Lightning, Lens Flare, Beam, CC Light Burst, CC Light Sweep, CC Glue Gun, CC Threads, Fractal |
 | 21 | Noise & Grain | Add Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl Noise |
 | 22 | Perspective | Drop Shadow, Radial Shadow, Bevel Alpha, Bevel Edges, 3D Glasses, CC Cylinder, CC Sphere, CC Spotlight, CC Environment |
 | 23 | Transitions | Block Dissolve, Card Wipe, Gradient Wipe*, Iris/Linear/Radial Wipe, Venetian Blinds, CC Glass/Grid/Image/Light/Radial Scale/Scale Wipe, CC Jaws, Line Sweep, Twister, WarpoMatic |

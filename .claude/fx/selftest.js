@@ -1220,7 +1220,7 @@
           && cl(wo[0], WH, 10) && cl(wo[1], WH, 10) && cl(wo[2], BK) && cl(wo[3], BK) && sk[0][0] > 150 && sk[0][1] < 60 && cl(sk[1], BK) && skHalf[0] > 50 && skHalf[1] === 0
           && sb[0] > 2000 && sb[1] === 0 && sb[0] === sbStatic[0] });
       const menuG = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Generate');
-      step('generateMenu19', { count: menuG?.children.length, works: menuG?.children.length === 16 });
+      step('generateMenu19', { count: menuG?.children.length, works: menuG?.children.length >= 16 });
     }
     const r19speed = {};
     for (const [id, vals, mask] of [['fill', {}], ['checkerboard', {}], ['circle', {}], ['ellipse', {}], ['cellpattern', {}], ['stroke', {}, 1], ['scribble', {}, 1], ['vegas', {}],
@@ -1232,6 +1232,57 @@
     }
     L.mask = null;
     step('round19speed', r19speed);
+
+    // ---- Round 20: Generate II (light). Same card: six patches across the top half (black, white, red, green, blue, grey,
+    //      320 px each), a grey ramp below
+    {
+      const cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), sum = a => a[0] + a[1] + a[2], BK = [0, 0, 0], WH = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const K20 = {}, ids = ['advlightning', 'lensflare', 'beam', 'lightburst', 'lightsweep', 'gluegun', 'threads', 'fractal'];
+      for (const id of ids) { await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K20[fam + ':' + e] = r; } }
+      step('generate2Kernels', { ...K20, works: !Object.keys(K20).length });
+      while (L.fx?.length) delFX(L, 0); draw(); const plainF = frame();
+      // Advanced Lightning (Strike, composited): a bolt from the origin to the direction point, the same each draw; another
+      // Conductivity State grows another bolt
+      f = await only('advlightning'); draw(); const al1 = frame(), alN = diff(plainF, al1).changed; draw(1.4); const alSame = diff(al1, frame()).changed;
+      set(f, 'conductivityState', 77); draw(); const alOther = diff(al1, frame()).changed;
+      // Lens Flare in the ramp: brighter at the flare centre than the card under it
+      f = await only('lensflare'); set(f, 'centerX', .5); set(f, 'centerY', .8); draw(); const lf = [px(960, 864), P0(960, 864)];
+      // Beam (composited): a white beam from x 480 to 720 along y 540, the rest of the card untouched
+      f = await only('beam'); draw(); const bm = [px(600, 540), px(1200, 540), P0(1200, 540)];
+      // CC Light Burst (Straight): the brightest colour along each ray to the centre; the centre keeps its own colour;
+      // Ray Length 0 changes nothing
+      f = await only('lightburst'); draw(); const lb = [px(100, 100), px(960, 300), P0(960, 300)]; set(f, 'rayLength', 0); draw(); const lbOff = diff(plainF, frame()).changed;
+      // CC Light Sweep: light along a line through the centre; far from it the card is untouched
+      f = await only('lightsweep'); draw(); const ls = [px(1035, 670), P0(1035, 670), px(100, 100), P0(100, 100)];
+      // CC Glue Gun (Glue Only): beads at the brush in the ramp, nothing elsewhere; Over Layer keeps the card round them
+      f = await only('gluegun'); set(f, 'brushX', .5); set(f, 'brushY', .75); f.style = 1; draw(); const gg = [px(960, 810), px(960, 700)]; f.style = 0; draw(); const ggOver = [px(960, 700), P0(960, 700)];
+      // CC Threads: the white patch woven into threads with gaps (80 % coverage leaves about 4 % open)
+      f = await only('threads'); draw(); let gaps = 0, n = 0; { const d = frame(); for (let y = 0; y < 540; y += 2) for (let x = 330; x < 630; x += 2) { const i = (y * 1920 + x) * 4; n++; if (d[i] + d[i + 1] + d[i + 2] < 60) gaps++; } }
+      const thGap = gaps / n;
+      // Fractal: Solid Color draws the inside of the set red and leaves the outside clear; it is kept between frames
+      f = await only('fractal'); f.palette = 3; let t0 = performance.now(); draw(); ctx.getImageData(0, 0, 1, 1); const frFirst = +(performance.now() - t0).toFixed(1);
+      let red = 0, clear = 0; { const d = frame(); for (let i = 0; i < d.length; i += 16) { if (d[i] > 240 && d[i + 1] < 20 && d[i + 2] < 20) red++; else if (d[i] + d[i + 1] + d[i + 2] < 10) clear++; } }
+      t0 = performance.now(); draw(1.2); ctx.getImageData(0, 0, 1, 1); const frKept = +(performance.now() - t0).toFixed(1);
+      // Overlay: the set's outside shows the card
+      f.overlay = true; draw(); const frOver = [px(1800, 100), P0(1800, 100)];
+      f.palette = 0; f.overlay = false; draw(); const frGrad = diff(plainF, frame()).changed;
+      step('generate2Details', { lightning: alN, lightningSame: alSame, lightningOther: alOther, flare: lf.map(String), beam: bm.map(String), burst: lb.map(String), burstOff: lbOff,
+        sweep: ls.map(String), glue: gg.map(String), glueOver: ggOver.map(String), threadGaps: +thGap.toFixed(3), fractalRed: red, fractalClear: clear, fractalOverlay: frOver.map(String),
+        fractalGradient: frGrad, fractalFirstMs: frFirst, fractalKeptMs: frKept,
+        works: alN > 2000 && alSame === 0 && alOther > 500 && sum(lf[0]) > sum(lf[1]) + 150 && cl(bm[0], WH, 10) && cl(bm[1], bm[2])
+          && cl(lb[0], WH, 10) && cl(lb[1], lb[2], 3) && lbOff === 0 && sum(ls[0]) > sum(ls[1]) + 60 && cl(ls[2], ls[3])
+          && sum(gg[0]) > 100 && cl(gg[1], BK) && cl(ggOver[0], ggOver[1]) && thGap > .01 && thGap < .1
+          && red > 5000 && clear > 5000 && cl(frOver[0], frOver[1], 3) && frGrad > 500000 && frKept < 60 });
+      const menuG = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Generate');
+      step('generateMenu20', { count: menuG?.children.length, works: menuG?.children.length === 24 });
+    }
+    const r20speed = {};
+    for (const id of ['advlightning', 'lensflare', 'beam', 'lightburst', 'lightsweep', 'gluegun', 'threads', 'fractal']) {
+      await only(id); draw(); ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r20speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+    }
+    step('round20speed', r20speed);
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');

@@ -1,4 +1,4 @@
-// Generators for Lumina (EffectCraft Round 19) that EffectCraft draws only on the CPU: Circle (generate::circle),
+// Generators for Lumina (EffectCraft Rounds 19–20) that EffectCraft draws only on the CPU: Circle (generate::circle),
 // Ellipse (generate2::ellipse) and Cell Pattern's HQ patterns (generate2::cell_pattern with 4 × 4 samples a pixel and
 // the wider neighbourhood of cells). Ported from EffectCraft's crates/effects/src/generate.rs and generate2.rs (MIT
 // licence), operation for operation. Compiles after EffectCraft's common.wgsl, kernels.wgsl and fx_generate.wgsl
@@ -136,4 +136,32 @@ fn lg_cell_hq(@builtin(global_invocation_id) gid: vec3<u32>) {
         val = 1.0 - val;
     }
     textureStore(out, p, vec4<f32>(val, val, val, 1.0));
+}
+
+// ---- Round 20 (Generate II, light)
+
+// Plane::alpha: the layer's alpha into x (CC Light Sweep's edges; EffectCraft's fx_extra fxe_alpha).
+@compute @workgroup_size(16, 16)
+fn lg_alpha(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let p = lg_pixel(gid);
+    if (p.x < 0) {
+        return;
+    }
+    textureStore(out, p, vec4<f32>(textureLoad(src, p, 0).w, 0.0, 0.0, 0.0));
+}
+
+// A picture drawn on the CPU (aux, premultiplied: Fractal) as the result; u[0].x = 1 puts it over the original
+// (generate3::fractal's Overlay, raster::over).
+@compute @workgroup_size(16, 16)
+fn lg_put(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let p = lg_pixel(gid);
+    if (p.x < 0) {
+        return;
+    }
+    let c = textureLoad(aux, p, 0);
+    if (P.u[0].x != 0u) {
+        textureStore(out, p, c + textureLoad(src, p, 0) * (1.0 - c.w));
+    } else {
+        textureStore(out, p, c);
+    }
 }

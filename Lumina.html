@@ -2311,7 +2311,7 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   fx_warp: ['fx_warp'],               // Round 15 on: CC Bend It, CC Page Turn (fxw_*)
   fx_transition: ['fx_transition'],   // Round 15 on: CC Bender, CC Blobbylize (ftr_*)
   fx_gen2: ['fx_gen2'],               // Round 19 on: Stroke, Scribble, Vegas, Write-on, Paint Bucket, Eyedropper Fill, Radio Waves (fg2_*)
-  lumina_gen: ['fx_generate', 'lumina_gen'] };   // Round 19: Circle, Ellipse, Cell Pattern HQ (EffectCraft draws them on the CPU; shaders/)
+  lumina_gen: ['fx_generate', 'lumina_gen'] };   // Rounds 19–20: Circle, Ellipse, Cell Pattern HQ, Fractal's put (EffectCraft draws them on the CPU; shaders/)
 const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
@@ -2429,6 +2429,11 @@ function fxApply(L, t, lc) {
       const x = dev.createTexture({ size: [tw, th], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
       dev.queue.writeTexture({ texture: x }, arr, { bytesPerRow: tw * 4, rowsPerImage: th }, [tw, th]); temp.push(x); return x;
     },
+    // an 8-bit premultiplied RGBA picture made on the CPU (tw × th) as a working image (Fractal)
+    texFrom8(arr, tw = w, th = h) {
+      const x = dev.createTexture({ size: [tw, th], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      dev.queue.writeTexture({ texture: x }, arr, { bytesPerRow: tw * 4, rowsPerImage: th }, [tw, th]); temp.push(x); return x;
+    },
     tex(tw, th) {
       const x = dev.createTexture({ size: [tw, th], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
       temp.push(x); return x;
@@ -2503,6 +2508,151 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 20 helpers (Generate II, light): generate2.rs's bolts and flare ghosts, generate3's fractal ----
+// util::Rng (xorshift64*, as EffectCraft's): f() uniform in [0, 1), s() in [-1, 1)
+function fxRng(seed) {
+  const M = 0xffffffffffffffffn; let st = (BigInt.asUintN(64, BigInt.asUintN(64, seed) * 0x9E3779B97F4A7C15n) ^ 0xD1B54A32D192ED03n) | 1n;
+  const next = () => { let x = st; x ^= x >> 12n; x = (x ^ (x << 25n)) & M; x ^= x >> 27n; st = x; return (x * 0x2545F4914F6CDD1Dn) & M; };
+  const f = () => Number(next() >> 11n) / 9007199254740992;
+  return { f, s: () => f() * 2 - 1 };
+}
+// Plane::sample: bilinear, edges clamped, on a one-float-a-pixel plane
+function fxPlaneAt(P, x, y) {
+  const fx = x - .5, fy = y - .5, x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+  const g = (i, j) => P.v[clamp(j, 0, P.h - 1) * P.w + clamp(i, 0, P.w - 1)];
+  const a = g(x0, y0), b = g(x0 + 1, y0), c = g(x0, y0 + 1), d = g(x0 + 1, y0 + 1), top = a + (b - a) * tx, bot = c + (d - c) * tx;
+  return top + (bot - top) * ty;
+}
+const FX_LIGHTNING_TYPES = ['Direction', 'Strike', 'Breaking', 'Bouncy', 'Omni', 'Anywhere', 'Vertical', 'Two-Way Strike'];
+// generate2::bolt: a branch grown by midpoint displacement, its segments and forks appended
+function fxBolt(cfg, a, z, depth, inten, main, rng, out) {
+  if (out.segs.length > 20000) return;
+  const dx = z[0] - a[0], dy = z[1] - a[1], len = Math.hypot(dx, dy);
+  if (depth === 0 || len < 1) { out.segs.push([a, z, inten]); out.mains.push(main); return; }
+  const nx = -dy / Math.max(len, 1e-9), ny = dx / Math.max(len, 1e-9);
+  let off = rng.s() * len * .22 * cfg.turb * cfg.shape;
+  // Alpha Obstacle: of the two mirror positions for the midpoint, prefer the one with less (positive) or more (negative) alpha
+  if (cfg.obstacle !== 0 && cfg.alpha && (main || !cfg.mainOnly)) {
+    const mx = (a[0] + z[0]) * .5, my = (a[1] + z[1]) * .5, a1 = fxPlaneAt(cfg.alpha, mx + nx * off, my + ny * off), a2 = fxPlaneAt(cfg.alpha, mx - nx * off, my - ny * off);
+    const worse = cfg.obstacle > 0 ? a1 > a2 : a1 < a2;
+    if (worse && rng.f() < Math.abs(cfg.obstacle) / 10) off = -off;
+  }
+  const m = [(a[0] + z[0]) * .5 + nx * off, (a[1] + z[1]) * .5 + ny * off];
+  // positive obstacles stop branches that run into opaque areas
+  if (cfg.obstacle > 0 && !main && (cfg.alpha ? fxPlaneAt(cfg.alpha, m[0], m[1]) : 0) > .5 && rng.f() < cfg.obstacle / 10) return;
+  fxBolt(cfg, a, m, depth - 1, inten, main, rng, out);
+  fxBolt(cfg, m, z, depth - 1, inten, main, rng, out);
+  if (rng.f() < cfg.fork && inten > cfg.term && len >= cfg.minFork) {
+    const ang = rng.s() * .7, sn = Math.sin(ang), cs = Math.cos(ang), fx = (m[0] - a[0]) * cs - (m[1] - a[1]) * sn, fy = (m[0] - a[0]) * sn + (m[1] - a[1]) * cs;
+    // Fork Strength 50 % keeps the decayed intensity; Fork Variation randomises it
+    const fi = inten * (1 - cfg.decay) * cfg.forkStrength * 2 * (cfg.forkVar > 0 ? 1 - cfg.forkVar * rng.f() : 1);
+    fxBolt(cfg, m, [m[0] + fx * 1.2, m[1] + fy * 1.2], Math.max(0, depth - 1), Math.min(fi, 1), false, rng, out);
+  }
+}
+// generate2::lightning_segments: Advanced Lightning's bolt as [a, z, intensity] segments in frame pixels
+function fxLightningSegs(E, img, q) {
+  const kind = q('lightningType'), o = q('origin'), d = q('direction'), turb = Math.max(0, q('turbulence')), fork = clamp(q('forking') / 100, 0, 1);
+  const decay = clamp(q('decay'), 0, 1), fractal = q('fractalType'), depth = clamp(Math.round(q('complexity')), 1, 12) + (fractal === 2 ? 1 : 0);
+  const state = BigInt(Math.floor(Math.max(0, q('conductivityState')))), rng = fxRng(state ^ (BigInt(fxSeed(E)) << 32n));
+  const obstacle = clamp(q('alphaObstacle'), -10, 10);
+  // the layer's alpha (Plane::alpha), read back at full size, only when Alpha Obstacle is used
+  let alpha = null;
+  if (obstacle !== 0) { const R = E.read(img, Math.max(E.w, E.h)), n = R.w * R.h, v = new Float32Array(n); for (let i = 0; i < n; i++) v[i] = R.d[i * 4 + 3] / 255; alpha = { v, w: R.w, h: R.h }; }
+  const cfg = { turb, fork, decay, alpha, obstacle, mainOnly: q('mainCoreCollisionOnly'), minFork: Math.max(0, q('minForkDistance')) * E.px(1),
+    term: clamp(q('terminationThreshold') / 100, 0, 1), shape: fractal === 1 ? .7 : fractal === 2 ? .45 : 1,
+    forkStrength: clamp(q('forkStrength') / 100, 0, 1), forkVar: clamp(q('forkVariation') / 100, 0, 1) };
+  const out = { segs: [], mains: [] }, w = E.w, h = E.h, go = (a, z, dp, c) => fxBolt(c, a, z, dp, 1, true, rng, out);
+  if (kind === 0) go(o, [o[0] + (d[0] - o[0]) * 3, o[1] + (d[1] - o[1]) * 3], depth, cfg);
+  else if (kind === 2) { const dist = Math.hypot(d[0] - o[0], d[1] - o[1]); go(o, d, depth, { ...cfg, fork: Math.min(1, fork * (.5 + dist / Math.max(w, h, 1))) }); }
+  else if (kind === 3) go(o, d, depth, { ...cfg, turb: turb * 1.6 });
+  else if (kind === 4 || kind === 5) {
+    const len = Math.max(Math.hypot(d[0] - o[0], d[1] - o[1]), Math.min(w, h) * .25);
+    for (let i = 0; i < 4; i++) { const a = rng.f() * 2 * Math.PI, l = kind === 5 ? len * (.3 + .7 * rng.f()) : len; go(o, [o[0] + Math.cos(a) * l, o[1] + Math.sin(a) * l], depth, cfg); }
+  } else if (kind === 6) go(o, [o[0], h], depth, cfg);
+  else if (kind === 7) { const m = [(o[0] + d[0]) * .5, (o[1] + d[1]) * .5], dp = Math.max(1, depth - 1); go(o, m, dp, cfg); go(d, m, dp, cfg); }
+  else go(o, d, depth, cfg);
+  const segs = out.segs, dist = p => Math.hypot(p[0] - o[0], p[1] - o[1]); let far = 1e-9; for (const s of segs) far = Math.max(far, dist(s[1]));
+  // Decay Main Core: the whole bolt fades with distance from the origin
+  if (q('decayMainCore')) for (const s of segs) s[2] *= Math.max(0, 1 - decay * dist(s[0]) / far);
+  // Core Drain: the main core loses intensity along its length
+  const drain = clamp(q('coreDrain') / 100, 0, 1);
+  if (drain > 0) segs.forEach((s, i) => { if (out.mains[i]) s[2] *= Math.max(0, 1 - drain * dist(s[0]) / far); });
+  return segs;
+}
+// generate2::flare_ghosts: (t along the axis, radius × diagonal, colour, strength, ring) for each Lens Type
+const FX_FLARE_GHOSTS = [
+  [[.25, .02, 1, .9, .6, .25, 0], [.5, .04, .3, 1, .5, .15, 0], [.75, .025, .5, .6, 1, .2, 0], [1.15, .07, 1, .5, .3, .1, 0], [1.45, .1, .6, .4, 1, .08, 1], [1.8, .05, .4, .9, 1, .15, 0], [2.1, .14, 1, .8, .4, .06, 1]],
+  [[.45, .03, .4, .7, 1, .2, 0], [.9, .06, .5, 1, .6, .12, 0], [1.3, .12, 1, .6, .3, .1, 1], [1.6, .04, .8, .5, 1, .15, 0]],
+  [[.6, .02, 1, .8, .5, .25, 0], [1.1, .05, .6, .6, 1, .12, 0], [1.4, .09, .4, .9, 1, .08, 1]]];
+// common::hsl_to_rgb
+function fxHslRgb(h, s, l) {
+  if (s <= 0) return [l, l, l];
+  const q = l < .5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  const ch = t0 => { const t = t0 - Math.floor(t0); return t < 1 / 6 ? p + (q - p) * 6 * t : t < .5 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; };
+  return [ch(h + 1 / 3), ch(h), ch(h - 1 / 3)];
+}
+const FX_FRACTAL_SETS = ['Mandelbrot', 'Mandelbrot inverse', 'Mandelbrot over Julia', 'Mandelbrot inverse over Julia', 'Julia', 'Julia inverse'];
+// generate3::fractal on the CPU, in doubles as EffectCraft does (its escape counts need f64): the picture, premultiplied 8-bit
+function fxFractal(E, q) {
+  const sc = q('setChoice'), power = 2 + Math.min(2, q('equation')), mc = [q('mandelX'), q('mandelY')], mmag = q('mandelMag'), mlim = Math.max(1.01, q('mandelLimit'));
+  const jc = [q('juliaX'), q('juliaY')], jmag = q('juliaMag'), jlim = Math.max(1.01, q('juliaLimit')), post = [q('postX'), q('postY')];
+  const overlay = q('overlay'), transparency = q('transparency'), clearInside = transparency || overlay, palette = q('palette');
+  const hue = q('hue') / 360, steps = Math.max(1, q('cycleSteps')), cycOff = q('cycleOffset') / 360, edge = q('edgeHighlight');
+  const every = q('sampling') === 1, factor = clamp(Math.round(q('factor')), 1, 9), w = E.w, h = E.h, [rx, ry, rw0, rh] = E.rect, rw = Math.max(1e-9, rw0);
+  const julia = sc === 4 || sc === 5, inverse = sc === 1 || sc === 3 || sc === 5, overJulia = sc === 2 || sc === 3;
+  const [cen, mag, lim] = julia ? [jc, jmag, jlim] : [mc, mmag, mlim], span = 3.5 / 2 ** mag, maxIt = Math.floor(clamp(96 + 48 * Math.max(mag, 0), 64, 3000));
+  const lim2 = lim * lim, lnLim = Math.log(Math.max(lim, 1.0001)), lnP = Math.log(power);
+  // the smooth escape count (NaN inside the set) at frame pixel (X, Y)
+  const ev = (X, Y) => {
+    let u = ((X - rx) / rw - .5) * span + cen[0], v = (Y - ry - rh * .5) / rw * span + cen[1];
+    if (inverse) { const d = Math.max(u * u + v * v, 1e-12); u = u / d + post[0]; v = -v / d + post[1]; }
+    let x, y, cx, cy;
+    if (julia) { x = u; y = v; cx = mc[0]; cy = mc[1]; } else { [x, y] = overJulia ? jc : [0, 0]; cx = u; cy = v; }
+    for (let i = 0; i < maxIt; i++) {
+      let nx, ny;
+      if (power === 3) { nx = x * x * x - 3 * x * y * y; ny = 3 * x * x * y - y * y * y; }
+      else if (power === 4) { const a = x * x - y * y, b = 2 * x * y; nx = a * a - b * b; ny = 2 * a * b; }
+      else { nx = x * x - y * y; ny = 2 * x * y; }
+      x = nx + cx; y = ny + cy;
+      const m2 = x * x + y * y;
+      if (m2 > lim2) { const nu = Math.log(Math.max(Math.log(m2) * .5 / lnLim, 1e-9)) / lnP; return Math.max(0, i + 1 - nu); }
+    }
+    return NaN;
+  };
+  const rem1 = v => v - Math.floor(v), solid = palette === 3 ? fxHslRgb(hue, 1, .5) : null;
+  // straight colour and alpha of one escape count
+  const shade = n => {
+    if (solid) return Number.isNaN(n) !== transparency ? [...solid, 1] : [0, 0, 0, 0];
+    if (Number.isNaN(n)) return clearInside ? [0, 0, 0, 0] : [0, 0, 0, 1];
+    const u = n / steps + cycOff, band = rem1(u);
+    let c = palette === 1 ? fxHslRgb(rem1(hue + band), 1, .5) : palette === 2 ? (Math.floor(u) % 2 === 0 ? [0, 0, 0] : [1, 1, 1]) : fxHslRgb(rem1(hue + Math.floor(u) * .125), .85, clamp(band, 0, 1));
+    if (edge && n - Math.floor(n) < .12) c = c.map(v => v * .4 + .6);
+    return [...c, 1];
+  };
+  const first = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) first[y * w + x] = ev(x + .5, y + .5);
+  const o = new Uint8Array(w * h * 4), q8 = v => Math.round(clamp(v, 0, 1) * 255), lim4 = steps * .25;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, here = first[i];
+    let ss = factor > 1 && every;
+    if (factor > 1 && !every) for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const b = first[ny * w + nx], ia = Number.isNaN(here), ib = Number.isNaN(b);
+      if (ia !== ib || (!ia && Math.abs(here - b) > lim4)) { ss = true; break; }
+    }
+    let c;
+    if (ss) {
+      const acc = [0, 0, 0, 0];
+      for (let sy = 0; sy < factor; sy++) for (let sx = 0; sx < factor; sx++) {
+        const s = shade(ev(x + (sx + .5) / factor, y + (sy + .5) / factor)), a = s[3];
+        acc[0] += s[0] * a; acc[1] += s[1] * a; acc[2] += s[2] * a; acc[3] += a;
+      }
+      const n = factor * factor; c = acc.map(v => v / n);
+    } else { const s = shade(here); c = [s[0] * s[3], s[1] * s[3], s[2] * s[3], s[3]]; }
+    o[i * 4] = q8(c[0]); o[i * 4 + 1] = q8(c[1]); o[i * 4 + 2] = q8(c[2]); o[i * 4 + 3] = q8(c[3]);
+  }
+  return o;
+}
 // ---- Round 19 helpers (Generate I): generate3's plans (raster.rs, paths.rs, fill.rs) and fx_gen2.rs's tiled raster ----
 const fxRem = (x, m) => ((x % m) + m) % m;   // f64::rem_euclid
 const fxSmooth = (e0, e1, x) => { if (Math.abs(e1 - e0) < 1e-9) return x < e0 ? 0 : 1; const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };   // util::smoothstep
@@ -4366,6 +4516,162 @@ const FX = {
         const c = P.contour; aux = E.texFrom(c.sdf, c.w, c.h); f0[1] = c.anchor[0]; f0[2] = c.anchor[1];
       }
       return E.run('fx_gen2', 'fg2_radio', fxP({ 0: [n, P.contour ? 1 : 0, P.profile, 0] }, { 0: f0 }), img, aux, null, E.data(new Float32Array([...d, ...ol, 0])));
+    } },
+  // ---- Round 20: Generate II (light). EffectCraft's generate2.rs (Advanced Lightning, Lens Flare, Beam, CC Light Burst,
+  //      CC Light Sweep) and generate3 (CC Glue Gun, CC Threads, Fractal); GPU host code from fx_gen2.rs and fx_light.rs.
+  //      Fractal stays on the CPU, in doubles, as in EffectCraft; Lumina keeps its picture until a setting changes.
+  advlightning: { name: 'Advanced Lightning', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_segs'], ['fx_pixel2', 'fp2_box'], ['fx_gen2', 'fg2_pair'], ['fx_gen2', 'fg2_adv_bolt']], params: [
+      { id: 'lightningType', label: 'Lightning type', type: 'pick', def: 1, opts: FX_LIGHTNING_TYPES.map((n, i) => [i, n]) },
+      { id: 'origin', label: 'Origin', type: 'pt', def: [.25, .2] },
+      { id: 'direction', label: 'Direction', type: 'pt', def: [.75, .8] },
+      { id: 'conductivityState', label: 'Conductivity state', def: 10, min: 0, max: 100000, dec: 1 },
+      { id: 'coreRadius', label: 'Core radius', def: 3, min: 0, max: 100, dec: 1 },
+      { id: 'coreOpacity', label: 'Core opacity %', def: 75, min: 0, max: 100, dec: 1 },
+      { id: 'coreColor', label: 'Core color', type: 'color', def: '#ffffff' },
+      { id: 'glowRadius', label: 'Glow radius', def: 50, min: 0, max: 1000, dec: 1 },
+      { id: 'glowOpacity', label: 'Glow opacity %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'glowColor', label: 'Glow color', type: 'color', def: '#4059ff' },
+      { id: 'turbulence', label: 'Turbulence', def: 1, min: 0, max: 10, dec: 2 },
+      { id: 'forking', label: 'Forking %', def: 25, min: 0, max: 100, dec: 1 },
+      { id: 'decay', label: 'Decay', def: .3, min: 0, max: 1, dec: 2 },
+      { id: 'decayMainCore', label: 'Decay main core', type: 'check', def: false },
+      { id: 'alphaObstacle', label: 'Alpha obstacle', def: 0, min: -10, max: 10, dec: 2 },
+      { id: 'composite', label: 'Composite on original', type: 'check', def: true },
+      { id: 'complexity', label: 'Complexity', def: 6, min: 1, max: 12, dec: 0 },
+      { id: 'minForkDistance', label: 'Min fork distance', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'terminationThreshold', label: 'Termination threshold', def: 5, min: 0, max: 100, dec: 1 },
+      { id: 'mainCoreCollisionOnly', label: 'Main core collision only', type: 'check', def: false },
+      { id: 'fractalType', label: 'Fractal type', type: 'pick', def: 0, opts: [[0, 'Linear'], [1, 'Semi-linear'], [2, 'Spline']] },
+      { id: 'coreDrain', label: 'Core drain', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'forkStrength', label: 'Fork strength', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'forkVariation', label: 'Fork variation', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const coreR = Math.max(.3, E.px(q('coreRadius'))), glowR = E.px(q('glowRadius')), glow = glowR > .5, segs = fxLightningSegs(E, img, q);
+      // fx_gen2::raster_segs with Advanced Lightning's linear core (bit 0 of u[1].x)
+      const it = fxItems(E, 10);
+      for (const [a, z, v] of segs) { const pad = coreR + 1; fxItemPush(it, [Math.min(a[0], z[0]) - pad, Math.min(a[1], z[1]) - pad, Math.max(a[0], z[0]) + pad, Math.max(a[1], z[1]) + pad], [a[0], a[1], z[0], z[1], coreR, v]); }
+      const D = fxItemData(it); if (!D) return img;
+      const core = E.run('fx_gen2', 'fg2_segs', fxP({ 0: [D.at, 10, it.tx, 1], 1: [1, 0, 0, 0] }, { 0: [1, 0, -3e38, 0] }), img, null, null, E.data(D.d));
+      const blurred = glow ? fxGaussPlane(E, core, glowR / 3, glowR / 3) : core, m = E.run('fx_gen2', 'fg2_pair', fxP(), core, blurred);
+      return E.run('fx_gen2', 'fg2_adv_bolt', fxP({ 0: [q('composite'), glow, 0, 0] }, { 0: [q('coreOpacity') / 100, q('glowOpacity') / 100, 0, 0], 1: [...q('coreColor'), 0], 2: [...q('glowColor'), 0] }), img, m);
+    } },
+  lensflare: { name: 'Lens Flare', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_flare']], params: [
+      { id: 'center', label: 'Flare center', type: 'pt', def: [.25, .25] },
+      { id: 'brightness', label: 'Flare brightness %', def: 100, min: 0, max: 300, dec: 0 },
+      { id: 'lensType', label: 'Lens type', type: 'pick', def: 0, opts: [[0, '50-300mm zoom'], [1, '35mm prime'], [2, '105mm prime']] },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const [fx, fy] = q('center'), [x0, y0, w, h] = E.rect, lens = q('lensType'), G = FX_FLARE_GHOSTS[lens] || FX_FLARE_GHOSTS[0];
+      const [coreK, rays, haloR] = lens === 1 ? [.035, 6, .18] : lens === 2 ? [.02, 12, .3] : [.03, 8, .25];
+      return E.run('fx_gen2', 'fg2_flare', fxP({ 0: [G.length, 0, 0, 0] }, { 0: [fx, fy, x0 + w * .5, y0 + h * .5], 1: [Math.max(1, Math.hypot(w, h)), coreK, rays, haloR],
+        2: [q('brightness') / 100, q('blend') / 100, 0, 0] }), img, null, null, E.data(new Float32Array(G.flat())));
+    } },
+  beam: { name: 'Beam', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_beam']], params: [
+      { id: 'start', label: 'Starting point', type: 'pt', def: [.25, .5] },
+      { id: 'end', label: 'Ending point', type: 'pt', def: [.75, .5] },
+      { id: 'length', label: 'Length %', def: 25, min: 0, max: 100, dec: 1 },
+      { id: 'time', label: 'Time %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'startThickness', label: 'Starting thickness', def: 8, min: 0, max: 1000, dec: 1 },
+      { id: 'endThickness', label: 'Ending thickness', def: 8, min: 0, max: 1000, dec: 1 },
+      { id: 'softness', label: 'Softness %', def: 20, min: 0, max: 100, dec: 1 },
+      { id: 'insideColor', label: 'Inside color', type: 'color', def: '#ffffff' },
+      { id: 'outsideColor', label: 'Outside color', type: 'color', def: '#6666ff' },
+      { id: 'perspective', label: '3D perspective', type: 'check', def: true },
+      { id: 'composite', label: 'Composite on original', type: 'check', def: true }],
+    run(E, img, q) {
+      const s = q('start'), e = q('end'), len = clamp(q('length') / 100, 0, 1), t0 = clamp(q('time') / 100, 0, 1) * (1 - len), dx = e[0] - s[0], dy = e[1] - s[1];
+      return E.run('fx_gen2', 'fg2_beam', fxP({ 0: [q('perspective'), q('composite'), len > 0, 0] }, { 0: [s[0], s[1], dx, dy],
+        1: [t0, t0 + len, E.px(q('startThickness')), E.px(q('endThickness'))], 2: [clamp(q('softness') / 100, 0, 1), Math.max(1e-9, dx * dx + dy * dy), 0, 0],
+        3: [...q('insideColor'), 0], 4: [...q('outsideColor'), 0] }), img);
+    } },
+  lightburst: { name: 'CC Light Burst 2.5', cat: 'Generate', clip: true, kernels: [['fx_light', 'flt_burst']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'intensity', label: 'Intensity', def: 100, min: 0, max: 600, dec: 1 },
+      { id: 'rayLength', label: 'Ray length', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'burst', label: 'Burst', type: 'pick', def: 0, opts: [[0, 'Straight'], [1, 'Fade'], [2, 'Center']] },
+      { id: 'setColor', label: 'Set color', type: 'check', def: false },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' }],
+    run(E, img, q) {
+      const [cx, cy] = q('center'), inten = q('intensity') / 100, k = clamp(q('rayLength') / 100, 0, 1), setC = q('setColor');
+      if (k <= 0 && Math.abs(inten - 1) < 1e-6 && !setC) return img;
+      return E.run('fx_light', 'flt_burst', fxP({ 0: [q('burst'), setC, 0, 0] }, { 0: [cx, cy, k, inten], 1: [...q('color'), 0] }), img);
+    } },
+  lightsweep: { name: 'CC Light Sweep', cat: 'Generate', clip: true, kernels: [['lumina_gen', 'lg_alpha'], ['kernels', 'box_h'], ['kernels', 'box_v'], ['fx_light', 'flt_sweep']], params: [
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'direction', label: 'Direction°', def: -30, min: -360, max: 360, dec: 1 },
+      { id: 'shape', label: 'Shape', type: 'pick', def: 1, opts: [[0, 'Linear'], [1, 'Smooth'], [2, 'Sharp']] },
+      { id: 'width', label: 'Width', def: 50, min: 0, max: 4000, dec: 1 },
+      { id: 'sweepIntensity', label: 'Sweep intensity', def: 50, min: 0, max: 500, dec: 1 },
+      { id: 'edgeIntensity', label: 'Edge intensity', def: 100, min: 0, max: 500, dec: 1 },
+      { id: 'edgeThickness', label: 'Edge thickness', def: 1, min: 0, max: 100, dec: 1 },
+      { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+      { id: 'reception', label: 'Light reception', type: 'pick', def: 0, opts: [[0, 'Add'], [1, 'Composite'], [2, 'Cutout']] }],
+    run(E, img, q) {
+      // the direction turns with the layer (EffectCraft's buffer is in the layer's own space)
+      const [cx, cy] = q('center'), dir = q('direction') * Math.PI / 180 + E.rot, half = Math.max(.5, E.px(q('width')) * .5), et = E.px(q('edgeThickness'));
+      const alpha = E.run('lumina_gen', 'lg_alpha', fxP(), img), soft = et > .05 ? fxGauss(E, alpha, et * .5, et * .5, true) : alpha;
+      return E.run('fx_light', 'flt_sweep', fxP({ 0: [q('shape'), q('reception'), 0, 0] }, { 0: [cx, cy, Math.cos(dir), Math.sin(dir)],
+        1: [half, q('sweepIntensity') / 100, q('edgeIntensity') / 100, 0], 2: [...q('lightColor'), 0] }), img, soft);
+    } },
+  gluegun: { name: 'CC Glue Gun', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_glue']], params: [
+      { id: 'brush', label: 'Brush position', type: 'pt', def: [.5, .5] },
+      { id: 'strokeWidth', label: 'Stroke width', def: 25, min: 0, max: 500, dec: 1 },
+      { id: 'density', label: 'Density', def: 5, min: 0, max: 32, dec: 1 },
+      { id: 'reflection', label: 'Reflection°', def: 45, min: -360, max: 360, dec: 1 },
+      { id: 'strength', label: 'Strength %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'style', label: 'Style', type: 'pick', def: 0, opts: [[0, 'Over layer'], [1, 'Glue only']] }],
+    run(E, img, q) {
+      // generate3::glue_gun's beads; its Time Span is left out (EffectCraft draws the beads at the brush only)
+      const [bx, by] = q('brush'), rad = Math.max(.5, E.px(q('strokeWidth')) * .5), refl = q('reflection') * Math.PI / 180, str = q('strength') / 100;
+      const n = clamp(Math.round(Math.max(0, q('density'))), 1, 32), seed = fxSeed(E), d = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const a = fxHash(i, 1, seed) * 2 * Math.PI, r = i === 0 ? 0 : fxHash(i, 2, seed) * rad * .35;
+        d.set([bx + Math.cos(a) * r, by + Math.sin(a) * r, rad * (.75 + .25 * fxHash(i, 3, seed))], i * 3);
+      }
+      return E.run('fx_gen2', 'fg2_glue', fxP({ 0: [n, q('style') === 1, 0, 0] }, { 0: [Math.cos(refl) * .6, -Math.sin(refl) * .6, .53, str], 1: [Math.max(.3, clamp(str, 0, 1)), 0, 0, 0] }),
+        img, null, null, E.data(d));
+    } },
+  threads: { name: 'CC Threads', cat: 'Generate', clip: true, kernels: [['fx_gen2', 'fg2_threads']], params: [
+      { id: 'width', label: 'Width', def: 50, min: 1, max: 1000, dec: 1 },
+      { id: 'height', label: 'Height', def: 50, min: 1, max: 1000, dec: 1 },
+      { id: 'overlaps', label: 'Overlaps', def: 1, min: 1, max: 20, dec: 0 },
+      { id: 'direction', label: 'Direction°', def: 0, min: -360, max: 360, dec: 1 },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'coverage', label: 'Coverage %', def: 80, min: 0, max: 100, dec: 1 },
+      { id: 'shadowing', label: 'Shadowing %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'texture', label: 'Texture %', def: 10, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const [cx, cy] = q('center'), a = q('direction') * Math.PI / 180 + E.rot;
+      return E.run('fx_gen2', 'fg2_threads', fxP({ 0: [clamp(Math.round(q('overlaps')), 1, 20), 0, 0, 0] }, { 0: [cx, cy, Math.sin(a), Math.cos(a)],
+        1: [Math.max(1, E.px(q('width'))), Math.max(1, E.px(q('height'))), clamp(q('coverage') / 100, 0, 1), q('shadowing') / 100], 2: [q('texture') / 100, 0, 0, 0] }), img);
+    } },
+  fractal: { name: 'Fractal', cat: 'Generate', clip: true, kernels: [['lumina_gen', 'lg_put']], params: [
+      { id: 'setChoice', label: 'Set choice', type: 'pick', def: 0, opts: FX_FRACTAL_SETS.map((n, i) => [i, n]) },
+      { id: 'equation', label: 'Equation', type: 'pick', def: 0, opts: [[0, 'z = z² + c'], [1, 'z = z³ + c'], [2, 'z = z⁴ + c']] },
+      { id: 'mandelX', label: 'Mandelbrot X (real)', def: -.74, min: -2, max: 2, dec: 4 },
+      { id: 'mandelY', label: 'Mandelbrot Y (imaginary)', def: .15, min: -2, max: 2, dec: 4 },
+      { id: 'mandelMag', label: 'Mandelbrot magnification', def: 0, min: -5, max: 30, dec: 2 },
+      { id: 'mandelLimit', label: 'Mandelbrot escape limit', def: 4, min: 1, max: 1000, dec: 1 },
+      { id: 'juliaX', label: 'Julia X (real)', def: 0, min: -2, max: 2, dec: 4 },
+      { id: 'juliaY', label: 'Julia Y (imaginary)', def: 0, min: -2, max: 2, dec: 4 },
+      { id: 'juliaMag', label: 'Julia magnification', def: 0, min: -5, max: 30, dec: 2 },
+      { id: 'juliaLimit', label: 'Julia escape limit', def: 4, min: 1, max: 1000, dec: 1 },
+      { id: 'postX', label: 'Post-inversion X offset', def: 0, min: -2, max: 2, dec: 4 },
+      { id: 'postY', label: 'Post-inversion Y offset', def: 0, min: -2, max: 2, dec: 4 },
+      { id: 'overlay', label: 'Overlay', type: 'check', def: false },
+      { id: 'transparency', label: 'Transparency', type: 'check', def: false },
+      { id: 'palette', label: 'Palette', type: 'pick', def: 0, opts: [[0, 'Lightness gradient'], [1, 'Hue wheel'], [2, 'Black and white'], [3, 'Solid color']] },
+      { id: 'hue', label: 'Hue°', def: 0, min: -360, max: 360, dec: 1 },
+      { id: 'cycleSteps', label: 'Cycle steps', def: 32, min: 1, max: 1000, dec: 0 },
+      { id: 'cycleOffset', label: 'Cycle offset°', def: 0, min: -360, max: 360, dec: 1 },
+      { id: 'edgeHighlight', label: 'Edge highlight', type: 'check', def: false },
+      { id: 'sampling', label: 'Oversample method', type: 'pick', def: 0, opts: [[0, 'Edge detect (fast, may miss pixels)'], [1, 'Brute force (slow, every pixel)']] },
+      { id: 'factor', label: 'Oversample factor', def: 2, min: 1, max: 9, dec: 0 }],
+    run(E, img, q) {
+      // the picture is worked out on the CPU and kept until a setting, the frame size or the layer's place changes
+      const key = [...FX.fractal.params.map(d => q(d.id)), E.w, E.h, ...E.rect].join(); let c = FXC.get(E.fx);
+      if (c?.key !== key) FXC.set(E.fx, c = { key, px: fxFractal(E, q) });
+      return E.run('lumina_gen', 'lg_put', fxP({ 0: [q('overlay'), 0, 0, 0] }), img, E.texFrom8(c.px));
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's
