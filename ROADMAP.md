@@ -17,7 +17,8 @@ is done too (see its section). **Round FP (Floating panels) is done too (2026-11
 window, is still to do** (the user agreed to the easier panels first; the viewer's GPU drawing needs its own setup in
 the new window). The user tried FP on 2026-11-10: dragging works, but they want the video player (Composition viewer)
 to pull out too, so FP2 is on the list for later. Also fix then: dragging a panel's header selects text across the
-window (seen in the user's screenshot); stop text selection while the header is dragged.
+window (seen in the user's screenshot); stop text selection while the header is dragged. **Also for later (the user, 2026-11-10): M5, the MCP server in the
+Edit menu so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
 Rounds 8–20 and the Round 6 leftovers are done. **Round 21 is next, Noise & Grain** (WORKPLAN.md's round table): Add
 Grain, Match Grain, Remove Grain, Dust & Scratches, Median, Noise, Noise Alpha, Noise HLS (+Auto), Turbulent Noise, Curl
 Noise. Check first which of them Lumina already has (some came in early Rounds), then find the rest's host code in
@@ -203,6 +204,23 @@ export) instead of only writing Lumina's code.
   - **Tests:** mcp-suite steps `saveProject`, `saveImage`, `exportVideo` and `imageMode`. The export test has a 90 s limit
     and a progress log (`R.exLog`), so a stuck export can't freeze the suite again.
 - **M4 Output + Image mode (the plan):** `export` (to a path, never overwriting without saying so), `save_project`, PhotoCraft tools.
+- **M5 Other AIs connect to Lumina, from the Edit menu (asked for by the user 2026-11-10; for later, not started).** Today
+  the switch (Edit › Allow Claude to control Lumina) and Help › Connect Claude… are about Claude only. The user wants the
+  MCP server in the **Edit** menu, so any AI that speaks MCP can connect, not only Claude.
+  - **Edit › AI connections (MCP)…**: one window with the on/off switch (the same door and key as now), the server's
+    status, the tools list, and a "connect" card per AI app: Claude app, Claude Code, and other MCP apps (for example
+    ChatGPT desktop, Cursor, VS Code / Copilot, Gemini CLI, LM Studio). Each card shows the exact settings text or command
+    with Copy; Lumina only writes another app's settings file after the user presses a button, with a backup first (the
+    same rule as M1b). Check each app's current way of adding an MCP server when the round starts; don't guess from memory.
+  - **Two ways in:** stdio (mcp.js, as now) for apps that start a server themselves, and **a local HTTP address** (MCP's
+    Streamable HTTP on 127.0.0.1 only, needing the key) for apps that want a URL. Still no SDK download unless the user
+    says yes.
+  - Rename the Claude-only wording ("Allow Claude to control Lumina", the "Claude" light) to "AI control" where it isn't
+    about Claude in particular; Help › Connect Claude… can stay as a shortcut to the same window.
+  - Safety stays as now: off until turned on, 127.0.0.1 only, the key, every edit one Ctrl+Z, never overwrite a file
+    without the person saying so. Show which app is connected (the client name from `initialize`) next to the light.
+  - **Tests:** mcp-suite steps for the HTTP way (initialize, tools/list, a call, wrong key refused, a web page blocked) and
+    for the new window's cards (pretend settings files, as M1b does).
 - **Safety:** local only, key, off by default, every edit undoable, a status light in Lumina while Claude is connected.
 
 ### Setup replaces the old Lumina (asked for by the user 2026-11-08): done 2026-11-09
