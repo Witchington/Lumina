@@ -1178,7 +1178,7 @@ function ensureRT(L) {
   }
   if (el.requestVideoFrameCallback) {
     // remember the media time of the frame actually on screen; currentTime can run ahead of it
-    const r = RT[L.id], cb = (now, md) => { r.frameT = md.mediaTime; r.frameAt = performance.now(); el.requestVideoFrameCallback(cb); };
+    const r = RT[L.id], cb = (now, md) => { r.frameT = md.mediaTime; r.frameAt = performance.now(); if (VF.want.has(L.media)) vfGrab(L.media, md.mediaTime, el); el.requestVideoFrameCallback(cb); };
     el.requestVideoFrameCallback(cb);
   }
   wireAudio(RT[L.id]);
@@ -1704,7 +1704,11 @@ const DRAW = {
   video(L) {
     const r = RT[L.id], el = r.el, m = MEDIA[L.media];
     const vw = el.videoWidth || m.w || 16, vh = el.videoHeight || m.h || 9, f = fitFor(L, vw, vh);
-    if (el.readyState >= 2) { ctx.drawImage(sourceFor(L, L.smoothSlow ? frameBlend(L, el, vw, vh, renderT) : el, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f); if (!S.exporting) keepFrame(r, el, vw, vh); }
+    // another moment (the Time effects): its frame from the frame cache, or this frame until that one is decoded
+    const at = VF_AT != null ? vfFrame(L, srcTime(L, VF_AT)) : null;
+    if (at) ctx.drawImage(sourceFor(L, at, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f);
+    else if (VF_AT != null && el.readyState >= 2) ctx.drawImage(sourceFor(L, el, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f);
+    else if (el.readyState >= 2) { ctx.drawImage(sourceFor(L, L.smoothSlow ? frameBlend(L, el, vw, vh, renderT) : el, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f); if (!S.exporting) keepFrame(r, el, vw, vh); }
     // still loading (a jump into a long or heavy file): show the clip's last frame instead of a black hole
     else if (r.held) ctx.drawImage(sourceFor(L, r.held, vw, vh), -vw * f / 2, -vh * f / 2, vw * f, vh * f);
     return { w: vw * f, h: vh * f };
@@ -2459,8 +2463,10 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   lumina_noise: ['fx_generate', 'lumina_noise'],   // Round 21: grain mattes, sample boxes, Match Grain's plane stats (EffectCraft does them on the CPU; shaders/)
   fx_extra: ['fx_generate', 'fx_extra'],   // Round 22 on: Bevel Alpha, Bevel Edges (fxe_*; EffectCraft builds it with fx_generate)
   lumina_trans: ['lumina_trans'],     // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer
-  lumina_chan: ['lumina_chan'] };     // Round 24: Minimax's passes over the frame or the layer's box (shaders/)   // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer (EffectCraft does them on the CPU; shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl' };
+  lumina_chan: ['lumina_chan'],       // Round 24: Minimax's passes over the frame or the layer's box (shaders/)
+  fx_time: ['fx_time'],               // Round 25 on: the Time effects' sums, mixes and Time Difference (ftm_*)
+  lumina_time: ['lumina_time'] };     // Round 25: motion vectors, Time Displacement, Deblur, Rolling Shutter Repair (shaders/)     // Round 24: Minimax's passes over the frame or the layer's box (shaders/)   // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer (EffectCraft does them on the CPU; shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2540,10 +2546,17 @@ function fxApply(L, t, lc) {
   let enc = dev.createCommandEncoder();
   if (FXG.poolKey !== key) { FXG.pool.forEach(x => x.destroy()); FXG.pool = []; FXG.poolKey = key; }
   let used = 0, slot = 0;
-  // working images are reused from frame to frame (the queue runs everything in order, so that's safe)
-  const tex = () => FXG.pool[used++] || (FXG.pool[used - 1] = dev.createTexture({ size: [w, h], format: 'rgba32float',
-    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT }));
-  const m = r.m, sc = Math.hypot(m.a, m.b) || 1, bw = r.box?.w || w, bh = r.box?.h || h;
+  // working images are reused from frame to frame (the queue runs everything in order, so that's safe). Within a frame an
+  // effect can hand one back (E.free) for the next to reuse: the Time effects go through many frames one at a time
+  const freeT = [], again = new WeakSet(), alloc = [];
+  const tex = () => {
+    let x = freeT.pop();
+    if (x) again.add(x);
+    else x = FXG.pool[used++] || (FXG.pool[used - 1] = dev.createTexture({ size: [w, h], format: 'rgba32float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT }));
+    alloc.push(x); return x;
+  };
+  let m = r.m, sc = Math.hypot(m.a, m.b) || 1, bw = r.box?.w || w, bh = r.box?.h || h;
   const temp = [];   // this frame's odd-sized images and data tables, freed once the card is done with them
   if (FXG.cv.width !== w || FXG.cv.height !== h) { FXG.cv.width = w; FXG.cv.height = h; }
   // draws an image onto the effects canvas and sends the work so far to the graphics card
@@ -2556,6 +2569,18 @@ function fxApply(L, t, lc) {
   };
   const E = {
     w, h, sc, m, bw, bh,                          // the layer's matrix (layer box centred on 0 → frame) and its box size
+    list, idx: 0, depth: 0, TM: t,                // the effects, which one is running, how deep in other moments (fxSelfAt), the transform's time
+    // the layer's placement (fxSelfAt sets the one it was painted with while the effects before run at another moment)
+    geo(M, BW, BH) {
+      m = M; sc = Math.hypot(M.a, M.b) || 1; bw = BW; bh = BH;
+      Object.assign(this, { m, sc, bw, bh, rot: Math.atan2(M.b, M.a), rect: fxRectOf(M, BW, BH), size: Math.max(BW, BH) * sc, lw: BW * sc, lh: BH * sc });
+    },
+    // send the work so far to the graphics card (before a queue write into a reused image; the parameter slots start over)
+    flush() { dev.queue.submit([enc.finish()]); enc = dev.createCommandEncoder(); slot = 0; },
+    free(x) { if (x && x !== src && !freeT.includes(x) && FXG.pool.includes(x)) { freeT.push(x); this._rd?.delete(x); } },
+    mark: () => alloc.length,
+    // hand back every working image made since `mk` but those in `keep`
+    release(mk, ...keep) { for (const x of alloc.splice(mk)) if (!keep.includes(x)) this.free(x); alloc.push(...keep.filter(Boolean)); },
     rot: Math.atan2(m.b, m.a),                    // the layer's on-screen rotation (radians)
     t: t - (L.start || 0),                        // seconds into the layer, for effects that move on their own
     T: t,                                         // the timeline time (beat and impact triggers use it)
@@ -2568,9 +2593,9 @@ function fxApply(L, t, lc) {
       dev.queue.writeBuffer(b, 0, a); temp.push(b); return b;
     },
     // a working image as a data table: RGBA float rows of `row` pixels (each row padded to 256 bytes); returns [table, row]
-    rows(img) {
-      const row = Math.ceil(w / 16) * 16, b = dev.createBuffer({ size: row * 16 * h, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      enc.copyTextureToBuffer({ texture: img }, { buffer: b, bytesPerRow: row * 16 }, [w, h]); temp.push(b); return [b, row];
+    rows(img, tw = w, th = h) {
+      const row = Math.ceil(tw / 16) * 16, b = dev.createBuffer({ size: row * 16 * th, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      enc.copyTextureToBuffer({ texture: img }, { buffer: b, bytesPerRow: row * 16 }, [tw, th]); temp.push(b); return [b, row];
     },
     // a float plane made on the CPU (one float a pixel, tw × th) as a working image: kernels read it as (v, 0, 0, 1)
     texFrom(arr, tw = w, th = h) {
@@ -2583,7 +2608,7 @@ function fxApply(L, t, lc) {
       dev.queue.writeTexture({ texture: x }, arr, { bytesPerRow: tw * 4, rowsPerImage: th }, [tw, th]); temp.push(x); return x;
     },
     tex(tw, th) {
-      const x = dev.createTexture({ size: [tw, th], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+      const x = dev.createTexture({ size: [tw, th], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
       temp.push(x); return x;
     },
     px: v => v * H() / 1080 * sc,                 // a size in pixels at 1080p, scaled with the layer
@@ -2591,7 +2616,7 @@ function fxApply(L, t, lc) {
     lw: bw * sc, lh: bh * sc,                     // the layer's own width and height, in frame pixels
     pt: (u, v) => { const q = m.transformPoint(new DOMPoint((u - .5) * bw, (v - .5) * bh)); return [q.x, q.y]; },   // a point on the layer
     into(fam, entry, buf, src, aux, out, groups, data) {
-      if (slot >= 512) return;
+      if (slot >= 512) this.flush();
       const off = slot++ * 256; dev.queue.writeBuffer(FXG.ubuf, off, buf);
       const bg = dev.createBindGroup({ layout: FXG.bgl, entries: [
         { binding: 0, resource: { buffer: FXG.ubuf, offset: off, size: 256 } }, { binding: 1, resource: src.createView() },
@@ -2610,19 +2635,21 @@ function fxApply(L, t, lc) {
     },
     lumaMean(img) { return fxLumaOf(this.read(img, 320)); },
     // a frame-sized 2D canvas (another layer, a matte drawn on the CPU) as a working image
-    upload(cv) { const x = tex(); dev.queue.copyExternalImageToTexture({ source: cv }, { texture: x, premultipliedAlpha: true }, [w, h]); return x; },   // its average brightness, 0..1 (Shadow/Highlight's Auto Amounts)
+    upload(cv) { const x = tex(); if (again.has(x)) this.flush(); dev.queue.copyExternalImageToTexture({ source: cv }, { texture: x, premultipliedAlpha: true }, [w, h]); return x; },   // its average brightness, 0..1 (Shadow/Highlight's Auto Amounts)
     clear(src) { return this.run('kernels', 'fill', fxP({}, { 0: [0, 0, 0, 0] }), src); }
   };
   const src = tex();
   dev.queue.copyExternalImageToTexture({ source: lc.cv }, { texture: src, premultipliedAlpha: true }, [w, h]);
   E.orig = src;   // the layer before its effects (CC Composite's original)
+  E.L = L;
   let cur = src, clip = false;
-  for (const f of list) {
+  for (const [i, f] of list.entries()) {
     const D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), t, E);
-    E.fx = f; E.L = L;
+    E.fx = f; E.idx = i;
     cur = D.run(E, cur, q) || cur;
     if (typeof D.clip === 'function' ? D.clip(q) : D.clip) clip = true;
   }
+  if (E.usedTime && L.kind === 'video') vfAhead(L, E.ahead > 0 ? Math.min(3, E.ahead + .25) : 0);
   blit(cur);
   if (temp.length) dev.queue.onSubmittedWorkDone().then(() => temp.forEach(x => x.destroy()));
   const c = lc.cx; c.save(); c.setTransform(1, 0, 0, 1, 0, 0); Object.assign(c, { globalCompositeOperation: 'copy', globalAlpha: 1, filter: 'none' });
@@ -2657,6 +2684,364 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 25 helpers (Time): EffectCraft's time_fx.rs (Echo, Posterize Time, Time Difference, Time Displacement,
+//      Timewarp, CC Force Motion Blur, CC Wide Time, Pixel Motion Blur), blur3.rs (Camera-Shake Deblur), distort4.rs
+//      (Rolling Shutter Repair), raster/flow.rs (motion vectors) and track/klt.rs (Lucas–Kanade); GPU host code from
+//      fx_time.rs and fx_noise.rs. These read the layer at other moments, as EffectHost::self_at gives them ----
+// Video frames at other moments come from a cache of decoded frames: the player on screen adds each frame it shows, a
+// hidden player runs ahead of it while playing, and another seeks to frames still missing (the picture redraws as they
+// arrive). Keys are 1/120 s of source time, so 24, 30, 60 and 120 fps footage keeps one frame per key.
+const VF = { store: new Map(), bytes: 0, max: 768 * 2 ** 20, want: new Map(), h: {}, queue: [], busy: false, redraw: false };
+let VF_AT = null;   // set while a layer is painted at another moment (fxSelfAt): video layers then draw that moment's frame
+const vfKey = s => Math.floor(s * 120 + 1e-6);
+const vfSize = el => {
+  const vw = el.videoWidth || 16, vh = el.videoHeight || 9, k = Math.min(1, Math.max(W(), H()) / Math.max(vw, vh));
+  return k < 1 ? { resizeWidth: Math.round(vw * k), resizeHeight: Math.round(vh * k), resizeQuality: 'high' } : {};
+};
+function vfPut(mid, k, bmp) {
+  const id = mid + '|' + k, old = VF.store.get(id);
+  if (old) { VF.bytes -= old.bytes; old.bmp.close(); VF.store.delete(id); }
+  const bytes = bmp.width * bmp.height * 4; VF.store.set(id, { bmp, bytes }); VF.bytes += bytes;
+  for (const [key, e] of VF.store) { if (VF.bytes <= VF.max) break; VF.store.delete(key); VF.bytes -= e.bytes; e.bmp.close(); }
+}
+// keep the frame a player is showing (source time s) while a Time effect uses that footage
+function vfGrab(mid, s, el) {
+  if (!(performance.now() - (VF.want.get(mid) || -1e9) < 3000)) return;
+  const k = vfKey(s), id = mid + '|' + k;
+  if (VF.store.has(id) || el.readyState < 2 || !el.videoWidth) return;
+  createImageBitmap(el, vfSize(el)).then(b => vfPut(mid, k, b), () => {});
+}
+// the frame of video layer L at source time s: the player's own when it is on that frame, a cached one, or null (then
+// it is asked for)
+function vfFrame(L, s) {
+  const el = RT[L.id]?.el; if (!el || !L.media) return null;
+  const k = vfKey(Math.max(0, s));
+  VF.want.set(L.media, performance.now());
+  if (el.readyState >= 2 && !el.seeking && vfKey(el.currentTime) === k) return el;
+  const id = L.media + '|' + k, e = VF.store.get(id);
+  if (e) { VF.store.delete(id); VF.store.set(id, e); return e.bmp; }
+  vfAsk(L.media, k); return null;
+}
+function vfHelper(mid, kind) {
+  const h = VF.h[mid] ||= {};
+  if (!h[kind]) {
+    const v = h[kind] = document.createElement('video'); Object.assign(v, { muted: true, preload: 'auto', playsInline: true, src: MEDIA[mid].url });
+    if (kind === 'ahead' && v.requestVideoFrameCallback) { const cb = (now, md) => { vfGrab(mid, md.mediaTime, v); v.requestVideoFrameCallback(cb); }; v.requestVideoFrameCallback(cb); }
+  }
+  return h[kind];
+}
+function vfAsk(mid, k) {
+  const id = mid + '|' + k;
+  if (VF.queue.some(x => x.id === id)) return;
+  VF.queue.push({ mid, k, id }); if (VF.queue.length > 96) VF.queue.shift();
+  vfPump();
+}
+// the seeking player works through the frames asked for, newest first, then redraws once
+async function vfPump() {
+  if (VF.busy) return; VF.busy = true;
+  try {
+    while (VF.queue.length) {
+      const job = VF.queue.pop();
+      if (VF.store.has(job.id) || !MEDIA[job.mid]) continue;
+      const v = vfHelper(job.mid, 'seek');
+      if (v.readyState < 1) await new Promise(r => { v.addEventListener('loadedmetadata', r, { once: true }); setTimeout(r, 3000); });
+      const at = Math.max(0, Math.min((job.k + .5) / 120, (v.duration || 1e9) - .001));
+      if (Math.abs(v.currentTime - at) > 1e-6 || v.readyState < 2)
+        await new Promise(r => { const to = setTimeout(r, 3000); v.addEventListener('seeked', () => { clearTimeout(to); r(); }, { once: true }); v.currentTime = at; });
+      if (v.readyState >= 2) { const b = await createImageBitmap(v, vfSize(v)).catch(() => null); if (b) vfPut(job.mid, job.k, b); }
+      VF.redraw = true;
+    }
+  } finally { VF.busy = false; }
+  if (VF.redraw) { VF.redraw = false; if (!S.playing) requestAnimationFrame(() => { if (!S.playing) render(); }); }
+}
+// every frame asked for so far is decoded (the self-test waits on it)
+async function vfSettle() { for (let i = 0; i < 400 && (VF.busy || VF.queue.length); i++) await new Promise(r => setTimeout(r, 25)); }
+// while playing, a hidden player runs `ahead` seconds of source time in front of the one on screen, so the frames just
+// ahead are in the cache when the Time effects reach for them
+function vfAhead(L, ahead) {
+  const el = RT[L.id]?.el; if (!el || !L.media) return;
+  const v = vfHelper(L.media, 'ahead'), go = (S.playing || S.exporting) && ahead > 0;
+  if (!go) { if (!v.paused) v.pause(); return; }
+  const rate = el.playbackRate || 1, want = Math.min(el.currentTime + ahead * rate, (v.duration || 1e9) - .05);
+  if (v.paused || Math.abs(v.currentTime - want) > .5) { v.currentTime = want; v.playbackRate = rate; v.play().catch(() => {}); }
+  else if (v.playbackRate !== rate) v.playbackRate = rate;
+}
+// EffectHost::self_at: this layer at timeline time T2 as the running effect's input: its content then, its masks, and the
+// effects before this one at that moment, placed as the layer is at time tm (now, unless the effect follows the
+// layer's movement). Before the layer starts or after it ends it is empty.
+function fxSelfAt(E, T2, tm = E.TM) {
+  const L = E.L, r = RT[L.id], [a, b] = liveRange(L);
+  E.usedTime = true;
+  if (L.kind === 'video' && L.media) {
+    VF.want.set(L.media, performance.now());
+    const d = srcTime(L, T2) - srcTime(L, E.T); if (d > (E.ahead || 0)) E.ahead = d;
+  }
+  if (!(T2 >= a - 1e-9 && T2 < b)) return E.clear(E.orig);
+  const keep = { m: r.m, box: r.box }, at = VF_AT, rt = renderT, c = layerCanvas('selfat' + E.depth);
+  VF_AT = T2; renderT = T2;
+  try { paintLayer(L, T2, c.cx, tm); } finally { VF_AT = at; renderT = rt; }
+  const pm = r.m || keep.m, pbox = r.box; r.m = keep.m; r.box = keep.box;
+  const mk = E.mark(); let img = E.upload(c.cv);
+  if (E.idx) {
+    const save = { fx: E.fx, idx: E.idx, t: E.t, T: E.T, TM: E.TM, orig: E.orig, depth: E.depth }, geo = [E.m, E.bw, E.bh];
+    Object.assign(E, { T: T2, t: T2 - (L.start || 0), TM: tm, orig: img, depth: E.depth + 1 });
+    E.geo(pm, pbox?.w || E.bw, pbox?.h || E.bh);
+    try {
+      for (let i = 0; i < save.idx; i++) {
+        const f = E.list[i], D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), T2, E);
+        E.fx = f; E.idx = i; img = D.run(E, img, q) || img;
+      }
+    } finally { Object.assign(E, save); E.geo(...geo); }
+  }
+  E.release(mk, img); return img;
+}
+// the layer at T2 (transform from tm), or the effect's own input when that is the same moment
+const fxSame = (E, T2, tm) => Math.abs(T2 - E.T) < 1e-7 && Math.abs(tm - E.TM) < 1e-7;
+const fxThen = (E, img, T2, tm = E.TM) => fxSame(E, T2, tm) ? img : fxSelfAt(E, T2, tm);
+const fxDrop = (E, x, img) => { if (x && x !== img) E.free(x); };
+const fxLive = (E, T2) => { const [a, b] = liveRange(E.L); return T2 >= a - 1e-9 && T2 < b; };
+// Lumina's own switch on Echo, Posterize Time and the CC motion blurs: the other moments move with the layer too (After
+// Effects needs a precomp for that)
+const FX_MOVING = { id: 'moving', label: 'Include the layer\u2019s movement', type: 'check', def: false };
+const fxTmOf = (E, q, T2) => q('moving') ? T2 : E.TM;
+// the plain average of the layer at timeline times (time_fx::mean_of), one frame per pass
+function fxMeanOf(E, img, q, times) {
+  if (!times.length) return img;
+  const k = 1 / times.length; let acc = E.clear(img);
+  for (const T2 of times) {
+    const fr = fxThen(E, img, T2, fxTmOf(E, q, T2)), o = E.run('fx_time', 'ftm_acc', fxP({}, { 0: [k, 0, 0, 0] }), acc, fr);
+    E.free(acc); fxDrop(E, fr, img); acc = o;
+  }
+  return acc;
+}
+// another layer at timeline time T (EffectHost::layer_at), and fitted over this layer's box (util::fit_layer)
+function fxLayerAt(E, id, name, T) {
+  const M = id ? byId(id) : null; if (!M || M === E.L || !DRAW[M.kind]) return null;
+  const c = layerCanvas(name), [a, b] = liveRange(M), at = VF_AT;
+  if (T >= a && T < b) { VF_AT = T; try { paintLayer(M, T, c.cx); } finally { VF_AT = at; } }
+  return E.upload(c.cv);
+}
+function fxFitAt(E, id, name, stretch, T) {
+  const src = fxLayerAt(E, id, name, T); if (!src) return null;
+  const o = fxLayerBox(E, byId(id));
+  const out = E.run('lumina_trans', 'lt_place', fxP({ 0: [stretch ? 2 : 1, 0, 0, 0] }, { 0: E.rect, 1: o.rect, 2: [E.sc, o.sc, 0, 0] }), src);
+  E.free(src); return out;
+}
+// the layer's on-screen box in whole frame pixels, inside the frame: [x, y, w, h] (EffectCraft's layer buffer)
+function fxIBox(E) {
+  const [x, y, w, h] = E.rect, x0 = clamp(Math.floor(x), 0, E.w), y0 = clamp(Math.floor(y), 0, E.h);
+  return [x0, y0, clamp(Math.ceil(x + w), 0, E.w) - x0, clamp(Math.ceil(y + h), 0, E.h) - y0];
+}
+const ECHO_OPS = ['Add', 'Maximum', 'Minimum', 'Screen', 'Composite in back', 'Composite in front', 'Blend'];
+const TD_ALPHA = ['Original', 'Target', 'Blend', 'Max', 'Full on', 'Lightness of result', 'Max of result', 'Alpha difference', 'Alpha difference only'];
+const TW_MATTE = ['Alpha', 'Inverted alpha', 'Luminance', 'Inverted luminance'], TW_SHOW = ['Normal', 'Foreground only', 'Background only', 'Matte'];
+// time_fx::timewarp_integrate_speed: Speed (a rate in %) integrated from layer time 0 to t, two samples a frame
+function fxIntegrateSpeed(t, fps, now, at) {
+  const flat = t * now / 100, fb = v => isFinite(v) ? v : isFinite(flat) ? flat : 0;
+  if (!isFinite(t) || t === 0) return fb(flat);
+  fps = isFinite(fps) && fps > 0 ? fps : 30;
+  const span = Math.abs(t); let h = 1 / (fps * 2);
+  if (!isFinite(span / h) || span / h >= 50000) h = span / 50000;
+  if (!isFinite(h) || h <= 0) return fb(flat);
+  const whole = clamp(Math.floor(span / h), 0, 50000), rest = Math.max(0, span - whole * h), sign = Math.sign(t), held = isFinite(now) ? now : 0;
+  const sample = lt => { const v = at(sign * lt); return isFinite(v) ? v : held; };
+  let full = 0; for (let i = 0; i < whole; i++) full += sample((i + .5) * h); full *= h;
+  const part = rest > 0 ? sample(whole * h + rest * .5) * rest : 0;
+  return fb(sign * (full + part) / 100);
+}
+// the source layer time Timewarp shows now (timewarp_source)
+function fxTwSource(E, q) {
+  const fps = S.fps, speed = q('speed');
+  if (q('adjustBy') === 1) return q('sourceFrame') / fps;
+  const L = E.L, key = fxKey(E.fx, 'speed');
+  if (!(L.keys[key]?.length > 1) && !L.expr?.[key]) return E.t * speed / 100;
+  return fxIntegrateSpeed(E.t, fps, speed, lt => val(L, key, (L.start || 0) + lt));
+}
+// tw_split: the frame at or before source time s and the fraction to the next one
+const fxTwSplit = (s, fps) => { const f = s * fps, f0 = Math.floor(f + 1e-6); return [f0, Math.max(0, Math.fround(f - f0))]; };
+// time_fx::PixelMotion: Timewarp's Tuning group and Source Crops (defaults where an effect has no such setting); sc =
+// frame pixels per layer pixel
+function fxPixelMotion(E, q, detail) {
+  const D = FX[E.fx.id], g = (id, d) => D.params.some(x => x.id === id) ? q(id) : d, sc = E.sc, px = id => Math.round(Math.max(0, g(id, 0)) * sc);
+  return { tile: Math.max(2, Math.round(32 * (1 / 16) ** (clamp(detail, 0, 100) / 100) * sc)), window: Math.max(4, Math.round(Math.max(4, g('blockSize', 8)) * sc)),
+    gs: clamp(g('globalSmooth', .5), 0, 1), ls: clamp(g('localSmooth', .5), 0, 1), iter: Math.trunc(clamp(g('iterations', 20), 0, 200)),
+    one: !!g('fromOne', false), lum: !!g('correctLum', false), extreme: g('filtering', 0) === 1, thr: clamp(g('errorThreshold', 10) / 100, 0, 1),
+    wt: [g('redW', .3), g('greenW', .59), g('blueW', .11)].map(v => Math.max(0, v)), crops: [px('cropL'), px('cropR'), px('cropT'), px('cropB')] };
+}
+// crop_edges over the layer's box: pixels past the Source Crops take the nearest kept one
+function fxCropped(E, img, pm) {
+  const [l, r, t, b] = pm.crops; if (!l && !r && !t && !b) return img;
+  const [ox, oy, bw, bh] = fxIBox(E), x0 = Math.min(l, bw - 1), x1 = Math.max(bw - 1 - r, 0), y0 = Math.min(t, bh - 1), y1 = Math.max(bh - 1 - b, 0);
+  return E.run('lumina_time', 'lm_crop', fxP({}, { 0: [ox + x0, oy + y0, ox + Math.max(x1, x0), oy + Math.max(y1, y0)] }), img);
+}
+// mean_grey of motion_grey (Correct Luminance Changes), measured on a small copy
+function fxGreyMean(E, img, wt) {
+  const R = E.read(img, 320), d = R.d, sum = Math.max(wt[0] + wt[1] + wt[2], 1e-6); let s = 0;
+  for (let i = 0; i < d.length; i += 4) s += (d[i] * wt[0] + d[i + 1] * wt[1] + d[i + 2] * wt[2]) / sum * d[i + 3] / 65025;
+  return s / Math.max(1, d.length / 4);
+}
+// timewarp_flow_search: the motion vectors from frame A to frame B (raster::flow::block_flow_window on the graphics card,
+// then smooth_flow). Returns the vectors as a cols × rows image, one per `block` pixels from the frame's corner.
+function fxFlow(E, A, B, pm, radius) {
+  const w = E.w, h = E.h, bs = Math.max(2, pm.tile), win = Math.max(4, pm.window), wo = Math.trunc(bs / 2) - Math.trunc(win / 2);
+  const cols = Math.max(1, Math.ceil(w / bs)), rows = Math.max(1, Math.ceil(h / bs));
+  if (w < bs || h < bs || w < win || h < win) return { tex: null, cols, rows, block: bs };
+  const ca = fxCropped(E, A, pm), cb = fxCropped(E, B, pm);
+  let gain = 1;
+  if (pm.lum) { const ma = fxGreyMean(E, ca, pm.wt), mb = fxGreyMean(E, B, pm.wt); gain = mb > 1e-4 ? ma / mb : 1; }
+  const pair = E.run('lumina_time', 'lm_grey', fxP({}, { 0: [...pm.wt, gain] }), ca, cb), lv = [{ tex: pair, w, h }], big = Math.max(bs, win) * 2;
+  fxDrop(E, ca, A); fxDrop(E, cb, B);
+  while (lv.length < 4) {
+    const l = lv.at(-1); if (!(Math.floor(l.w / 2) >= big && Math.floor(l.h / 2) >= big)) break;
+    const tw = Math.max(1, Math.floor(l.w / 2)), th = Math.max(1, Math.floor(l.h / 2)), o = E.tex(tw, th);
+    E.into('lumina_time', 'lm_half', fxP({}), l.tex, null, o, [Math.ceil(tw / 16), Math.ceil(th / 16)]); lv.push({ tex: o, w: tw, h: th });
+  }
+  const G = [Math.ceil(cols / 16), Math.ceil(rows / 16)], top = lv.length - 1, V = () => E.tex(cols, rows);
+  let cur = null;
+  for (let l = top; l >= 0; l--) {
+    const k = 1 << l, o = V();
+    E.into('lumina_time', 'lm_bsearch', fxP({ 0: [cols, rows, l === top ? 1 : 0, l === top ? radius : 1], 1: [k, Math.max(Math.trunc(win / k), 4), bs, wo >>> 0] }), lv[l].tex, cur, o, G);
+    cur = o;
+  }
+  let v = V(); E.into('lumina_time', 'lm_bfine', fxP({ 0: [cols, rows, bs, win], 1: [wo >>> 0, 0, 0, 0] }), pair, cur, v, G);
+  const med = V(); E.into('lumina_time', 'lm_bmed', fxP({ 0: [cols, rows, 0, 0] }), v, null, med, G); v = med;
+  if (cols * rows > 1) {
+    if (pm.ls > 0) for (let i = 0; i < pm.iter; i++) { const o = V(); E.into('lumina_time', 'lm_fmean', fxP({ 0: [cols, rows, 1, 0] }, { 0: [pm.ls, 0, 0, 0] }), v, null, o, G); v = o; }
+    if (pm.gs > 0) { const o = V(); E.into('lumina_time', 'lm_fmean', fxP({ 0: [cols, rows, 3, 0] }, { 0: [pm.gs, 0, 0, 0] }), v, null, o, G); v = o; }
+  }
+  E.free(pair);
+  return { tex: v, cols, rows, block: bs };
+}
+// timewarp_interpolate: the frame at fraction w between A and B along the vectors
+function fxMotion(E, A, B, w, fl, pm) {
+  const a = fxCropped(E, A, pm), b = fxCropped(E, B, pm), [tab, row] = fl.tex ? E.rows(fl.tex, fl.cols, fl.rows) : [null, 0];
+  const out = E.run('lumina_time', 'lm_motion', fxP({ 0: [fl.tex ? fl.cols : 0, fl.rows, pm.extreme ? 1 : 0, pm.one ? 1 : 0], 1: [row, 0, 0, 0] }, { 0: [fl.block, w, pm.thr, 0] }), a, b, null, tab);
+  fxDrop(E, a, A); fxDrop(E, b, B); return out;
+}
+// time_fx::average: Σ image × weight, one image per pass
+function fxWeighted(E, img, list) {
+  if (list.length === 1) return list[0][0];
+  let acc = E.clear(img);
+  for (const [x, k] of list) { const o = E.run('fx_time', 'ftm_acc', fxP({}, { 0: [k, 0, 0, 0] }), acc, x); E.free(acc); acc = o; }
+  return acc;
+}
+// ---- Camera-Shake Deblur's measures on 8-bit copies (blur3: util::Plane::luma of straight colour)
+function fxLumaBox(R, [ox, oy, bw, bh]) {
+  const l = new Float32Array(bw * bh), d = R.d;
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { const i = ((oy + y) * R.w + ox + x) * 4; l[y * bw + x] = (.2126 * d[i] + .7152 * d[i + 1] + .0722 * d[i + 2]) / 255; }
+  return l;
+}
+function fxSharp(l, w, x0, y0, x1, y1) {
+  let s = 0, n = 0;
+  for (let y = y0; y < y1 - 1; y++) for (let x = x0; x < x1 - 1; x++) { const v = l[y * w + x], gx = Math.fround(l[y * w + x + 1] - v), gy = Math.fround(l[(y + 1) * w + x] - v); s += Math.fround(gx * gx + gy * gy); n++; }
+  return n ? s / n : 0;
+}
+function fxAlign(a, b, w, h, x0, y0, x1, y1, r) {
+  let best = Infinity, bx = 0, by = 0; const step = Math.max(1, Math.trunc(Math.max(x1 - x0, y1 - y0) / 24));
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    let s = 0;
+    for (let y = y0; y < y1; y += step) { const yy = clamp(y + dy, 0, h - 1) * w; for (let x = x0; x < x1; x += step) { const d = Math.fround(a[y * w + x] - b[yy + clamp(x + dx, 0, w - 1)]); s += d * d; } }
+    s *= 1 + 1e-9 * (dx * dx + dy * dy);
+    if (s < best) { best = s; bx = dx; by = dy; }
+  }
+  return [bx, by];
+}
+// ---- track::klt on luma planes ({ w, h, d }), as Rolling Shutter Repair measures the motion
+function kltPlane(R, [ox, oy, bw, bh], f) {
+  const w = Math.max(1, Math.ceil(bw / f)), h = Math.max(1, Math.ceil(bh / f)), out = new Float32Array(w * h), d = R.d;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0, n = 0;
+    for (let yy = y * f; yy < Math.min((y + 1) * f, bh); yy++) for (let xx = x * f; xx < Math.min((x + 1) * f, bw); xx++) {
+      const i = ((oy + yy) * R.w + ox + xx) * 4, a = d[i + 3] / 255;
+      s += (.2126 * d[i] + .7152 * d[i + 1] + .0722 * d[i + 2]) / 255 * a; n++;
+    }
+    out[y * w + x] = n ? s / n : 0;
+  }
+  return { w, h, d: out };
+}
+const kltAt = (p, x, y) => p.d[clamp(y, 0, p.h - 1) * p.w + clamp(x, 0, p.w - 1)];
+function kltDown(p) {
+  const w = Math.max(1, Math.ceil(p.w / 2)), h = Math.max(1, Math.ceil(p.h / 2)), d = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = (kltAt(p, 2 * x, 2 * y) + kltAt(p, 2 * x + 1, 2 * y) + kltAt(p, 2 * x, 2 * y + 1) + kltAt(p, 2 * x + 1, 2 * y + 1)) * .25;
+  return { w, h, d };
+}
+function kltGrad(p) {
+  const gx = new Float32Array(p.w * p.h), gy = new Float32Array(p.w * p.h);
+  for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) { gx[y * p.w + x] = .5 * (kltAt(p, x + 1, y) - kltAt(p, x - 1, y)); gy[y * p.w + x] = .5 * (kltAt(p, x, y + 1) - kltAt(p, x, y - 1)); }
+  return [{ w: p.w, h: p.h, d: gx }, { w: p.w, h: p.h, d: gy }];
+}
+function kltPyr(base, levels) {
+  const lv = [base];
+  for (let i = 0; i < levels; i++) { const l = lv.at(-1); if (l.w < 16 || l.h < 16) break; lv.push(kltDown(l)); }
+  return { lv, g: lv.map(kltGrad) };
+}
+function kltTaps(p, c, r) {
+  const fx = c[0] - .5, fy = c[1] - .5, x0 = Math.floor(fx), y0 = Math.floor(fy), xs = [], ys = [];
+  for (let d = -r; d <= r; d++) { xs.push([clamp(x0 + d, 0, p.w - 1), clamp(x0 + d + 1, 0, p.w - 1)]); ys.push([clamp(y0 + d, 0, p.h - 1) * p.w, clamp(y0 + d + 1, 0, p.h - 1) * p.w]); }
+  return { xs, ys, t: [Math.fround(fx - x0), Math.fround(fy - y0)] };
+}
+const kltBil = (d, x, y, t) => { const a = d[y[0] + x[0]], b = d[y[0] + x[1]], c = d[y[1] + x[0]], e = d[y[1] + x[1]], top = a + (b - a) * t[0]; return top + (c + (e - c) * t[0] - top) * t[1]; };
+function kltPoint(A, B, p, guess, o) {
+  const top = Math.min(A.lv.length, B.lv.length) - 1; if (top < 0) return null;
+  const r = o.radius, n = (2 * r + 1) ** 2, s0 = 2 ** top, win = new Float64Array(n), wgx = new Float64Array(n), wgy = new Float64Array(n);
+  let g = [guess[0] / s0, guess[1] / s0];
+  for (let l = top; l >= 0; l--) {
+    const s = 2 ** l, ia = A.lv[l], ib = B.lv[l], [gx, gy] = A.g[l], c = [p[0] / s, p[1] / s];
+    if (c[0] < -1 || c[1] < -1 || c[0] > ia.w + 1 || c[1] > ia.h + 1) return null;
+    let gxx = 0, gxy = 0, gyy = 0, k = 0, T = kltTaps(ia, c, r);
+    for (const y of T.ys) for (const x of T.xs) {
+      win[k] = kltBil(ia.d, x, y, T.t); wgx[k] = kltBil(gx.d, x, y, T.t); wgy[k] = kltBil(gy.d, x, y, T.t);
+      gxx += wgx[k] * wgx[k]; gxy += wgx[k] * wgy[k]; gyy += wgy[k] * wgy[k]; k++;
+    }
+    const det = gxx * gyy - gxy * gxy, tr = .5 * (gxx + gyy), mineig = (tr - Math.sqrt(.25 * (gxx - gyy) ** 2 + gxy * gxy)) / n;
+    if (mineig < o.minEig || Math.abs(det) < 1e-18) return null;
+    const v = [0, 0];
+    for (let it = 0; it < o.iterations; it++) {
+      let bx = 0, by = 0; k = 0; T = kltTaps(ib, [c[0] + g[0] + v[0], c[1] + g[1] + v[1]], r);
+      for (const y of T.ys) for (const x of T.xs) { const diff = win[k] - kltBil(ib.d, x, y, T.t); bx += diff * wgx[k]; by += diff * wgy[k]; k++; }
+      const nx = (gyy * bx - gxy * by) / det, ny = (gxx * by - gxy * bx) / det;
+      v[0] += nx; v[1] += ny;
+      if (!isFinite(v[0]) || !isFinite(v[1])) return null;
+      if (nx * nx + ny * ny < o.eps * o.eps) break;
+    }
+    g = l > 0 ? [2 * (g[0] + v[0]), 2 * (g[1] + v[1])] : [g[0] + v[0], g[1] + v[1]];
+  }
+  const q = [p[0] + g[0], p[1] + g[1]], l0 = B.lv[0];
+  return q[0] < 0 || q[1] < 0 || q[0] > l0.w || q[1] > l0.h ? null : q;
+}
+function kltTrack(A, B, pts, o) {
+  return pts.map(p => {
+    const q = kltPoint(A, B, p, [0, 0], o); if (!q) return null;
+    if (o.fb > 0) { const back = kltPoint(B, A, q, [p[0] - q[0], p[1] - q[1]], o); if (!back || (back[0] - p[0]) ** 2 + (back[1] - p[1]) ** 2 > o.fb * o.fb) return null; }
+    return q;
+  });
+}
+const fxMedian = v => { v.sort((a, b) => a - b); return v[v.length >> 1]; };
+// distort4::measure: velocities (box pixels per frame) on a grid, from points tracked to the next and previous frames
+function fxRsMeasure(cur, prev, next, box, detailed, perRow, detail) {
+  const factor = Math.max(1, Math.ceil(Math.max(box[2], box[3], 1) / Math.max(detailed ? 640 : 320, 16)));
+  const pc = kltPyr(kltPlane(cur, box, factor), 4), w = pc.lv[0].w, h = pc.lv[0].h, base = detailed ? 24 : 12;
+  const n = perRow ? base : clamp(Math.round(base * (.5 + clamp(detail, 0, 1) * 2.5)), 4, 96), cw = w / n;
+  const rows = Math.max(2, Math.round(n * h / Math.max(w, 1))), ch = h / rows, pts = [];
+  for (let j = 0; j < rows; j++) for (let i = 0; i < n; i++) pts.push([(i + .5) * cw, (j + .5) * ch]);
+  const o = { radius: 4, iterations: 20, eps: .01, minEig: 1e-5, fb: 1 };
+  const go = R => R ? kltTrack(pc, kltPyr(kltPlane(R, box, factor), 4), pts, o) : null, tn = go(next), tp = go(prev);
+  const vel = pts.map((p, i) => {
+    const fw = tn?.[i] && [tn[i][0] - p[0], tn[i][1] - p[1]], bw = tp?.[i] && [p[0] - tp[i][0], p[1] - tp[i][1]];
+    return fw && bw ? [(fw[0] + bw[0]) * .5, (fw[1] + bw[1]) * .5] : fw || bw || null;
+  });
+  const valid = vel.filter(Boolean); if (!valid.length) return null;
+  const glob = [fxMedian(valid.map(v => v[0])), fxMedian(valid.map(v => v[1]))], v = [];
+  for (let j = 0; j < rows; j++) {
+    const band = vel.slice(j * n, j * n + n).filter(Boolean), med = band.length ? [fxMedian(band.map(q => q[0])), fxMedian(band.map(q => q[1]))] : glob;
+    for (let i = 0; i < n; i++) {
+      const q = vel[j * n + i];
+      const s = perRow ? med : q && Math.abs(q[0] - med[0]) + Math.abs(q[1] - med[1]) < 3 + .5 * (Math.abs(med[0]) + Math.abs(med[1])) ? q : med;
+      v.push(s[0] * factor, s[1] * factor);
+    }
+  }
+  return { nx: n, ny: rows, cell: cw * factor, v };
+}
 // ---- Round 24 helpers (Channel): EffectCraft's channel.rs and channel2.rs; GPU host code from fx_key.rs (fxk_point ops
 //      11–21), fx_pixel2.rs (CC Composite), fx_noise.rs (Minimax), fx_tone.rs and effects.rs (Invert) ----
 // util::fit_layer: another layer over this layer's box, stretched to fit or centred (null when none is picked)
@@ -5911,6 +6296,234 @@ const FX = {
       const c = q('color'), o = clamp(q('opacity') / 100, 0, 1);
       return fxK(E, img, { 0: [14, (SOLID_MODES[q('mode')] || SOLID_MODES[0])[1], 0, 0] }, { 0: [c[0] * o, c[1] * o, c[2] * o, o], 1: [q('srcOpacity') / 100, 0, 0, 0] });
     } },
+  // ---- Round 25: Time (EffectCraft's time_fx.rs, fx_time.rs and fx_noise.rs; Camera-Shake Deblur from blur3.rs, Rolling
+  //      Shutter Repair from distort4.rs). They read the layer at other moments: its content, masks and the effects
+  //      above them then (fxSelfAt); video frames come from the frame cache (VF) ----
+  echo: { name: 'Echo', cat: 'Time', clip: false, kernels: [['fx_noise', 'fxn_echo'], ['fx_noise', 'fxn_echo_fin'], ['kernels', 'fill']], params: [
+      { id: 'echoTime', label: 'Echo time (seconds)', def: -1 / 30, min: -30, max: 30, dec: 3 },
+      { id: 'echoes', label: 'Number of echoes', def: 1, min: 0, max: 255, dec: 0 },
+      { id: 'start', label: 'Starting intensity', def: 1, min: 0, max: 1, dec: 2 },
+      { id: 'decay', label: 'Decay', def: 1, min: 0, max: 1, dec: 2 },
+      { id: 'operator', label: 'Echo operator', type: 'pick', def: 0, opts: fxOpts(ECHO_OPS) },
+      FX_MOVING],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const n = clamp(Math.round(q('echoes')), 0, 255), dt = q('echoTime'), st = clamp(q('start'), 0, 1), dc = clamp(q('decay'), 0, 1), op = q('operator');
+      let acc = null;
+      for (let i = 0; i <= n; i++) {
+        const T2 = E.T + i * dt, fr = fxThen(E, img, T2, fxTmOf(E, q, T2));
+        const o = E.run('fx_noise', 'fxn_echo', fxP({ 0: [op, i ? 0 : 1, 0, 0] }, { 0: [Math.fround(st * Math.fround(dc) ** i), 0, 0, 0] }), acc || img, fr);
+        if (acc) E.free(acc); fxDrop(E, fr, img); acc = o;
+      }
+      const out = E.run('fx_noise', 'fxn_echo_fin', fxP({ 0: [op, 0, 0, 0] }, { 0: [n + 1, 0, 0, 0] }), acc); E.free(acc); return out;
+    } },
+  posterizetime: { name: 'Posterize Time', cat: 'Time', clip: false, kernels: [['kernels', 'fill']], params: [
+      { id: 'rate', label: 'Frame rate', def: 12, min: .1, max: 99, dec: 1 }, FX_MOVING],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const rate = q('rate'), tt = rate > 0 ? Math.floor(E.t * rate + 1e-6) / rate : E.t, T2 = (E.L.start || 0) + tt;
+      return fxThen(E, img, T2, fxTmOf(E, q, T2));
+    } },
+  timedifference: { name: 'Time Difference', cat: 'Time', clip: q => [4, 5, 6].includes(q('alpha')), kernels: [['fx_time', 'ftm_difference'], ['lumina_trans', 'lt_place'], ['kernels', 'fill']], params: [
+      fxLayerPick('target', 'Target', 'None (this layer)'),
+      { id: 'offset', label: 'Time offset (seconds)', def: 0, min: -30, max: 30, dec: 3 },
+      { id: 'contrast', label: 'Contrast', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'absolute', label: 'Absolute difference', type: 'check', def: true },
+      { id: 'alpha', label: 'Alpha channel', type: 'pick', def: 0, opts: fxOpts(TD_ALPHA) }],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const off = q('offset'), other = (q('target') && fxFitAt(E, q('target'), 'tdtarget', true, E.T + off)) || fxThen(E, img, E.T + off);
+      const out = E.run('fx_time', 'ftm_difference', fxP({ 0: [q('absolute') ? 1 : 0, q('alpha'), 0, 0] }, { 0: [1 + q('contrast') / 25, 0, 0, 0] }), img, other);
+      fxDrop(E, other, img); return out;
+    } },
+  timedisplacement: { name: 'Time Displacement', cat: 'Time', clip: false, kernels: [['lumina_time', 'lm_tkey'], ['lumina_time', 'lm_tdisp'], ['lumina_trans', 'lt_place'], ['kernels', 'fill']], params: [
+      fxLayerPick('layer', 'Time displacement layer', 'None (this layer)'),
+      { id: 'max', label: 'Max displacement time (seconds)', def: 1, min: -30, max: 30, dec: 2 },
+      { id: 'res', label: 'Time resolution (fps)', def: 60, min: 1, max: 999, dec: 1 },
+      { id: 'stretch', label: 'Stretch map to fit', type: 'check', def: true }],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const max = q('max'), res = clamp(q('res'), 1, 999), span = 2 * Math.abs(max) * res, step = span > 63 ? 2 * Math.abs(max) / 63 : 1 / res;
+      if (!(step > 0 && isFinite(step))) return img;
+      const map = (q('layer') && fxFitAt(E, q('layer'), 'tdmap', q('stretch'), E.T)) || img;
+      const key = E.run('lumina_time', 'lm_tkey', fxP({}, { 0: [max, step, 0, 0] }), map); fxDrop(E, map, img);
+      const R = E.read(key, Math.max(E.w, E.h)), seen = new Set();
+      for (let i = 0; i < R.d.length; i += 4) seen.add(R.d[i]);
+      const keys = [...seen].sort((a, b) => a - b);
+      if (keys.length === 1 && keys[0] === 128) { E.free(key); return img; }
+      const [tab, row] = E.rows(key); let acc = E.clear(img);
+      for (const k of keys) {
+        const fr = fxThen(E, img, E.T + (k - 128) * step), o = E.run('lumina_time', 'lm_tdisp', fxP({ 0: [row, 0, 0, 0] }, { 0: [k, 0, 0, 0] }), acc, fr, null, tab);
+        E.free(acc); fxDrop(E, fr, img); acc = o;
+      }
+      E.free(key); return acc;
+    } },
+  timewarp: { name: 'Timewarp', cat: 'Time', clip: false, kernels: [['fx_time', 'ftm_mix'], ['fx_time', 'ftm_acc'], ['fx_time', 'ftm_layer'], ['lumina_time', 'lm_crop'],
+      ['lumina_time', 'lm_grey'], ['lumina_time', 'lm_half'], ['lumina_time', 'lm_bsearch'], ['lumina_time', 'lm_bfine'], ['lumina_time', 'lm_bmed'],
+      ['lumina_time', 'lm_fmean'], ['lumina_time', 'lm_motion'], ['lumina_time', 'lm_mmask'], ['lumina_time', 'lm_mimage'], ['lumina_trans', 'lt_place'], ['kernels', 'fill']], params: [
+      { id: 'method', label: 'Method', type: 'pick', def: 2, opts: fxOpts(['Whole frames', 'Frame mix', 'Pixel motion']) },
+      { id: 'adjustBy', label: 'Adjust time by', type: 'pick', def: 0, opts: fxOpts(['Speed', 'Source frame']) },
+      { id: 'speed', label: 'Speed %', def: 50, min: -10000, max: 10000, dec: 1 },
+      { id: 'sourceFrame', label: 'Source frame', def: 0, min: -100000, max: 100000, dec: 1 },
+      { id: 'vectorDetail', label: 'Vector detail', def: 20, min: 0, max: 100, dec: 1 },
+      { id: 'globalSmooth', label: 'Global smoothness', def: .5, min: 0, max: 1, dec: 2 },
+      { id: 'localSmooth', label: 'Local smoothness', def: .5, min: 0, max: 1, dec: 2 },
+      { id: 'iterations', label: 'Smoothing iterations', def: 20, min: 0, max: 200, dec: 0 },
+      { id: 'fromOne', label: 'Build from one image', type: 'check', def: false },
+      { id: 'correctLum', label: 'Correct luminance changes', type: 'check', def: false },
+      { id: 'filtering', label: 'Filtering', type: 'pick', def: 0, opts: fxOpts(['Normal', 'Extreme']) },
+      { id: 'errorThreshold', label: 'Error threshold', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'blockSize', label: 'Block size', def: 8, min: 4, max: 64, dec: 0 },
+      { id: 'redW', label: 'Red weighting', def: .3, min: 0, max: 1, dec: 2 },
+      { id: 'greenW', label: 'Green weighting', def: .59, min: 0, max: 1, dec: 2 },
+      { id: 'blueW', label: 'Blue weighting', def: .11, min: 0, max: 1, dec: 2 },
+      { id: 'mb', label: 'Enable motion blur', type: 'check', def: false },
+      { id: 'shutterControl', label: 'Shutter control', type: 'pick', def: 0, opts: fxOpts(['Automatic', 'Manual']) },
+      { id: 'shutterAngle', label: 'Shutter angle°', def: 180, min: 0, max: 720, dec: 1 },
+      { id: 'samples', label: 'Shutter samples', def: 5, min: 1, max: 64, dec: 0 },
+      fxLayerPick('matteLayer', 'Matte layer', 'None'),
+      { id: 'matteChannel', label: 'Matte channel', type: 'pick', def: 0, opts: fxOpts(TW_MATTE) },
+      fxLayerPick('warpLayer', 'Warp layer', 'None'),
+      { id: 'show', label: 'Show', type: 'pick', def: 0, opts: fxOpts(TW_SHOW) },
+      { id: 'cropL', label: 'Left crop', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'cropR', label: 'Right crop', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'cropB', label: 'Bottom crop', def: 0, min: 0, max: 4000, dec: 0 },
+      { id: 'cropT', label: 'Top crop', def: 0, min: 0, max: 4000, dec: 0 }],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const fps = S.fps, byFrame = q('adjustBy') === 1, speed = q('speed'), s0 = fxTwSource(E, q), inst = [], mk = E.mark();
+      if (q('mb')) {
+        const ang = q('shutterControl') === 1 ? q('shutterAngle') : 180, n = clamp(Math.round(q('samples')), 1, 64), span = ang / 360 * (byFrame ? 1 : speed / 100) / fps;
+        for (let i = 0; i < n; i++) inst.push([s0 + (n > 1 ? span * i / (n - 1) : 0), Math.fround(1 / n)]);
+      } else inst.push([s0, 1]);
+      const method = q('method'), one = method > 0 && q('fromOne'), pm = fxPixelMotion(E, q, q('vectorDetail')), mid = q('matteLayer'), wid = q('warpLayer');
+      const mch = q('matteChannel'), show = q('show'), st = E.L.start || 0, memo = (m, k, f) => m.has(k) ? m.get(k) : (m.set(k, f()), m.get(k));
+      const F = new Map(), M = new Map(), Wp = new Map(), flows = new Map();
+      const frame = f => memo(F, f, () => fxThen(E, img, st + f / fps));
+      const matte = f => memo(M, f, () => fxFitAt(E, mid, 'twmatte', false, st + f / fps) || E.clear(img));
+      const warp = f => memo(Wp, f, () => fxFitAt(E, wid, 'twwarp', false, st + f / fps) || E.clear(img));
+      const mask = (x, f, inv) => E.run('lumina_time', 'lm_mmask', fxP({ 0: [mch, inv ? 1 : 0, 0, 0] }), x, matte(f));
+      const mimg = f => E.run('lumina_time', 'lm_mimage', fxP({ 0: [mch, 0, 0, 0] }), matte(f));
+      const mix = (a, b, w) => E.run('fx_time', 'ftm_mix', fxP({}, { 0: [w, 0, 0, 0] }), a, b);
+      const out = [];
+      for (const [s, wgt] of inst) {
+        const [f0, frac] = fxTwSplit(s, fps), f1 = f0 + 1;
+        let o;
+        if (method === 0 || frac < 1e-4 || (one && method === 1)) {
+          const f = (method === 0 || frac < 1e-4 ? 0 : Math.round(frac)) < .5 ? f0 : f1;
+          o = mid && (show === 1 || show === 2) ? mask(frame(f), f, show === 2) : mid && show === 3 ? mimg(f) : frame(f);
+        } else if (method === 1) {
+          o = mid && show === 3 ? mix(mimg(f0), mimg(f1), frac) : mid && (show === 1 || show === 2) ? mix(mask(frame(f0), f0, show === 2), mask(frame(f1), f1, show === 2), frac)
+            : mix(frame(f0), frame(f1), frac);
+        } else {
+          const fl = memo(flows, f0, () => wid ? fxFlow(E, warp(f0), warp(f1), pm, 4) : fxFlow(E, frame(f0), frame(f1), pm, 4));
+          if (mid) {
+            const fa = mask(frame(f0), f0, false), fb = mask(frame(f1), f1, false), ga = mask(frame(f0), f0, true), gb = mask(frame(f1), f1, true);
+            const fg = fxMotion(E, fa, fb, frac, wid ? fl : fxFlow(E, fa, fb, pm, 4), pm), bg = fxMotion(E, ga, gb, frac, wid ? fl : fxFlow(E, ga, gb, pm, 4), pm);
+            o = E.run('fx_time', 'ftm_layer', fxP({ 0: [show, 0, 0, 0] }), fg, bg);
+          } else o = fxMotion(E, frame(f0), frame(f1), frac, fl, pm);
+        }
+        out.push([o, wgt]);
+      }
+      const res = fxWeighted(E, img, out); E.release(mk, res); return res;
+    } },
+  ccforcemotionblur: { name: 'CC Force Motion Blur', cat: 'Time', clip: false, kernels: [['fx_time', 'ftm_acc'], ['kernels', 'fill']], params: [
+      { id: 'levels', label: 'Motion blur levels', def: 8, min: 2, max: 64, dec: 0 },
+      { id: 'override', label: 'Override shutter angle', type: 'check', def: true },
+      { id: 'angle', label: 'Shutter angle°', def: 180, min: 0, max: 3600, dec: 1 },
+      { id: 'native', label: 'Native motion blur', type: 'pick', def: 0, opts: fxOpts(['Off', 'On']) },
+      FX_MOVING],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const n = clamp(Math.round(q('levels')), 2, 64), span = clamp(q('override') ? q('angle') : 180, 0, 3600) / 360 / S.fps;
+      return fxMeanOf(E, img, q, Array.from({ length: n }, (_, i) => E.T + span * i / n));
+    } },
+  ccwidetime: { name: 'CC Wide Time', cat: 'Time', clip: false, kernels: [['fx_time', 'ftm_acc'], ['kernels', 'fill']], params: [
+      { id: 'forward', label: 'Forward steps', def: 3, min: 0, max: 45, dec: 0 },
+      { id: 'backward', label: 'Backward steps', def: 3, min: 0, max: 45, dec: 0 },
+      { id: 'native', label: 'Native motion blur', type: 'pick', def: 0, opts: fxOpts(['Off', 'On']) },
+      FX_MOVING],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const fw = clamp(Math.round(q('forward')), 0, 45), bk = clamp(Math.round(q('backward')), 0, 45), times = [];
+      for (let k = -bk; k <= fw; k++) times.push(E.T + k / S.fps);
+      return fxMeanOf(E, img, q, times);
+    } },
+  pixelmotionblur: { name: 'Pixel Motion Blur', cat: 'Time', clip: false, kernels: [['fx_time', 'ftm_acc'], ['lumina_time', 'lm_grey'], ['lumina_time', 'lm_half'],
+      ['lumina_time', 'lm_bsearch'], ['lumina_time', 'lm_bfine'], ['lumina_time', 'lm_bmed'], ['lumina_time', 'lm_fmean'], ['lumina_time', 'lm_motion'], ['kernels', 'fill']], params: [
+      { id: 'shutterControl', label: 'Shutter control', type: 'pick', def: 0, opts: fxOpts(['Automatic', 'Manual']) },
+      { id: 'shutterAngle', label: 'Shutter angle°', def: 180, min: 0, max: 720, dec: 1 },
+      { id: 'samples', label: 'Shutter samples', def: 16, min: 1, max: 64, dec: 0 },
+      { id: 'vectorDetail', label: 'Vector detail', def: 20, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const fps = S.fps, n = clamp(Math.round(q('samples')), 1, 64), span = clamp(q('shutterControl') === 1 ? q('shutterAngle') : 180, 0, 720) / 360 / fps;
+      const pm = fxPixelMotion(E, q, q('vectorDetail')), reach = clamp(Math.trunc(Math.max(Math.round(E.lw), Math.round(E.lh)) / 4), 8, 64);
+      const st = E.L.start || 0, F = new Map(), flows = new Map(), mk = E.mark(), w = Math.fround(1 / n), out = [];
+      const frame = f => { if (!F.has(f)) F.set(f, fxThen(E, img, st + f / fps)); return F.get(f); };
+      for (let i = 0; i < n; i++) {
+        const s = E.t - span * .5 + (n > 1 ? span * i / (n - 1) : span * .5), [f0, frac] = fxTwSplit(s, fps);
+        if (frac < 1e-4) { out.push([frame(f0), w]); continue; }
+        if (!flows.has(f0)) flows.set(f0, fxFlow(E, frame(f0), frame(f0 + 1), pm, reach));
+        out.push([fxMotion(E, frame(f0), frame(f0 + 1), frac, flows.get(f0), pm), w]);
+      }
+      const res = fxWeighted(E, img, out); E.release(mk, res); return res;
+    } },
+  camerashakedeblur: { name: 'Camera-Shake Deblur', cat: 'Blur & Sharpen', clip: false, kernels: [['lumina_time', 'lm_deblur'], ['kernels', 'fill']], params: [
+      { id: 'duration', label: 'Blur duration (frames)', def: 2, min: 1, max: 10, dec: 0 },
+      { id: 'method', label: 'Deblur method', type: 'pick', def: 0, opts: fxOpts(['High quality (slower)', 'Standard']) },
+      { id: 'strength', label: 'Strength %', def: 100, min: 100, max: 200, dec: 0 },
+      { id: 'sensitivity', label: 'Shake sensitivity', def: 50, min: 0, max: 100, dec: 0 },
+      { id: 'search', label: 'Search range', def: 8, min: 0, max: 64, dec: 0 },
+      { id: 'patch', label: 'Patch size', def: 32, min: 8, max: 256, dec: 0 },
+      { id: 'threshold', label: 'Threshold', def: 20, min: 0, max: 500, dec: 1 },
+      { id: 'show', label: 'Show blurry frames', type: 'check', def: false }],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const dur = Math.round(clamp(q('duration'), 1, 10)), fps = S.fps, box = fxIBox(E), [ox, oy, bw, bh] = box;
+      if (bw <= 0 || bh <= 0) return img;
+      let search = Math.round(Math.max(0, q('search')) * E.sc); if (q('method') === 1) search = Math.trunc(search / 2);
+      const patch = Math.max(4, Math.round(Math.max(8, q('patch')) * E.sc)), sens = clamp(q('sensitivity'), 0, 100);
+      const thresh = 1 + Math.max(0, q('threshold')) / 100 * (100 - sens) / 50, strength = Math.fround(clamp(q('strength') / 100, 1, 2)), big = Math.max(E.w, E.h);
+      const nb = [];
+      for (let k = -dur; k <= dur; k++) {
+        if (!k || !fxLive(E, E.T + k / fps)) continue;
+        const t = fxSelfAt(E, E.T + k / fps); nb.push({ t, l: fxLumaBox(E.read(t, big), box) });
+      }
+      if (!nb.length) return img;
+      const cur = fxLumaBox(E.read(img, big), box), nx = Math.ceil(bw / patch), ny = Math.ceil(bh / patch), table = new Float32Array(nx * ny * 4), used = new Set();
+      for (let i = 0; i < nx * ny; i++) {
+        const x0 = (i % nx) * patch, y0 = Math.trunc(i / nx) * patch, x1 = Math.min(x0 + patch, bw), y1 = Math.min(y0 + patch, bh), s0 = fxSharp(cur, bw, x0, y0, x1, y1);
+        let best = null;
+        nb.forEach((n, k) => { const sh = fxSharp(n.l, bw, x0, y0, x1, y1); if (sh > s0 * thresh && (!best || sh > best[0])) best = [sh, k]; });
+        if (!best) { table[i * 4] = -1; continue; }
+        const [dx, dy] = fxAlign(cur, nb[best[1]].l, bw, bh, x0, y0, x1, y1, search);
+        table.set([best[1], dx, dy, 0], i * 4); used.add(best[1]);
+      }
+      if (!used.size) { nb.forEach(n => E.free(n.t)); return img; }
+      const data = E.data(table), U = k => fxP({ 0: [0, k >>> 0, nx, ny] }, { 0: [ox, oy, bw, bh], 1: [patch, strength, q('show') ? 1 : 0, 0] });
+      let acc = E.run('lumina_time', 'lm_deblur', U(-1), E.clear(img), img, null, data);
+      for (const k of used) { const o = E.run('lumina_time', 'lm_deblur', U(k), acc, nb[k].t, null, data); E.free(acc); acc = o; }
+      const res = E.run('lumina_time', 'lm_deblur', fxP({ 0: [1, 0, nx, ny] }, { 0: [ox, oy, bw, bh], 1: [patch, strength, q('show') ? 1 : 0, 0] }), acc, img, null, data);
+      E.free(acc); nb.forEach(n => E.free(n.t)); return res;
+    } },
+  rollingshutter: { name: 'Rolling Shutter Repair', cat: 'Distort', clip: false, kernels: [['lumina_time', 'lm_rsr']], params: [
+      { id: 'rate', label: 'Rolling shutter rate %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'scan', label: 'Scan direction', type: 'pick', def: 0, opts: fxOpts(['Top to bottom', 'Bottom to top', 'Left to right', 'Right to left']) },
+      { id: 'method', label: 'Method', type: 'pick', def: 0, opts: fxOpts(['Warp', 'Pixel motion']) },
+      { id: 'detailed', label: 'Detailed analysis', type: 'check', def: false },
+      { id: 'detail', label: 'Pixel motion detail', def: 20, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      if (E.depth > 1) return img;
+      const rate = q('rate') / 100, box = fxIBox(E), fps = S.fps, big = Math.max(E.w, E.h);
+      if (!rate || box[2] <= 0 || box[3] <= 0) return img;
+      const at = dt => fxLive(E, E.T + dt) ? fxSelfAt(E, E.T + dt) : null, pt = at(-1 / fps), nt = at(1 / fps);
+      if (!pt && !nt) return img;
+      const pr = pt && E.read(pt, big), nr = nt && E.read(nt, big), fl = fxRsMeasure(E.read(img, big), pr, nr, box, q('detailed'), q('method') === 0, q('detail') / 100);
+      E.free(pt); E.free(nt);
+      if (!fl) return img;
+      return E.run('lumina_time', 'lm_rsr', fxP({ 0: [q('scan'), fl.nx, fl.ny, 0] }, { 0: box, 1: [rate, fl.cell, 0, 0] }), img, null, null, E.data(fl.v));
+    } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's
   // fx_tone.rs hue_saturation), Master / Colorize alone in the base pointwise kernel
@@ -7920,14 +8533,15 @@ function maskShapePath(c, s, cx, cy, mw, mh, a, w, h, outline) {
   }
   else poly([[-mw / 2, -mh / 2], [mw / 2, -mh / 2], [mw / 2, mh / 2], [-mw / 2, mh / 2]], true);
 }
-// draw one layer, fully processed, into its own transparent canvas
-function paintLayer(L, t, target) {
+// draw one layer, fully processed, into its own transparent canvas (tm: the time its position, scale, turn and opacity
+// are taken at; the Time effects paint other moments of a layer where it is now)
+function paintLayer(L, t, target, tm = t) {
   const r = RT[L.id] || (RT[L.id] = {}), base = mainCtx.getTransform(), prev = ctx;
   ctx = target;
   try {
     ctx.setTransform(base);
-    ctx.globalAlpha = clamp(val(L, 'opacity', t), 0, 1);
-    layerTransform(L, t);
+    ctx.globalAlpha = clamp(val(L, 'opacity', tm), 0, 1);
+    layerTransform(L, tm);
     r.m = ctx.getTransform();
     ctx.filter = filterFor(L, t);
     ctx.save(); r.box = DRAW[L.kind](L, t) || { w: 0, h: 0 }; ctx.restore();

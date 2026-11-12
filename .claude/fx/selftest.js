@@ -904,7 +904,7 @@
       step('reduceflicker', { edge: rfEdge.join(), row: rfRow.join(), plainRow: rfRow0.join(), works: cl(rfEdge, z) && Math.abs(rfRow[0] - rfRow0[0]) > 5 });
       const menuBlur = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Blur & Sharpen'), menuOld = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Obsolete');
       step('blurMenu', { items: menuBlur ? [...menuBlur.children].map(o => o.value) : null, obsolete: menuOld ? [...menuOld.children].map(o => o.value) : null,
-        works: menuBlur?.children.length === 15 && menuOld?.children.length === 1 });
+        works: menuBlur?.children.length === 16 && menuOld?.children.length === 1 });
     }
     const r13speed = {};
     for (const [id, vals, opts] of [['bilateral', {}], ['smartblur', {}], ['fastbox', {}], ['channelblur', { red: 10, alpha: 4 }], ['compoundblur', {}], ['crossblur', {}],
@@ -1055,7 +1055,7 @@
       step('warpDetails', { bezierSame: bzSame, bezierLeft: bzL.join(), bezierRight: bzR.join(), meshFlat: mwFlat, meshLeft: mwL.join(), meshRight: mwR.join(), displaceByLayer: dmLayer, upscale: upA.join(), upscaleDetail: upD.join(),
         works: bzSame <= 2 && cl(bzL, W3) && cl(bzR, z) && mwFlat <= 2 && cl(mwL, W3) && cl(mwR, z) && dmLayer > 1000 && cl(upA, RED, 3) && cl(upD, RED, 6) });
       const menuD = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Distort');
-      step('distortMenu16', { count: menuD?.children.length, works: menuD?.children.length === 34 });
+      step('distortMenu16', { count: menuD?.children.length, works: menuD?.children.length === 35 });
     }
     const r16speed = {};
     for (const [id, vals] of [['warp', {}], ['bezierwarp', { rtVX: .8, brVY: .9 }], ['meshwarp', {}], ['displacement', { maxH: 20, maxV: 20 }], ['twirllegacy', {}], ['upscale', {}]]) {
@@ -1529,6 +1529,93 @@
       }
       while (L.fx?.length) delFX(L, 0); draw();
       step('round24speed', r24speed);
+    }
+
+    // ---- Round 25: Time. Content that changes over time comes from an effect above them with keyframes: Arithmetic adds
+    // red = 100 × the layer time on the black patch (160, 270); the Time effects read the layer at other moments through it
+    {
+      const BK = [0, 0, 0], near = (a, b, t = 3) => Math.abs(a - b) <= t, fps = S.fps;
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? ((await Promise.race([m.getCompilationInfo(), new Promise(r => setTimeout(() => r({ messages: [{ lineNum: 0, linePos: 0, message: 'no compiler report' }] }), 5000))])).messages).slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const ids = ['echo', 'posterizetime', 'timedifference', 'timedisplacement', 'timewarp', 'ccforcemotionblur', 'ccwidetime', 'pixelmotionblur', 'camerashakedeblur', 'rollingshutter'], K25 = {};
+      for (const id of ids) { await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K25[fam + ':' + e] = r; } }
+      step('timeKernels', { ...K25, works: !Object.keys(K25).length });
+      while (L.fx?.length) delFX(L, 0); L.p.scale = 1; draw(); const base = frame();
+      // on a layer that doesn't change, those that only look at other moments leave it as it is
+      const same = {};
+      for (const id of ids.filter(i => !['echo', 'timedifference'].includes(i))) { await only(id); draw(); same[id] = diff(base, frame()).changed; }
+      step('timeDefaults', { ...same, works: Object.values(same).every(v => v === 0) });
+      const V = {}, want = {}, chk = (k, got, ok) => { V[k] = String(got); want[k] = ok; };
+      const ramp = async () => { const a = await only('arithmetic'); L.keys[fxKey(a, 'red')] = [{ t: 0, v: 0, ease: 'linear' }, { t: 2, v: 200, ease: 'linear' }]; return a; };
+      const red = () => px(160, 270)[0];
+      // Echo: the layer half a second back mixed in (Blend averages, Maximum and Minimum pick)
+      await ramp(); f = await add('echo'); set(f, 'echoTime', -.5); f.operator = 6; draw(1); chk('echoBlend', red(), near(red(), 75));
+      f.operator = 1; draw(1); chk('echoMax', red(), near(red(), 100)); f.operator = 2; draw(1); chk('echoMin', red(), near(red(), 50));
+      f.operator = 0; set(f, 'decay', .5); set(f, 'echoes', 2); draw(1); chk('echoAddDecay', red(), near(red(), Math.min(255, 100 + 50 * .5 + 0)));
+      // Posterize Time at 2 fps holds the layer at 1.0 s until 1.5 s
+      await ramp(); f = await add('posterizetime'); set(f, 'rate', 2); draw(1.3); chk('posterize', red(), near(red(), 100));
+      // Time Difference half a second back: |100 − 50|
+      await ramp(); f = await add('timedifference'); set(f, 'offset', -.5); draw(1); chk('timeDiff', px(160, 270), near(red(), 50) && px(160, 270)[1] < 3);
+      // Time Displacement from the layer itself: the black patch's luminance (red 100) reaches 0.83 s back
+      await ramp(); f = await add('timedisplacement'); draw(1); const tdK = Math.round(((.2126 * 100 / 255 - .5) * 2) * 60) / 60;
+      chk('timeDisp', red(), near(red(), Math.round(100 * (1 + tdK)), 4)); chk('timeDispWhite', px(480, 270), px(480, 270).every(v => v > 250));
+      // Timewarp at 50 %: whole frames and frame mix show the layer at half the time
+      await ramp(); f = await add('timewarp'); f.method = 0; draw(1); chk('twWhole', red(), near(red(), 50));
+      f.method = 1; draw(1.01); chk('twMix', red(), near(red(), 50.5, 2));
+      // CC Wide Time over a hold key at 1 s (red 0, then 200): 4 of the 7 frames have it; CC Force Motion Blur just before it
+      const step1 = async () => { const a = await only('arithmetic'); L.keys[fxKey(a, 'red')] = [{ t: 0, v: 0, ease: 'hold' }, { t: 1, v: 200, ease: 'hold' }]; };
+      await step1(); f = await add('ccwidetime'); draw(1); chk('wideTime', red(), near(red(), 200 * 4 / 7));
+      await step1(); f = await add('ccforcemotionblur'); const tF = 1 - .3 * (180 / 360 / fps); draw(tF);
+      const nIn = [...Array(8).keys()].filter(i => tF + (1 / 2 / fps) * i / 8 >= 1).length; chk('forceBlur', red(), near(red(), 200 * nIn / 8));
+      // Include the layer's movement: Echo of a layer sliding right leaves a copy behind it
+      while (L.fx?.length) delFX(L, 0); L.keys.x = [{ t: 0, v: .5, ease: 'linear' }, { t: 2, v: .7, ease: 'linear' }];
+      f = await add('echo'); set(f, 'echoTime', -.5); f.operator = 1; f.moving = true; draw(1);
+      // x = 450: now the black patch (moved 192 px), half a second back the white one (moved 96 px)
+      chk('echoMoving', px(450, 270), px(450, 270).every(v => v > 200));
+      f.moving = false; draw(1); chk('echoStill', px(450, 270), px(450, 270).every(v => v < 10)); delete L.keys.x;
+      // content moving inside the layer (Offset sliding 24 px a frame): Timewarp's pixel motion builds the in-between frame,
+      // Pixel Motion Blur smears the edges, Rolling Shutter Repair shears the rows apart
+      const slide = async () => { const o = await only('offset'); L.keys[fxKey(o, 'shiftX')] = [{ t: 0, v: .5, ease: 'linear' }, { t: 2, v: .5 + 24 * fps * 2 / 1920, ease: 'linear' }]; return o; };
+      const tex = async () => { await only('noise'); const o = await add('offset'); L.keys[fxKey(o, 'shiftX')] = [{ t: 0, v: .5, ease: 'linear' }, { t: 2, v: .5 + 24 * fps * 2 / 1920, ease: 'linear' }]; };
+      await tex(); draw(.5 + .25 / fps); const truth = frame();
+      await tex(); f = await add('timewarp'); f.method = 2; set(f, 'speed', 50); draw(1 + .5 / fps); const pm = frame();
+      f.method = 1; draw(1 + .5 / fps); const fm = frame();
+      const dpm = diff(truth, pm), dfm = diff(truth, fm); V.twMotion = JSON.stringify([dpm, dfm]); want.twMotion = dpm.changed < dfm.changed / 4;
+      await slide(); draw(1); const sharp = frame(); f = await add('pixelmotionblur'); draw(1); const pmb = frame();
+      const dpmb = diff(sharp, pmb); V.pmb = JSON.stringify(dpmb); want.pmb = dpmb.changed > 1000 && px(960, 900).every((v, k) => near(v, [...sharp.slice(((900 * 1920) + 960) * 4, ((900 * 1920) + 960) * 4 + 3)][k], 3));
+      // Rolling Shutter Repair tracks texture (fractal noise sliding with Offset): rows above the middle are read further
+      // back, rows below further on (24 px a frame × the row's place, so ±6 px at a quarter and three quarters down)
+      await tex(); draw(1); const plainN = frame(); f = await add('rollingshutter'); set(f, 'rate', 100); draw(1); const rs = frame();
+      const shiftOf = y => { let best = 1e18, bs = 0; for (let d = -15; d <= 15; d++) { let e = 0; for (let x = 200; x < 1700; x++) { const a = (y * 1920 + x) * 4, b = (y * 1920 + x - d) * 4; e += Math.abs(rs[a] - plainN[b]); } if (e < best) { best = e; bs = d; } } return bs; };
+      const sTop = shiftOf(270), sBot = shiftOf(810); V.rsShift = String([sTop, sBot]); want.rsShift = Math.abs(sTop - 6) <= 2 && Math.abs(sBot + 6) <= 2;
+      // Camera-Shake Deblur: one blurred frame of fractal noise between sharp ones takes the sharp neighbours' patches
+      const blurOne = async () => { await only('noise'); const b = await add('blur'); L.keys[fxKey(b, 'blurriness')] = [{ t: 0, v: 0, ease: 'hold' }, { t: 1 - .5 / fps, v: 5, ease: 'hold' }, { t: 1 + .5 / fps, v: 0, ease: 'hold' }]; };
+      await blurOne(); draw(1); const blurred = frame(); f = await add('camerashakedeblur'); draw(1); const deb = frame();
+      await only('noise'); draw(1); const sharpN = frame(); const dB = diff(sharpN, blurred).changed, dD = diff(sharpN, deb).changed; V.deblur = String([dB, dD]); want.deblur = dB > 1000 && dD < dB * .2;
+      while (L.fx?.length) delFX(L, 0); for (const k of Object.keys(L.keys)) if (k.startsWith('fx')) delete L.keys[k]; draw();
+      const bad = Object.keys(want).filter(k => !want[k]);
+      step('timeDetails', { ...V, bad, works: !bad.length });
+      // a video: Posterize Time shows a frame decoded in the background (the frame cache), then redraws
+      {
+        const clip = await makeClip(2.5, 'TIME', 'mover'); clip.__path = await lumina.saveExport(await clip.arrayBuffer(), 'time.webm', dir + 'time.webm');
+        const Vd = await load(clip); Vd.start = 0; S.sel = Vd.id;
+        await settle(1); const at1 = frame(); await settle(1.3); const at13 = frame();
+        Vd.fx = []; S.sel = Vd.id; refresh(); const s0 = $('#fx-add'); s0.value = 'posterizetime'; s0.dispatchEvent(new Event('input', { bubbles: true })); await fxWarm('posterizetime');
+        L.p.scale = 0; Vd.fx[0] && (Vd.p[fxKey(Vd.fx[0], 'rate')] = 1);
+        await settle(1.3); await vfSettle(); await settle(1.3); await vfSettle(); render(); const post = frame();
+        const near1 = diff(at1, post).changed, far = diff(at13, at1).changed;
+        step('timeVideo', { near1, far, cached: VF.store.size, works: far > 2000 && near1 < far / 4 });
+        S.layers = S.layers.filter(x => x !== Vd); delete RT[Vd.id]; L.p.scale = 1; S.sel = L.id; refresh();
+      }
+      const menuT = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Time');
+      step('timeMenu', { count: menuT?.children.length, works: menuT?.children.length === 8 });
+      const r25speed = {};
+      for (const id of ids) {
+        await ramp(); f = await add(id); if (id === 'echo') set(f, 'echoes', 4);
+        draw(); ctx.getImageData(0, 0, 1, 1);
+        const t0 = performance.now(); for (let i = 0; i < 5; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r25speed[id] = +((performance.now() - t0) / 5).toFixed(1);
+      }
+      while (L.fx?.length) delFX(L, 0); for (const k of Object.keys(L.keys)) if (k.startsWith('fx')) delete L.keys[k]; draw();
+      step('round25speed', r25speed);
     }
 
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270

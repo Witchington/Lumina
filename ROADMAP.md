@@ -7,20 +7,28 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 25 (Time) (Round 24 done 2026-11-11); Round 24 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 26 (Simulation, first part) (Round 25 done 2026-11-11); Round 25 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 24 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 25 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–24 and the Round 6 leftovers are done. **Round 25 is next, Time** (WORKPLAN.md's round table): Echo, Posterize
-Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time, Camera-Shake
-Deblur, Rolling Shutter Repair (check which are already in Lumina first; these read other frames, see WORKPLAN's note).
-Find their host code in EffectCraft's crates/gpu/src (check each file's `IDS` list; fetch with `gh api` at commit 3768ff4
-into the scratchpad) and the CPU plans in crates/effects/src. Round 24's helpers: `fxFit(E, id, name, stretch)`
+Rounds 8–25 and the Round 6 leftovers are done. **Round 26 is next, Simulation (first part)** (WORKPLAN.md's round
+table, Rounds 26–28): split the list into three Rounds first (particles; weather; Shatter, Card Dance, Caustics, Foam, Wave
+World and the rest), and check which are already in Lumina. Find their host code in EffectCraft's crates/gpu/src (check
+each file's `IDS` list; fetch with `gh api` at commit 3768ff4 into the scratchpad) and the CPU plans in
+crates/effects/src. Round 25's helpers: `fxSelfAt(E, T2, tm)` (EffectHost::self_at: the layer at another timeline time,
+through the effects above, placed as at time tm), `fxThen` (the same, or the input when it is the same moment),
+`fxLayerAt` / `fxFitAt` (another layer at a given time, fitted), `fxMeanOf`, `fxWeighted`, `fxFlow` / `fxMotion`
+(raster::flow's block matching and timewarp_interpolate on the graphics card), `fxPixelMotion`, `fxTwSource` /
+`fxIntegrateSpeed`, `fxIBox` (the layer's box in whole pixels), the KLT tracker `kltPlane` / `kltPyr` / `kltTrack` and
+`fxRsMeasure`, and `FX_MOVING` (Lumina's "Include the layer's movement" switch); in fxApply, `E.free`, `E.mark` /
+`E.release`, `E.flush`, `E.geo`, `E.rows(img, w, h)`, `E.list` / `E.idx` / `E.depth` / `E.TM`; `paintLayer(L, t,
+target, tm)`; the video frame cache `VF` (`vfFrame`, `vfGrab`, `vfAsk`, `vfAhead`, `vfSettle`, `VF_AT`); new kernel
+families `fx_time` and `lumina_time` (shaders/lumina_time.wgsl). Round 24's helpers: `fxFit(E, id, name, stretch)`
 (util::fit_layer: another layer stretched or centred over this layer's box, or null), `fxK` (one fxk_point pass), `fxRoute`
 (fx_key's route), `fxMinimax`, `fxOpts` (a menu from names), the menus `SHIFT_NAMES`/`SHIFT_SRC`, `MATTE_NAMES`/`MATTE_SRC`,
 `INVERT_CHANNELS`, `COMBINER_FROM`/`COMBINER_TO`, `ARITH_OPS`, `COMPOUND_OPS`, `CALC_CHANNELS`, and `SOLID_MODES` /
@@ -452,7 +460,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 25 (Time)**.
+EffectCraft carries on at **Round 26 (Simulation, first part)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -474,8 +482,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–24 and the Round 6 leftovers are done; Round 25 (Time) is next.** About 82
-   effects are left, in Rounds 25–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–25 and the Round 6 leftovers are done; Round 26 (Simulation) is next.** About 72
+   effects are left, in Rounds 26–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -591,6 +599,38 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 25 done (2026-11-11): Time.** A new **Time** group with **Echo**, **Posterize Time**, **Time
+  Difference**, **Time Displacement**, **Timewarp**, **CC Force Motion Blur**, **CC Wide Time** and **Pixel Motion Blur**;
+  **Camera-Shake Deblur** joins Blur & Sharpen and **Rolling Shutter Repair** joins Distort (10; none was in Lumina before).
+  - **Other moments** (EffectHost::self_at): `fxSelfAt` paints the layer at another time where it is now (its content,
+    masks and the effects above, run at that moment), as After Effects does without a precomp. Lumina adds an
+    **Include the layer's movement** switch to Echo, Posterize Time and the CC motion blurs, so they also trail or blur a
+    layer that is only moving. Before the layer starts or after it ends it is empty. Two levels of Time effects can sit
+    inside each other; deeper ones pass through.
+  - **Video frames at other moments** come from a frame cache (at most 768 MB of memory, nothing on disk): the player on
+    screen adds each frame it shows, a hidden player runs ahead while playing, and a third seeks to missing frames and
+    redraws when they arrive. Until a frame is decoded the layer's current frame stands in. Export records in real time,
+    so a frame not yet decoded during export shows the current one there too.
+  - **Engine:** working images can be handed back and reused within a frame (`E.free`, `E.mark`/`E.release`), the work is
+    sent in parts (`E.flush`) when an effect needs many passes, and `E.tex` images can be copied (COPY_SRC).
+  - Kernels: fx_time's ftm_acc / ftm_mix / ftm_layer / ftm_difference, fx_noise's fxn_echo / fxn_echo_fin, and Lumina's
+    new shaders/lumina_time.wgsl: Time Displacement's per-pixel step (lm_tkey, lm_tdisp), raster::flow's block-matching
+    motion vectors and smoothing on the graphics card (lm_grey, lm_half, lm_bsearch, lm_bfine, lm_bmed, lm_fmean),
+    timewarp_interpolate (lm_motion), Source Crops (lm_crop), the Matte Layer planes (lm_mmask, lm_mimage), Camera-Shake
+    Deblur's patch blending (lm_deblur; its sharpness and alignment are measured on the CPU on 8-bit copies) and Rolling
+    Shutter Repair's resampling (lm_rsr; the motion is tracked on the CPU with track::klt's Lucas–Kanade, ported).
+    Host code fetched from EffectCraft's crates/gpu/src (fx_time, fx_noise) and crates/effects/src (time_fx, blur3,
+    distort4, util), crates/raster/src/flow.rs and crates/track/src (klt, plane) with `gh api`; nothing was downloaded.
+  - Speeds at 1080p: Echo (4 echoes) 9 ms, Posterize Time / Time Difference / Timewarp 6–7 ms, CC Force Motion Blur / CC
+    Wide Time 11–12 ms, Rolling Shutter Repair 39 ms, Time Displacement 76 ms (61 moments on the card's ramp), Pixel Motion
+    Blur 79 ms, Camera-Shake Deblur 85 ms (it reads five frames back to the CPU).
+  - Test: the fx suite's timeKernels, timeDefaults (on a still layer they change nothing), timeDetails (exact values
+    with Arithmetic keyframed above them: Echo's Blend 75, Maximum 100, Minimum 50, Add with decay 125; Posterize Time
+    100; Time Difference 50; Time Displacement 17; Timewarp 50; CC Wide Time 114; CC Force Motion Blur 125; the movement
+    switch; Timewarp Pixel Motion within a few thousand pixels of the true in-between frame of sliding noise where Frame
+    Mix misses a million; Pixel Motion Blur smearing; Rolling Shutter Repair shifting rows by exactly +6 / −6 px;
+    Camera-Shake Deblur restoring a blurred frame exactly), timeVideo (a video frame decoded in the background), timeMenu
+    and round25speed steps. The Blur & Sharpen and Distort menu checks now count 16 and 35.
 - **EffectCraft Round 24 done (2026-11-11): Channel.** A new **Channel** group with **Arithmetic**, **Blend**,
   **Calculations**, **CC Composite**, **Channel Combiner**, **Compound Arithmetic**, **Invert**, **Minimax**, **Remove
   Color Matting**, **Set Channels**, **Set Matte**, **Shift Channels** and **Solid Composite** (13; none was in Lumina
