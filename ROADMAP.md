@@ -7,19 +7,25 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 24 (Channel) (Round 23 done 2026-11-11); Round 23 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 25 (Time) (Round 24 done 2026-11-11); Round 24 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 23 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 24 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–23 and the Round 6 leftovers are done. **Round 24 is next, Channel** (WORKPLAN.md's round table): Arithmetic,
-Blend, Calculations, CC Composite, Channel Combiner, Compound Arithmetic, Invert, Minimax, Remove Color Matting, Set
-Channels, Set Matte, Shift Channels, Solid Composite (check which are already in Lumina first). Find their host code in
-EffectCraft's crates/gpu/src (check each file's `IDS` list) and the CPU plans in crates/effects/src. Round 23's helpers:
+Rounds 8–24 and the Round 6 leftovers are done. **Round 25 is next, Time** (WORKPLAN.md's round table): Echo, Posterize
+Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time, Camera-Shake
+Deblur, Rolling Shutter Repair (check which are already in Lumina first; these read other frames, see WORKPLAN's note).
+Find their host code in EffectCraft's crates/gpu/src (check each file's `IDS` list; fetch with `gh api` at commit 3768ff4
+into the scratchpad) and the CPU plans in crates/effects/src. Round 24's helpers: `fxFit(E, id, name, stretch)`
+(util::fit_layer: another layer stretched or centred over this layer's box, or null), `fxK` (one fxk_point pass), `fxRoute`
+(fx_key's route), `fxMinimax`, `fxOpts` (a menu from names), the menus `SHIFT_NAMES`/`SHIFT_SRC`, `MATTE_NAMES`/`MATTE_SRC`,
+`INVERT_CHANNELS`, `COMBINER_FROM`/`COMBINER_TO`, `ARITH_OPS`, `COMPOUND_OPS`, `CALC_CHANNELS`, and `SOLID_MODES` /
+`CALC_MODES` / `CC_COMPOSITE_MODES` ([name, BlendMode::ALL place]); `E.orig` (the layer before its effects); new kernel
+family `lumina_chan` (shaders/lumina_chan.wgsl: lc_morph). Round 23's helpers:
 `fxDone`, `fxDeg` (an angle turned with the layer), `fxCorners` / `fxMaxCorner` (transition::max_corner_dist over the
 layer's on-screen box), `fxHL` (f32 hi/lo pairs), `fxOther` (a picked layer or null), `fxPlaced` (transition::place_layer:
 tile, centre or stretch another layer over this one's box), `fxRotAxis` / `fxRotOrdered` (card3d), `fxCardCam` /
@@ -446,7 +452,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 24 (Channel)**.
+EffectCraft carries on at **Round 25 (Time)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -468,8 +474,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–23 and the Round 6 leftovers are done; Round 24 (Channel) is next.** About 95
-   effects are left, in Rounds 24–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–24 and the Round 6 leftovers are done; Round 25 (Time) is next.** About 82
+   effects are left, in Rounds 25–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -585,6 +591,26 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 24 done (2026-11-11): Channel.** A new **Channel** group with **Arithmetic**, **Blend**,
+  **Calculations**, **CC Composite**, **Channel Combiner**, **Compound Arithmetic**, **Invert**, **Minimax**, **Remove
+  Color Matting**, **Set Channels**, **Set Matte**, **Shift Channels** and **Solid Composite** (13; none was in Lumina
+  before).
+  - Kernels: fx_key's fxk_point ops 11–21 (host code from fx_key.rs: route, Remove Color Matting, Arithmetic, Solid
+    Composite, Set Matte, Channel Combiner, Blend, Calculations, Compound Arithmetic, Set Channels' two passes), fx_pixel2's
+    fp2_point op 6 (CC Composite, with the layer before its effects as the original), the kernels pointwise op 6 and fx_tone's
+    fxt_point op 18 (Invert's RGB/Alpha and HLS/YIQ channels), fx_noise's fxn_straight / fxn_premul and Lumina's new
+    shaders/lumina_chan.wgsl lc_morph (Minimax: past the frame is empty; Don't Shrink Edges clamps into the layer's box).
+    Host code fetched from EffectCraft's crates/gpu/src (fx_key, fx_pixel2, fx_noise, fx_tone) and crates/effects/src
+    (channel, channel2) with `gh api`; nothing was downloaded.
+  - Other layers (Set Channels' four sources, Set Matte, Blend, Calculations, Channel Combiner's 2nd layer, Compound
+    Arithmetic) are stretched to fit or centred over this layer's on-screen box, as util::fit_layer does. The results
+    stay inside the layer's box, as EffectCraft's buffer keeps them; Minimax's Maximum can grow past it. Solid Composite
+    puts the colour behind the layer, as After Effects does.
+  - Speeds 4.3–4.7 ms a frame at 1080p (Minimax at radius 10).
+  - Test: the fx suite's channelKernels, channelDefaults (each leaves the card as it is with its defaults),
+    channelDetails (exact colours on the card's patches, Set Matte and Blend from a hidden ellipse, stretched and
+    centred, Minimax's spread and edges, Solid Composite staying in the half-size card's box), channelMenu and
+    round24speed steps.
 - **EffectCraft Round 23 done (2026-11-11): Transitions.** A new **Transition** group with **Block Dissolve**, **Card
   Wipe**, **Gradient Wipe**, **Iris Wipe**, **Linear Wipe**, **Radial Wipe**, **Venetian Blinds**, **CC Glass Wipe**, **CC
   Grid Wipe**, **CC Image Wipe**, **CC Jaws**, **CC Light Wipe**, **CC Line Sweep**, **CC Radial ScaleWipe**, **CC Scale

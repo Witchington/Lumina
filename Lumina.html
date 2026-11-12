@@ -2458,8 +2458,9 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   fx_particles: ['fx_stylize', 'fx_sim', 'fx_particles'],   // Round 21 on: Curl Noise (fxp_curl_*; EffectCraft builds it with fx_stylize's fbm and fx_sim)
   lumina_noise: ['fx_generate', 'lumina_noise'],   // Round 21: grain mattes, sample boxes, Match Grain's plane stats (EffectCraft does them on the CPU; shaders/)
   fx_extra: ['fx_generate', 'fx_extra'],   // Round 22 on: Bevel Alpha, Bevel Edges (fxe_*; EffectCraft builds it with fx_generate)
-  lumina_trans: ['lumina_trans'] };   // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer (EffectCraft does them on the CPU; shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl' };
+  lumina_trans: ['lumina_trans'],     // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer
+  lumina_chan: ['lumina_chan'] };     // Round 24: Minimax's passes over the frame or the layer's box (shaders/)   // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer (EffectCraft does them on the CPU; shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2614,6 +2615,7 @@ function fxApply(L, t, lc) {
   };
   const src = tex();
   dev.queue.copyExternalImageToTexture({ source: lc.cv }, { texture: src, premultipliedAlpha: true }, [w, h]);
+  E.orig = src;   // the layer before its effects (CC Composite's original)
   let cur = src, clip = false;
   for (const f of list) {
     const D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), t, E);
@@ -2655,6 +2657,56 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 24 helpers (Channel): EffectCraft's channel.rs and channel2.rs; GPU host code from fx_key.rs (fxk_point ops
+//      11–21), fx_pixel2.rs (CC Composite), fx_noise.rs (Minimax), fx_tone.rs and effects.rs (Invert) ----
+// util::fit_layer: another layer over this layer's box, stretched to fit or centred (null when none is picked)
+function fxFit(E, id, name, stretch) {
+  const src = fxOther(E, id, name); if (!src) return null;
+  const o = fxLayerBox(E, byId(id));
+  return E.run('lumina_trans', 'lt_place', fxP({ 0: [stretch ? 2 : 1, 0, 0, 0] }, { 0: E.rect, 1: o.rect, 2: [E.sc, o.sc, 0, 0] }), src);
+}
+const fxK = (E, img, u, f = {}, aux = null) => E.run('fx_key', 'fxk_point', fxP(u, f), img, aux);
+// fx_key's route: R, G, B, A from four sources (util::SRC_ORDER places)
+const fxRoute = (E, img, s) => s.join() === '0,1,2,3' ? img : fxK(E, img, { 0: [11, 0, 0, 0], 1: s });
+// Shift Channels' menu (After Effects' order, then Half On) and each option's SRC_ORDER place; Set Matte's the same way
+const SHIFT_NAMES = ['Alpha', 'Red', 'Green', 'Blue', 'Luminance', 'Hue', 'Lightness', 'Saturation', 'Full on', 'Full off', 'Half on'];
+const SHIFT_SRC = [3, 0, 1, 2, 4, 5, 6, 7, 8, 10, 9];
+const MATTE_NAMES = ['Red', 'Green', 'Blue', 'Alpha', 'Luminance', 'Hue', 'Lightness', 'Saturation', 'Full', 'Off'];
+const MATTE_SRC = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10];
+const INVERT_CHANNELS = ['RGB', 'Red', 'Green', 'Blue', 'HLS', 'Hue', 'Lightness', 'Saturation', 'YIQ', 'Luminance', 'In phase chrominance',
+  'Quadrature chrominance', 'Alpha'];
+const COMBINER_FROM = ['RGB to HLS', 'HLS to RGB', 'RGB to YUV', 'YUV to RGB', 'Red', 'Green', 'Blue', 'Alpha', 'Lightness', 'Hue', 'Saturation',
+  'Luminance', 'Max RGB', 'Min RGB'];
+const COMBINER_TO = ['Red only', 'Green only', 'Blue only', 'Alpha only', 'Lightness only', 'Hue only', 'Saturation only', 'Grayscale', 'Saturation multiplied'];
+const ARITH_OPS = ['And', 'Or', 'Xor', 'Add', 'Subtract', 'Difference', 'Min', 'Max', 'Block above', 'Block below', 'Slice', 'Multiply', 'Screen'];
+// Solid Composite's, Calculations' and CC Composite's modes: [name, place in EffectCraft's BlendMode::ALL]
+const SOLID_MODES = [['Normal', 0], ['Add', 9], ['Multiply', 4], ['Screen', 11], ['Overlay', 16], ['Soft light', 17], ['Hard light', 18], ['Darken', 3],
+  ['Lighten', 10], ['Difference', 23], ['Color', 30], ['Luminosity', 31]];
+const CALC_MODES = [['Normal', 0], ['Darken', 3], ['Multiply', 4], ['Color burn', 5], ['Linear burn', 7], ['Add', 9], ['Lighten', 10], ['Screen', 11],
+  ['Color dodge', 12], ['Linear dodge', 14], ['Overlay', 16], ['Soft light', 17], ['Hard light', 18], ['Linear light', 19], ['Vivid light', 20],
+  ['Pin light', 21], ['Hard mix', 22], ['Difference', 23], ['Exclusion', 25], ['Hue', 28], ['Saturation', 29], ['Luminosity', 31]];
+const CC_COMPOSITE_MODES = [['In front', 0], ['In back', 0], ['Add', 9], ['Multiply', 4], ['Screen', 11], ['Overlay', 16], ['Soft light', 17],
+  ['Hard light', 18], ['Darken', 3], ['Lighten', 10], ['Difference', 23], ['Hue', 28], ['Saturation', 29], ['Color', 30], ['Luminosity', 31], ['Stencil alpha', 32]];
+const CALC_CHANNELS = ['RGBA', 'Gray', 'Red', 'Green', 'Blue', 'Alpha'];
+const COMPOUND_OPS = ['Copy', 'Add', 'Subtract', 'Multiply', 'Difference', 'And', 'Or', 'Xor', 'Lighten', 'Darken', 'Minimum', 'Maximum', 'Screen',
+  'Overlay', 'Hard light'];
+const fxOpts = a => a.map((n, i) => [i, Array.isArray(n) ? n[0] : n]);
+// fx_noise's minimax: straight planes, the minimum / maximum passes (Lumina's lc_morph: past the frame empty, or with
+// Don't Shrink Edges clamped into the layer's box), premultiplied again
+function fxMinimax(E, img, q) {
+  const r = Math.max(0, Math.round(q('radius') * E.sc)); if (!r) return img;
+  const op = q('operation'), keep = q('dontShrink'), d = q('direction'), rx = d === 2 ? 0 : r, ry = d === 1 ? 0 : r;
+  const sel = [[1, 1, 1, 0], [0, 0, 0, 1], [1, 1, 1, 1], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]][q('channel')] || [1, 1, 1, 0];
+  const [x, y, w, h] = E.rect, box = keep ? [Math.max(0, Math.floor(x)), Math.max(0, Math.floor(y)), Math.min(E.w, Math.ceil(x + w)) - 1, Math.min(E.h, Math.ceil(y + h)) - 1]
+    : [0, 0, E.w - 1, E.h - 1];
+  let pl = E.run('fx_noise', 'fxn_straight', fxP({}), img);
+  for (const max of [[0], [1], [0, 1], [1, 0]][op] || [1]) {
+    const modes = sel.map(v => v ? max : 2);
+    if (rx) pl = E.run('lumina_chan', 'lc_morph', fxP({ 0: [rx, 0, keep ? 1 : 0, 0], 1: modes }, { 0: box }), pl);
+    if (ry) pl = E.run('lumina_chan', 'lc_morph', fxP({ 0: [ry, 1, keep ? 1 : 0, 0], 1: modes }, { 0: box }), pl);
+  }
+  return E.run('fx_noise', 'fxn_premul', fxP({}), pl);
+}
 // ---- Round 23 helpers (Transitions): EffectCraft's transition.rs, transition2.rs, misc.rs, card3d.rs and sim2's pieces;
 //      GPU host code from fx_transition.rs, fx_generate.rs and fx_light.rs. Distances are measured to the corners of the
 //      layer's on-screen box (EffectCraft's layer buffer); angles turn with the layer ----
@@ -5728,6 +5780,136 @@ const FX = {
       else if (q('reactor') === 2) m = E.run('fx_transition', 'ftr_react_local', fxP(), m, m);
       const rev = fxOther(E, q('reveal'), 'warporev'), [tab, row] = rev ? E.rows(rev) : [null, 0];
       return E.run('fx_transition', 'ftr_warpo', fxP({ 0: [q('warpDir'), rev ? 1 : 0, 0, 0], 3: [row, E.w, E.h, 0] }, { 0: [c, q('blendSpan') / 100 * .5, q('warpAmount') * E.sc * 20, 0] }), img, m, null, tab);
+    } },
+  // ---- Round 24: Channel. EffectCraft's channel.rs, channel2.rs and misc.rs (Invert); GPU host code from fx_key.rs, fx_pixel2.rs,
+  //      fx_noise.rs, fx_tone.rs and effects.rs. Another layer is stretched or centred over this layer's box (util::fit_layer);
+  //      the results stay inside the layer's box, as EffectCraft's buffer keeps them (Minimax's can grow past it) ----
+  arithmetic: { name: 'Arithmetic', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point']], params: [
+      { id: 'operator', label: 'Operator', type: 'pick', def: 3, opts: fxOpts(ARITH_OPS) },
+      { id: 'red', label: 'Red value', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'green', label: 'Green value', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'blue', label: 'Blue value', def: 0, min: 0, max: 255, dec: 0 },
+      { id: 'clip', label: 'Clip result values', type: 'check', def: true }],
+    run(E, img, q) { return fxK(E, img, { 0: [13, q('operator'), q('clip') ? 1 : 0, 0] }, { 0: [q('red') / 255, q('green') / 255, q('blue') / 255, 0] }); } },
+  blendch: { name: 'Blend', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place']], params: [
+      fxLayerPick('layer', 'Blend with layer'),
+      { id: 'mode', label: 'Mode', type: 'pick', def: 0, opts: fxOpts(['Crossfade', 'Color only', 'Tint only', 'Darken only', 'Lighten only']) },
+      { id: 'orig', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'sizes', label: 'If layer sizes differ', type: 'pick', def: 0, opts: fxOpts(['Center', 'Stretch to fit']) }],
+    run(E, img, q) {
+      const orig = clamp(q('orig') / 100, 0, 1); if (orig >= 1) return img;
+      return fxK(E, img, { 0: [17, q('mode'), 0, 0] }, { 0: [orig, 0, 0, 0] }, fxFit(E, q('layer'), 'chblend', q('sizes') === 1) || img);
+    } },
+  calculations: { name: 'Calculations', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place']], params: [
+      { id: 'input', label: 'Input channel', type: 'pick', def: 0, opts: fxOpts(CALC_CHANNELS) },
+      { id: 'invIn', label: 'Invert input', type: 'check', def: false },
+      fxLayerPick('layer', 'Second layer', 'None'),
+      { id: 'second', label: 'Second layer channel', type: 'pick', def: 0, opts: fxOpts(CALC_CHANNELS) },
+      { id: 'opacity', label: 'Second layer opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'invSecond', label: 'Invert second layer', type: 'check', def: false },
+      { id: 'stretch', label: 'Stretch second layer to fit', type: 'check', def: true },
+      { id: 'mode', label: 'Blending mode', type: 'pick', def: 0, opts: fxOpts(CALC_MODES) },
+      { id: 'keepAlpha', label: 'Preserve transparency', type: 'check', def: false }],
+    run(E, img, q) {
+      const aux = fxFit(E, q('layer'), 'chcalc', q('stretch'));
+      const flags = (q('invIn') ? 1 : 0) | (q('invSecond') ? 2 : 0) | (q('keepAlpha') ? 4 : 0) | (aux ? 8 : 0);
+      return fxK(E, img, { 0: [18, q('input'), q('second'), (CALC_MODES[q('mode')] || CALC_MODES[0])[1]], 1: [flags, 0, 0, 0] },
+        { 0: [clamp(q('opacity') / 100, 0, 1), 0, 0, 0] }, aux);
+    } },
+  cccomposite: { name: 'CC Composite', cat: 'Channel', clip: true, kernels: [['fx_pixel2', 'fp2_point']], params: [
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Composite original', type: 'pick', def: 0, opts: fxOpts(CC_COMPOSITE_MODES) },
+      { id: 'rgbOnly', label: 'RGB only', type: 'check', def: false }],
+    run(E, img, q) {
+      const m = q('mode');
+      return E.run('fx_pixel2', 'fp2_point', fxP({ 0: [6, m === 1 ? 1 : 0, (CC_COMPOSITE_MODES[m] || CC_COMPOSITE_MODES[0])[1], q('rgbOnly') ? 1 : 0], 1: [1, 0, 0, 0] },
+        { 0: [clamp(q('opacity') / 100, 0, 1), 0, 0, 0] }), img, E.orig);
+    } },
+  channelcombiner: { name: 'Channel Combiner', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place']], params: [
+      { id: 'useSecond', label: 'Use 2nd layer', type: 'check', def: false },
+      fxLayerPick('layer', 'Source layer'),
+      { id: 'from', label: 'From', type: 'pick', def: 8, opts: fxOpts(COMBINER_FROM) },
+      { id: 'to', label: 'To', type: 'pick', def: 4, opts: fxOpts(COMBINER_TO) },
+      { id: 'invert', label: 'Invert', type: 'check', def: false },
+      { id: 'solid', label: 'Solid alpha', type: 'check', def: false }],
+    run(E, img, q) {
+      const aux = q('useSecond') ? fxFit(E, q('layer'), 'chcomb', true) || img : null;
+      return fxK(E, img, { 0: [16, q('from'), q('to'), (q('invert') ? 1 : 0) | (q('solid') ? 2 : 0) | (aux ? 4 : 0)] }, {}, aux);
+    } },
+  compoundarith: { name: 'Compound Arithmetic', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place']], params: [
+      fxLayerPick('layer', 'Second source layer'),
+      { id: 'operator', label: 'Operator', type: 'pick', def: 0, opts: fxOpts(COMPOUND_OPS) },
+      { id: 'channels', label: 'Operate on channels', type: 'pick', def: 0, opts: fxOpts(['RGB', 'ARGB', 'Alpha']) },
+      { id: 'overflow', label: 'Overflow behavior', type: 'pick', def: 0, opts: fxOpts(['Clip', 'Wrap', 'Scale']) },
+      { id: 'stretch', label: 'Stretch second source to fit', type: 'check', def: true },
+      { id: 'orig', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const orig = clamp(q('orig') / 100, 0, 1); if (orig >= 1) return img;
+      return fxK(E, img, { 0: [19, q('operator'), q('channels'), q('overflow')] }, { 0: [orig, 0, 0, 0] }, fxFit(E, q('layer'), 'chcompound', q('stretch')) || img);
+    } },
+  invertch: { name: 'Invert', cat: 'Channel', clip: true, kernels: [['kernels', 'pointwise'], ['fx_tone', 'fxt_point']], params: [
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, opts: fxOpts(INVERT_CHANNELS) },
+      { id: 'blend', label: 'Blend with original %', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const ch = q('channel'), k = 1 - q('blend') / 100;
+      if (ch >= 4 && ch <= 11) return fxTone(E, img, 18, { 0: [18, ch, 0, 0] }, { 0: [k, 0, 0, 0] });
+      return E.run('kernels', 'pointwise', fxP({ 0: [6, ch === 12 ? 4 : Math.min(ch, 3), 0, 0] }, { 0: [k, 0, 0, 0] }), img);
+    } },
+  minimax: { name: 'Minimax', cat: 'Channel', kernels: [['fx_noise', 'fxn_straight'], ['fx_noise', 'fxn_premul'], ['lumina_chan', 'lc_morph']], params: [
+      { id: 'operation', label: 'Operation', type: 'pick', def: 1, opts: fxOpts(['Minimum', 'Maximum', 'Minimum then maximum', 'Maximum then minimum']) },
+      { id: 'radius', label: 'Radius', def: 0, min: 0, max: 500, dec: 0 },
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, opts: fxOpts(['Color', 'Alpha', 'Alpha and color', 'Red', 'Green', 'Blue']) },
+      { id: 'direction', label: 'Direction', type: 'pick', def: 0, opts: fxOpts(['Horizontal & vertical', 'Just horizontal', 'Just vertical']) },
+      { id: 'dontShrink', label: "Don't shrink edges", type: 'check', def: false }],
+    run: fxMinimax },
+  removecolormatting: { name: 'Remove Color Matting', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point']], params: [
+      { id: 'bg', label: 'Background color', type: 'color', def: '#000000' },
+      { id: 'clipHdr', label: 'Clip HDR values', type: 'check', def: true }],
+    run(E, img, q) { return fxK(E, img, { 0: [12, q('clipHdr') ? 1 : 0, 0, 0] }, { 0: [...q('bg'), 1] }); } },
+  setchannels: { name: 'Set Channels', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place'], ['kernels', 'fill']], params: [
+      fxLayerPick('layer1', 'Source layer 1'),
+      { id: 'red', label: "Set red to source 1's", type: 'pick', def: 0, opts: fxOpts(SRC_NAMES) },
+      fxLayerPick('layer2', 'Source layer 2'),
+      { id: 'green', label: "Set green to source 2's", type: 'pick', def: 1, opts: fxOpts(SRC_NAMES) },
+      fxLayerPick('layer3', 'Source layer 3'),
+      { id: 'blue', label: "Set blue to source 3's", type: 'pick', def: 2, opts: fxOpts(SRC_NAMES) },
+      fxLayerPick('layer4', 'Source layer 4'),
+      { id: 'alpha', label: "Set alpha to source 4's", type: 'pick', def: 3, opts: fxOpts(SRC_NAMES) },
+      { id: 'stretch', label: 'Stretch layers to fit', type: 'check', def: true }],
+    run(E, img, q) {
+      const s = ['red', 'green', 'blue', 'alpha'].map(id => q(id)), st = q('stretch');
+      const layers = [1, 2, 3, 4].map(k => fxFit(E, q('layer' + k), 'chset' + k, st));
+      if (layers.every(l => !l)) return fxRoute(E, img, s);
+      let vals = E.clear(img);
+      layers.forEach((l, k) => { vals = fxK(E, vals, { 0: [20, k, s[k], 0] }, {}, l || img); });
+      return fxK(E, vals, { 0: [21, 0, 0, 0] });
+    } },
+  setmatte: { name: 'Set Matte', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place']], params: [
+      fxLayerPick('layer', 'Take matte from layer'),
+      { id: 'from', label: 'Use for matte', type: 'pick', def: 3, opts: fxOpts(MATTE_NAMES) },
+      { id: 'invert', label: 'Invert matte', type: 'check', def: false },
+      { id: 'stretch', label: 'Stretch matte to fit', type: 'check', def: true },
+      { id: 'composite', label: 'Composite matte with original', type: 'check', def: true },
+      { id: 'premul', label: 'Premultiply matte layer', type: 'check', def: true }],
+    run(E, img, q) {
+      const src = MATTE_SRC[q('from')] ?? 3, aux = fxFit(E, q('layer'), 'chmatte', q('stretch')), preOk = ![3, 8, 10].includes(src);
+      const flags = (q('invert') ? 1 : 0) | (q('composite') ? 2 : 0) | (q('premul') && preOk ? 4 : 0) | (aux ? 0 : 8) | (src === 3 ? 16 : 0);
+      return fxK(E, img, { 0: [15, src, flags, 0] }, {}, aux);
+    } },
+  shiftchannels: { name: 'Shift Channels', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point']], params: [
+      { id: 'alpha', label: 'Take alpha from', type: 'pick', def: 0, opts: fxOpts(SHIFT_NAMES) },
+      { id: 'red', label: 'Take red from', type: 'pick', def: 1, opts: fxOpts(SHIFT_NAMES) },
+      { id: 'green', label: 'Take green from', type: 'pick', def: 2, opts: fxOpts(SHIFT_NAMES) },
+      { id: 'blue', label: 'Take blue from', type: 'pick', def: 3, opts: fxOpts(SHIFT_NAMES) }],
+    run(E, img, q) { return fxRoute(E, img, ['red', 'green', 'blue', 'alpha'].map(id => SHIFT_SRC[q(id)] ?? 10)); } },
+  solidcomposite: { name: 'Solid Composite', cat: 'Channel', clip: true, kernels: [['fx_key', 'fxk_point']], params: [
+      { id: 'srcOpacity', label: 'Source opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'opacity', label: 'Opacity %', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'mode', label: 'Blending mode', type: 'pick', def: 0, opts: fxOpts(SOLID_MODES) }],
+    run(E, img, q) {
+      const c = q('color'), o = clamp(q('opacity') / 100, 0, 1);
+      return fxK(E, img, { 0: [14, (SOLID_MODES[q('mode')] || SOLID_MODES[0])[1], 0, 0] }, { 0: [c[0] * o, c[1] * o, c[2] * o, o], 1: [q('srcOpacity') / 100, 0, 0, 0] });
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's

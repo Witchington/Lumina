@@ -1470,6 +1470,67 @@
       step('round23speed', r23speed);
     }
 
+    // ---- Round 24: Channel. The card at full size; the red patch at 800,270, white at 480, black at 160
+    {
+      const cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), BK = [0, 0, 0], WH = [255, 255, 255];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const ids = ['arithmetic', 'blendch', 'calculations', 'cccomposite', 'channelcombiner', 'compoundarith', 'invertch', 'minimax', 'removecolormatting',
+        'setchannels', 'setmatte', 'shiftchannels', 'solidcomposite'], K24 = {};
+      for (const id of ids) { await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K24[fam + ':' + e] = r; } }
+      step('channelKernels', { ...K24, works: !Object.keys(K24).length });
+      while (L.fx?.length) delFX(L, 0); L.p.scale = 1; draw(); const base = frame(), R = px(800, 270), Wt = px(480, 270), B0 = (x, y) => { const i = (y * 1920 + x) * 4; return [base[i], base[i + 1], base[i + 2]]; };
+      // with their defaults these leave the layer as it is
+      const same = {};
+      for (const id of ids.filter(i => !['invertch', 'channelcombiner', 'solidcomposite'].includes(i))) { await only(id); draw(); same[id] = diff(base, frame()).changed; }
+      step('channelDefaults', { ...same, works: Object.values(same).every(v => v === 0) });
+      const V = {}, want = {};
+      const chk = (k, got, w, t = 2) => { V[k] = String(got); want[k] = cl(got, w, t); };
+      f = await only('invertch'); draw(); chk('invRGB', px(800, 270), R.map(v => 255 - v));
+      f.channel = 1; draw(); chk('invRed', px(800, 270), [255 - R[0], R[1], R[2]]);
+      f.channel = 6; draw(); chk('invLight', px(480, 270), BK, 3);
+      f.channel = 12; draw(); chk('invAlpha', px(800, 270), BK);
+      f = await only('arithmetic'); set(f, 'red', 30); draw(); chk('arithAdd', px(800, 270), [Math.min(255, R[0] + 30), R[1], R[2]]);
+      f.operator = 4; set(f, 'red', 100); draw(); chk('arithSub', px(800, 270), [R[0] - 100, R[1], R[2]]);
+      f = await only('shiftchannels'); f.red = 2; draw(); chk('shiftRedFromGreen', px(800, 270), [R[1], R[1], R[2]]);
+      f.alpha = 9; draw(); chk('shiftAlphaOff', px(800, 270), BK);
+      f = await only('setchannels'); f.red = 2; draw(); chk('setRedToBlue', px(800, 270), [R[2], R[1], R[2]]);
+      const Lg = Math.round((Math.max(...R) + Math.min(...R)) / 2);
+      f = await only('channelcombiner'); draw(); chk('combLightness', px(800, 270), [Lg, Lg, Lg]);
+      f = await only('solidcomposite'); draw(); chk('solidBehind', px(800, 270), R); set(f, 'srcOpacity', 0); draw(); chk('solidWhite', px(800, 270), WH); set(f, 'srcOpacity', 100);
+      f.mode = 2; f.color = '#808080'; draw(); chk('solidMultiply', px(480, 270), [128, 128, 128], 3);
+      f = await only('calculations'); f.input = 2; draw(); chk('calcRed', px(800, 270), [R[0], R[0], R[0]]);
+      f = await only('compoundarith'); f.operator = 4; draw(); chk('compDiffSelf', px(800, 270), BK);
+      // CC Composite after Invert brings the original back (In Front, 100 %)
+      f = await only('invertch'); await add('cccomposite'); draw(); V.ccBack = diff(base, frame()).changed; want.ccBack = V.ccBack === 0;
+      // Minimax: Maximum 20 px spreads white into the black patch's edge (black 160, white 480: they meet at 320); Minimum the other way
+      f = await only('minimax'); set(f, 'radius', 20); draw(); chk('maxSpread', px(310, 270), WH); chk('maxFar', px(250, 270), BK);
+      f.operation = 0; draw(); chk('minSpread', px(330, 270), BK); chk('minFar', px(400, 270), Wt);
+      // past the frame is empty, so Minimum on colour darkens the frame's edge; Don't Shrink Edges keeps it
+      chk('minEdge', px(1915, 270), BK); f.dontShrink = true; draw(); chk('minKeep', px(1915, 270), px(1900, 270));
+      // Set Matte from a hidden white ellipse (220 px): stretched over the card it fills the frame's middle and leaves the corners
+      // empty; centred it's a 220 px circle in the middle
+      addShape('ellipse'); const SM = selLayer(); Object.assign(SM, { fill: '#ffffff', visible: false, start: 0, dur: 6 }); S.sel = L.id;
+      f = await only('setmatte'); f.layer = SM.id; draw(); chk('matteCorner', px(1900, 30), BK); chk('matteMid', px(960, 400), B0(960, 400));
+      f.stretch = false; draw(); chk('matteOut', px(1200, 540), BK); chk('matteIn', px(960, 500), B0(960, 500));
+      // Blend with it (Crossfade, centred): the middle turns white, the rest goes clear
+      f = await only('blendch'); f.layer = SM.id; draw(); chk('blendIn', px(960, 540), WH); chk('blendOut', px(1200, 540), BK);
+      S.layers = S.layers.filter(x => x !== SM); delete RT[SM.id];
+      // the results stay inside the layer's box: Solid Composite (the colour behind the layer, the layer hidden) on the half-size card
+      L.p.scale = .5; f = await only('solidcomposite'); set(f, 'srcOpacity', 0); draw(); chk('solidClipOut', px(100, 100), BK); chk('solidClipIn', px(960, 540), WH); L.p.scale = 1;
+      const bad = Object.keys(want).filter(k => !want[k]);
+      step('channelDetails', { ...V, bad, works: !bad.length });
+      const menuC = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Channel');
+      step('channelMenu', { count: menuC?.children.length, works: menuC?.children.length === 13 });
+      const r24speed = {};
+      for (const id of ids) {
+        f = await only(id); if (id === 'minimax') set(f, 'radius', 10); if (id === 'arithmetic') set(f, 'red', 30);
+        draw(); ctx.getImageData(0, 0, 1, 1);
+        const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r24speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+      }
+      while (L.fx?.length) delFX(L, 0); draw();
+      step('round24speed', r24speed);
+    }
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }
