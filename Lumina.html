@@ -2457,8 +2457,9 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   lumina_gen: ['fx_generate', 'lumina_gen'],    // Rounds 19–20: Circle, Ellipse, Cell Pattern HQ, Fractal's put (EffectCraft draws them on the CPU; shaders/)
   fx_particles: ['fx_stylize', 'fx_sim', 'fx_particles'],   // Round 21 on: Curl Noise (fxp_curl_*; EffectCraft builds it with fx_stylize's fbm and fx_sim)
   lumina_noise: ['fx_generate', 'lumina_noise'],   // Round 21: grain mattes, sample boxes, Match Grain's plane stats (EffectCraft does them on the CPU; shaders/)
-  fx_extra: ['fx_generate', 'fx_extra'] };   // Round 22 on: Bevel Alpha, Bevel Edges (fxe_*; EffectCraft builds it with fx_generate)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl' };
+  fx_extra: ['fx_generate', 'fx_extra'],   // Round 22 on: Bevel Alpha, Bevel Edges (fxe_*; EffectCraft builds it with fx_generate)
+  lumina_trans: ['lumina_trans'] };   // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer (EffectCraft does them on the CPU; shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2654,6 +2655,123 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 23 helpers (Transitions): EffectCraft's transition.rs, transition2.rs, misc.rs, card3d.rs and sim2's pieces;
+//      GPU host code from fx_transition.rs, fx_generate.rs and fx_light.rs. Distances are measured to the corners of the
+//      layer's on-screen box (EffectCraft's layer buffer); angles turn with the layer ----
+const fxDone = q => clamp(q('completion') / 100, 0, 1);
+const fxDeg = (E, a) => a + E.rot * 180 / Math.PI;
+const fxCorners = E => { const [x, y, w, h] = E.rect; return [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]; };
+// transition::max_corner_dist
+const fxMaxCorner = (E, c, metric) => fxCorners(E).reduce((m, [x, y]) => Math.max(m, metric(x - c[0], y - c[1])), 1e-6);
+// a value as an f32 (hi, lo) pair, so the graphics card puts a hard edge where EffectCraft's f64 does
+const fxHL = v => { const h = Math.fround(v); return [h, v - h]; };
+// another picked layer as it sits in the frame, or null when none is picked
+const fxOther = (E, id, name) => { const M = id ? byId(id) : null; return M && M !== E.L && DRAW[M.kind] ? fxLayerOr(E, null, id, name) : null; };
+// transition::place_layer: another layer over this layer's box (mode 0 tile, 1 centre, 2 stretch), or this layer itself
+function fxPlaced(E, img, id, name, mode) {
+  const src = fxOther(E, id, name); if (!src) return img;
+  const o = fxLayerBox(E, byId(id));
+  return E.run('lumina_trans', 'lt_place', fxP({ 0: [mode, 0, 0, 0] }, { 0: E.rect, 1: o.rect, 2: [E.sc, o.sc, 0, 0] }), src);
+}
+// card3d's rotations: about one axis (sim2::rot_axis), and X, Y, Z in a Transform Order (rot_ordered)
+function fxRotAxis(ax, a) {
+  if (!a) return [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const [x, y, z] = fxNorm3(ax), s = Math.sin(a), c = Math.cos(a), t = 1 - c;
+  return [[t * x * x + c, t * x * y - s * z, t * x * z + s * y], [t * x * y + s * z, t * y * y + c, t * y * z - s * x], [t * x * z - s * y, t * y * z + s * x, t * z * z + c]];
+}
+function fxRotOrdered(x, y, z, order) {
+  const X = fxRotAxis([1, 0, 0], x), Y = fxRotAxis([0, 1, 0], y), Z = fxRotAxis([0, 0, 1], z);
+  const seq = [[X, Y, Z], [X, Z, Y], [Y, X, Z], [Y, Z, X], [Z, X, Y], [Z, Y, X]][order % 6];
+  return m3mul(seq[2], m3mul(seq[1], seq[0]));
+}
+const fxDot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], fxSub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const fxNormZ = a => { const l = Math.hypot(a[0], a[1], a[2]); return l < 1e-12 ? [0, 0, -1] : a.map(v => v / l); };
+const CARD_ORDERS = ['Rotate XYZ, position', 'Rotate XZY, position', 'Rotate YXZ, position', 'Rotate YZX, position', 'Rotate ZXY, position', 'Rotate ZYX, position',
+  'Position, rotate XYZ', 'Position, rotate XZY', 'Position, rotate YXZ', 'Position, rotate YZX', 'Position, rotate ZXY', 'Position, rotate ZYX'];
+// card3d::projection: frame pixels in 3D (z away from the viewer) → frame pixels, as homogeneous rows X, Y, W
+function fxCardCam(E, q) {
+  const [x0, y0, w, h] = E.rect, c = [x0 + w / 2, y0 + h / 2], size = Math.max(w, h);
+  const simple = d => ({ m: [[d, 0, c[0], 0], [0, d, c[1], 0], [0, 0, 1, d]], near: .05 * d });
+  if (q('camSystem') === 1) {
+    // Corner Pins: the layer's corners land on the pins; the focal length sets how strongly depth is foreshortened
+    const base = simple(size * 2 * (q('autoFocal') ? 70 : Math.max(1, q('pinFocal'))) / 70);
+    const ri = m3inv(m3quad([[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]])); if (!ri) return base;
+    const H = m3mul(m3quad([q('ul'), q('ur'), q('lr'), q('ll')]), ri);
+    return { m: [0, 1, 2].map(i => [0, 1, 2, 3].map(j => H[i][0] * base.m[0][j] + H[i][1] * base.m[1][j] + H[i][2] * base.m[2][j])), near: base.near * Math.max(Math.abs(H[2][2]), 1e-9) };
+  }
+  const base = simple(size * Math.max(.05, q('camZ')) * Math.max(1, q('focal')) / 140), order = q('camOrder'), rad = Math.PI / 180;
+  const r = fxRotOrdered(q('camRotX') * rad, q('camRotY') * rad, q('camRotZ') * rad, order), [px, py] = q('camPos'), shift = [px - c[0], py - c[1], 0], c3 = [c[0], c[1], 0];
+  // rotate about the layer centre, then move by the X, Y position (or the other way round)
+  const rc = [0, 1, 2].map(i => c3[i] - fxDot3(r[i], c3)), t = order >= 6 ? rc.map((v, i) => v + fxDot3(r[i], shift)) : rc.map((v, i) => v + shift[i]);
+  return { m: base.m.map(row => [...[0, 1, 2].map(j => row[0] * r[0][j] + row[1] * r[1][j] + row[2] * r[2][j]), row[0] * t[0] + row[1] * t[1] + row[2] * t[2] + row[3]]), near: base.near };
+}
+// Proj::eye: where the camera sits
+function fxCamEye(cam) {
+  const ai = m3inv(cam.m.map(r => r.slice(0, 3))); if (!ai) return [0, 0, -1e9];
+  const t = cam.m.map(r => -r[3]); return ai.map(r => fxDot3(r, t));
+}
+// card3d::Lighting::shade: (colour multiplier, added highlight) for a card facing n at `at`
+function fxCardShade(L, n, at, eye) {
+  const v = fxNormZ(fxSub3(eye, at)); if (fxDot3(n, v) < 0) n = n.map(x => -x);
+  const l = L.kind === 1 ? fxNormZ(fxSub3(L.pos, at)) : L.toLight, ndl = Math.max(0, fxDot3(n, l)), hv = fxNormZ([l[0] + v[0], l[1] + v[1], l[2] + v[2]]);
+  const spec = L.ks > 0 && ndl > 0 ? L.ks * Math.max(0, fxDot3(n, hv)) ** L.sharp : 0;
+  return [L.color.map(c => L.ambient + L.kd * ndl * c), L.color.map(c => spec * c)];
+}
+// sim2's Piece::new: a card (corners round its rest centre c0) turned by r and centred at pos, seen through cam
+function fxPiece(poly, c0, r, pos, cam, eye) {
+  const m = cam.m, row = i => [m[i][0] * r[0][0] + m[i][1] * r[1][0] + m[i][2] * r[2][0], m[i][0] * r[0][1] + m[i][1] * r[1][1] + m[i][2] * r[2][1], fxDot3(m[i], pos) + m[i][3]];
+  const hm = [row(0), row(1), row(2)], bb = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [vx, vy] of poly) {
+    const a = vx - c0[0], b = vy - c0[1], w = hm[2][0] * a + hm[2][1] * b + hm[2][2]; if (w < cam.near) return null;
+    const sx = (hm[0][0] * a + hm[0][1] * b + hm[0][2]) / w, sy = (hm[1][0] * a + hm[1][1] * b + hm[1][2]) / w;
+    bb[0] = Math.min(bb[0], sx); bb[1] = Math.min(bb[1], sy); bb[2] = Math.max(bb[2], sx); bb[3] = Math.max(bb[3], sy);
+  }
+  const inv = m3inv(hm); if (!inv) return null;
+  const nrm = [-r[0][2], -r[1][2], -r[2][2]];
+  return { inv, c0, poly, bb: [bb[0] - 1, bb[1] - 1, bb[2] + 1, bb[3] + 1], back: fxDot3(nrm, fxSub3(eye, pos)) < 0, depth: hm[2][2] };
+}
+// transition::card_wipe_plan: the cards, far to near (null: nothing has moved, the layer as it is)
+function fxCardPlan(E, img, q, hasBack) {
+  const done = fxDone(q), J = ['jx', 'jy', 'jz', 'rjx', 'rjy', 'rjz'].map(q), [cpx, cpy] = q('camPos'), lc = E.pt(.5, .5);
+  if (done <= 0 && !J.some(v => v) && q('camSystem') === 0 && !q('camRotX') && !q('camRotY') && !q('camRotZ') && Math.abs(cpx - lc[0]) < 1e-3 && Math.abs(cpy - lc[1]) < 1e-3) return null;
+  const tw = clamp(q('width') / 100, .01, 1), rows = Math.round(clamp(q('rows'), 1, 1000)), cols = q('rowsCols') === 1 ? rows : Math.round(clamp(q('columns'), 1, 1000));
+  const cardScale = Math.max(.01, q('cardScale')), axis = q('axis'), dir = q('flipDir'), order = q('flipOrder'), jitter = clamp(q('timing'), 0, 1), seed = ((Math.max(0, q('seed')) | 0) ^ 0xca7d) >>> 0;
+  const [x0, y0, w, h] = E.rect, cw = w / cols, ch = h / rows, nx = i => cols > 1 ? i / (cols - 1) : 0, ny = j => rows > 1 ? j / (rows - 1) : 0;
+  // Flip Order Gradient: cards flip first where the gradient layer (this layer when none) is dark, read at each card's centre
+  const G = order === 8 ? E.read(fxPlaced(E, img, q('gradLayer'), 'cardgrad', 2), 640) : null;
+  const gradAt = (x, y) => { const gx = clamp(Math.floor(x * G.k), 0, G.w - 1), gy = clamp(Math.floor(y * G.k), 0, G.h - 1), i = (gy * G.w + gx) * 4; return G.d[i + 3] ? clamp(fxLum(G.d[i], G.d[i + 1], G.d[i + 2]) / 255, 0, 1) : 0; };
+  const cam = fxCardCam(E, q), eye = fxCamEye(cam), t = E.t, [lx, ly] = q('lightPos'), k0 = q('lightIntensity'), centre = [x0 + w / 2, y0 + h / 2, 0], lpos = [lx, ly, -q('lightDepth') * Math.max(w, h)];
+  const Lt = { kind: q('lightType'), color: q('lightColor').map(v => v * k0), pos: lpos, toLight: fxNormZ(fxSub3(lpos, centre)), ambient: q('ambient'), kd: q('diffuse'), ks: q('specular'), sharp: Math.max(1, q('sharp')) };
+  const jit = (i, j, k, speed) => Math.sin(t * speed * (.5 + fxHash(i, j, (seed ^ (k + 101)) >>> 0)) * 2 * Math.PI + fxHash(i, j, (seed ^ k) >>> 0) * 2 * Math.PI);
+  const [jx, jy, jz, rjx, rjy, rjz] = J, js = q('js'), rjs = q('rjs'), rad = Math.PI / 180, cards = [];
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const ccx = x0 + (i + .5) * cw, ccy = y0 + (j + .5) * ch;
+    let o = order === 8 ? gradAt(ccx, ccy) : [nx(i), 1 - nx(i), ny(j), 1 - ny(j), (nx(i) + ny(j)) / 2, (1 - nx(i) + ny(j)) / 2, (nx(i) + 1 - ny(j)) / 2, 1 - (nx(i) + ny(j)) / 2][order] ?? nx(i);
+    if (jitter > 0) o += (fxHash(i, j, (seed ^ 0x7177) >>> 0) - o) * jitter;
+    const p = clamp((done - o * (1 - tw)) / tw, 0, 1);
+    const aroundX = axis === 1 ? false : axis === 2 ? fxHash(i, j, (seed ^ 0x55) >>> 0) < .5 : true;
+    const sign = dir === 1 || (dir === 2 && fxHash(i, j, (seed ^ 0x99) >>> 0) < .5) ? -1 : 1;
+    const flip = fxRotAxis(aroundX ? [1, 0, 0] : [0, 1, 0], p * Math.PI * sign);
+    const r = m3mul(fxRotOrdered(rjx * jit(i, j, 11, rjs) * rad, rjy * jit(i, j, 12, rjs) * rad, rjz * jit(i, j, 13, rjs) * rad, 0), flip);
+    const pos = [ccx + jx * jit(i, j, 21, js) * cw, ccy + jy * jit(i, j, 22, js) * ch, jz * jit(i, j, 23, js) * Math.max(cw, ch)];
+    // Card Scale: below 1 the cards shrink (gaps), above 1 their picture is magnified inside them
+    const k = Math.max(cardScale, 1), sw = cw * .5 * Math.min(cardScale, 1) / k, sh = ch * .5 * Math.min(cardScale, 1) / k;
+    const pc = fxPiece([[ccx - sw, ccy - sh], [ccx + sw, ccy - sh], [ccx + sw, ccy + sh], [ccx - sw, ccy + sh]], [ccx, ccy], r.map(row => [row[0] * k, row[1] * k, row[2]]), pos, cam, eye);
+    if (!pc || (pc.back && !hasBack)) continue;
+    pc.mirror = aroundX ? 1 : 2;
+    [pc.tint, pc.spec] = fxCardShade(Lt, [-r[0][2], -r[1][2], -r[2][2]], pos, eye);
+    cards.push(pc);
+  }
+  return cards.sort((a, b) => b.depth - a.depth);
+}
+// sim2::draw_pieces on the graphics card (lt_cards): the cards over a transparent frame, binned into 16-pixel tiles
+function fxDrawCards(E, img, cards, back) {
+  const it = fxItems(E, 31);
+  for (const c of cards) fxItemPush(it, c.bb, [...c.inv.flat(), ...c.c0, ...c.poly.flat(), ...c.tint, ...c.spec, c.back ? 1 : 0, c.mirror]);
+  const D = fxItemData(it); if (!D) return E.clear(img);
+  return E.run('lumina_trans', 'lt_cards', fxP({ 0: [D.at, 31, it.tx, back ? 1 : 0] }), img, back, null, E.data(D.d));
+}
+const fxDonePct = () => ({ id: 'completion', label: 'Completion %', def: 0, min: 0, max: 100, dec: 1 });
 // ---- Round 22 helpers (Perspective): perspective.rs's light and rotations ----
 const fxNorm3 = v => { const l = Math.max(1e-12, Math.hypot(v[0], v[1], v[2])); return v.map(x => x / l); };
 // perspective::light_dir: towards a light at `angle` degrees (clockwise from up) and `elev` degrees above the layer
@@ -3493,7 +3611,7 @@ function fxLayerOr(E, img, id, name) {
   const c = layerCanvas(name), [a, b] = liveRange(M); if (E.T >= a && E.T < b) paintLayer(M, E.T, c.cx);
   return E.upload(c.cv);
 }
-const fxLayerPick = (id, label) => ({ id, label, type: 'pick', def: 0, opts: L => [[0, 'None (this layer)'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] });
+const fxLayerPick = (id, label, none = 'None (this layer)') => ({ id, label, type: 'pick', def: 0, opts: L => [[0, none], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] });
 // stylize3's effect light and surface (CC Glass, CC Plastic)
 const BUMP_PROPS = [[0, 'Red'], [1, 'Green'], [2, 'Blue'], [3, 'Alpha'], [4, 'Luminance'], [5, 'Lightness']];
 const fxBumpLight = (amb, dif, spec, rough, metal) => [
@@ -5326,6 +5444,290 @@ const FX = {
       const unit = q('units') === 1 ? E.lw / 100 : E.sc, conv = q('convergence') * unit, va = q('vertical') * unit;
       const shift = (x, dx, dy) => dx || dy ? E.run('fx_transition', 'ftr_shift', fxP({}, { 0: [dx, dy, 0, 0] }), x) : x;
       return E.run('fx_transition', 'ftr_glasses', fxP({ 0: [q('view'), 0, 0, 0] }, { 0: [E.w, E.h, clamp(q('balance') / 20, 0, 1), 0] }), shift(l, conv * .5, 0), shift(r, -conv * .5, va));
+    } },
+  // ---- Round 23: Transitions (EffectCraft's transition.rs, transition2.rs and misc.rs; GPU host code from fx_transition.rs,
+  //      fx_generate.rs and fx_light.rs; Iris Wipe, CC Grid Wipe's tiles, Card Wipe's cards and Gradient Wipe's placement in
+  //      Lumina's shaders/lumina_trans.wgsl). Each leaves the layer as it is at 0 % and clears it at 100 % ----
+  blockdissolve: { name: 'Block Dissolve', cat: 'Transition', kernels: [['fx_transition', 'ftr_blocks'], ['fx_transition', 'ftr_mul'], ...BLUR_K], params: [
+      fxDonePct(),
+      { id: 'blockWidth', label: 'Block width', def: 1, min: 1, max: 4000, dec: 1 },
+      { id: 'blockHeight', label: 'Block height', def: 1, min: 1, max: 4000, dec: 1 },
+      { id: 'feather', label: 'Feather', def: 0, min: 0, max: 400, dec: 1 },
+      { id: 'soft', label: 'Soft edges (best quality)', type: 'check', def: true }],
+    run(E, img, q) {
+      // blocks vanish in a random order; each block's column and row index is worked out here, as EffectCraft's are
+      const done = fxDone(q); if (done <= 0) return img;
+      const bw = Math.max(1e-3, q('blockWidth') * E.sc), bh = Math.max(1e-3, q('blockHeight') * E.sc), feather = q('feather') * E.sc;
+      const subs = q('soft') ? [.125, .375, .625, .875] : [.5], n = subs.length, [ox, oy] = E.rect, t = new Uint32Array((E.w + E.h) * n);
+      let k = 0;
+      for (let x = 0; x < E.w; x++) for (const s of subs) t[k++] = Math.floor((x + s - ox) / bw) >>> 0;
+      for (let y = 0; y < E.h; y++) for (const s of subs) t[k++] = Math.floor((y + s - oy) / bh) >>> 0;
+      let m = E.run('fx_transition', 'ftr_blocks', fxP({ 0: [n, (fxSeed(E) ^ 0xb10c) >>> 0, E.w * n, 0] }, { 0: [done, 0, 0, 0] }), img, null, null, E.data(new Float32Array(t.buffer)));
+      if (feather > 0) m = fxGauss(E, m, feather / 2, feather / 2, true);
+      return E.run('fx_transition', 'ftr_mul', fxP(), img, m);
+    } },
+  cardwipe: { name: 'Card Wipe', cat: 'Transition', kernels: [['lumina_trans', 'lt_cards'], ['lumina_trans', 'lt_place'], ['kernels', 'fill']], params: [
+      fxDonePct(),
+      { id: 'width', label: 'Transition width %', def: 50, min: 1, max: 100, dec: 0 },
+      { id: 'back', label: 'Back layer', type: 'pick', def: 0, opts: L => [[0, 'None'], [-1, 'This layer'], ...S.layers.filter(M => M !== L && M.kind !== 'audio' && DRAW[M.kind]).map(M => [M.id, esc(M.name || M.kind)])] },
+      { id: 'rowsCols', label: 'Rows & columns', type: 'pick', def: 0, opts: [[0, 'Independent'], [1, 'Columns follow rows']] },
+      { id: 'rows', label: 'Rows', def: 8, min: 1, max: 1000, dec: 0 },
+      { id: 'columns', label: 'Columns', def: 8, min: 1, max: 1000, dec: 0 },
+      { id: 'cardScale', label: 'Card scale', def: 1, min: .01, max: 10, dec: 2 },
+      { id: 'axis', label: 'Flip axis', type: 'pick', def: 0, opts: [[0, 'X'], [1, 'Y'], [2, 'Random']] },
+      { id: 'flipDir', label: 'Flip direction', type: 'pick', def: 0, opts: [[0, 'Positive'], [1, 'Negative'], [2, 'Random']] },
+      { id: 'flipOrder', label: 'Flip order', type: 'pick', def: 0, opts: ['Left to right', 'Right to left', 'Top to bottom', 'Bottom to top', 'Top left to bottom right',
+        'Top right to bottom left', 'Bottom left to top right', 'Bottom right to top left', 'Gradient'].map((n, i) => [i, n]) },
+      fxLayerPick('gradLayer', 'Gradient layer'),
+      { id: 'timing', label: 'Timing randomness', def: 0, min: 0, max: 1, dec: 2 },
+      { id: 'seed', label: 'Random seed', def: 1, min: 0, max: 10000, dec: 0 },
+      { id: 'camSystem', label: 'Camera system', type: 'pick', def: 0, opts: [[0, 'Camera position'], [1, 'Corner pins']] },
+      { id: 'camRotX', label: 'Camera X rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'camRotY', label: 'Camera Y rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'camRotZ', label: 'Camera Z rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'camPos', label: 'Camera X, Y position', type: 'pt', def: [.5, .5] },
+      { id: 'camZ', label: 'Camera Z position', def: 2, min: .05, max: 10, dec: 2 },
+      { id: 'focal', label: 'Focal length', def: 70, min: 1, max: 500, dec: 1 },
+      { id: 'camOrder', label: 'Transform order', type: 'pick', def: 0, opts: CARD_ORDERS.map((n, i) => [i, n]) },
+      { id: 'ul', label: 'Upper left corner', type: 'pt', def: [0, 0] },
+      { id: 'ur', label: 'Upper right corner', type: 'pt', def: [1, 0] },
+      { id: 'll', label: 'Lower left corner', type: 'pt', def: [0, 1] },
+      { id: 'lr', label: 'Lower right corner', type: 'pt', def: [1, 1] },
+      { id: 'autoFocal', label: 'Auto focal length', type: 'check', def: true },
+      { id: 'pinFocal', label: 'Corner pins focal length', def: 70, min: 1, max: 500, dec: 1 },
+      { id: 'lightType', label: 'Light type', type: 'pick', def: 0, opts: [[0, 'Distant source'], [1, 'Point source']] },
+      { id: 'lightIntensity', label: 'Light intensity', def: 1, min: 0, max: 4, dec: 2 },
+      { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+      { id: 'lightPos', label: 'Light position', type: 'pt', def: [.5, .5] },
+      { id: 'lightDepth', label: 'Light depth', def: 1, min: -10, max: 10, dec: 3 },
+      { id: 'ambient', label: 'Ambient light', def: .25, min: 0, max: 2, dec: 2 },
+      { id: 'diffuse', label: 'Diffuse reflection', def: .75, min: 0, max: 2, dec: 2 },
+      { id: 'specular', label: 'Specular reflection', def: 0, min: 0, max: 2, dec: 2 },
+      { id: 'sharp', label: 'Highlight sharpness', def: 15, min: 1, max: 100, dec: 1 },
+      { id: 'jx', label: 'X jitter amount', def: 0, min: 0, max: 100, dec: 2 },
+      { id: 'js', label: 'Jitter speed', def: 1, min: 0, max: 100, dec: 2 },
+      { id: 'jy', label: 'Y jitter amount', def: 0, min: 0, max: 100, dec: 2 },
+      { id: 'jz', label: 'Z jitter amount', def: 0, min: 0, max: 100, dec: 2 },
+      { id: 'rjx', label: 'X rotation jitter°', def: 0, min: 0, max: 360, dec: 1 },
+      { id: 'rjs', label: 'Rotation jitter speed', def: 1, min: 0, max: 100, dec: 2 },
+      { id: 'rjy', label: 'Y rotation jitter°', def: 0, min: 0, max: 360, dec: 1 },
+      { id: 'rjz', label: 'Z rotation jitter°', def: 0, min: 0, max: 360, dec: 1 }],
+    run(E, img, q) {
+      // the layer cut into cards that turn over one after another, in 3D through the camera, lit; their backs show the
+      // back layer (stretched over the layer's box), or nothing
+      const bid = q('back'), back = bid === -1 ? img : bid ? (fxOther(E, bid, 'cardback') ? fxPlaced(E, img, bid, 'cardback', 2) : null) : null;
+      const cards = fxCardPlan(E, img, q, !!back); if (!cards) return img;
+      return fxDrawCards(E, img, cards, back);
+    } },
+  gradientwipe: { name: 'Gradient Wipe', cat: 'Transition', kernels: [['fx_generate', 'gen_gradient_wipe'], ['lumina_trans', 'lt_place']], params: [
+      fxDonePct(),
+      { id: 'softness', label: 'Transition softness %', def: 0, min: 0, max: 100, dec: 0 },
+      fxLayerPick('layer', 'Gradient layer'),
+      { id: 'placement', label: 'Gradient placement', type: 'pick', def: 2, opts: [[0, 'Tile gradient'], [1, 'Center gradient'], [2, 'Stretch gradient to fit']] },
+      { id: 'invert', label: 'Invert gradient', type: 'check', def: false }],
+    run(E, img, q) {
+      // dark parts of the gradient layer (this layer when none is picked) go first
+      const done = fxDone(q); if (done <= 0) return img;
+      return E.run('fx_generate', 'gen_gradient_wipe', fxP({ 0: [q('invert'), 0, 0, 0] }, { 0: [done, q('softness') / 100, 0, 0] }), img, fxPlaced(E, img, q('layer'), 'gradwipe', q('placement')));
+    } },
+  iriswipe: { name: 'Iris Wipe', cat: 'Transition', kernels: [['lumina_trans', 'lt_iris']], params: [
+      { id: 'center', label: 'Iris center', type: 'pt', def: [.5, .5] },
+      { id: 'points', label: 'Iris points', def: 6, min: 6, max: 32, dec: 0 },
+      { id: 'outer', label: 'Outer radius', def: 0, min: 0, max: 32000, dec: 1 },
+      { id: 'useInner', label: 'Use inner radius', type: 'check', def: false },
+      { id: 'inner', label: 'Inner radius', def: 0, min: 0, max: 32000, dec: 1 },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'feather', label: 'Feather', def: 0, min: 0, max: 1000, dec: 1 }],
+    run(E, img, q) {
+      // a polygon (or, with an inner radius, a star) hole that opens from the centre
+      const outer = Math.max(0, q('outer')) * E.sc; if (outer <= 0) return img;
+      const n = Math.round(clamp(q('points'), 3, 64)), star = q('useInner'), inner = star ? Math.max(0, q('inner')) * E.sc : outer;
+      return E.run('lumina_trans', 'lt_iris', fxP({ 0: [star ? 2 * n : n, star, 0, 0] }, { 0: [...q('center'), outer, inner], 1: [fxDeg(E, q('rotation')) * Math.PI / 180, q('feather') * E.sc, 0, 0] }), img);
+    } },
+  linearwipe: { name: 'Linear Wipe', cat: 'Transition', kernels: [['fx_generate', 'gen_linear_wipe']], params: [
+      fxDonePct(),
+      { id: 'angle', label: 'Wipe angle°', def: 90, min: -3600, max: 3600, dec: 1 },
+      { id: 'feather', label: 'Feather', def: 0, min: 0, max: 32000, dec: 1 }],
+    run(E, img, q) {
+      // a straight edge sweeps across the layer's box towards the wipe angle
+      const done = q('completion') / 100, a = fxDeg(E, q('angle')) * Math.PI / 180, feather = Math.max(.001, q('feather') * E.sc), dx = Math.sin(a), dy = -Math.cos(a);
+      const pr = fxCorners(E).map(([x, y]) => x * dx + y * dy), lo = Math.min(...pr), hi = Math.max(...pr), edge = lo - feather + (hi - lo + 2 * feather) * done;
+      const d = new Float32Array(2 * (E.w + E.h));
+      for (let x = 0; x < E.w; x++) d.set(fxHL((x + .5) * dx - edge), 2 * x);
+      for (let y = 0; y < E.h; y++) d.set(fxHL((y + .5) * dy), 2 * (E.w + y));
+      return E.run('fx_generate', 'gen_linear_wipe', fxP({ 0: [2 * E.w, 0, 0, 0] }, { 0: [feather, 0, 0, 0] }), img, null, null, E.data(d));
+    } },
+  radialwipe: { name: 'Radial Wipe', cat: 'Transition', kernels: [['fx_generate', 'gen_radial_wipe']], params: [
+      fxDonePct(),
+      { id: 'start', label: 'Start angle°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'center', label: 'Wipe center', type: 'pt', def: [.5, .5] },
+      { id: 'wipe', label: 'Wipe', type: 'pick', def: 0, opts: [[0, 'Clockwise'], [1, 'Counterclockwise'], [2, 'Both']] },
+      { id: 'feather', label: 'Feather', def: 0, min: 0, max: 360, dec: 1 }],
+    run(E, img, q) {
+      // a wedge sweeping round the centre like a clock hand (misc::radial_wipe_wedge, radial_wipe_sigma)
+      const done = fxDone(q); if (done <= 0) return img;
+      const span = done * 360, w0 = q('wipe') === 1 ? -span : q('wipe') === 2 ? -span / 2 : 0, ray0 = fxDeg(E, q('start')) + w0, sigma = Math.max(0, q('feather')) * .4 * E.sc, rad = Math.PI / 180;
+      return E.run('fx_generate', 'gen_radial_wipe', fxP({ 0: [done >= 1, sigma < 1e-3, 0, 0] },
+        { 0: [...q('center'), Math.max(sigma, 1e-3), fxRem(ray0, 360)], 1: [Math.sin(ray0 * rad), Math.cos(ray0 * rad), Math.sin((ray0 + span) * rad), Math.cos((ray0 + span) * rad)], 2: [span, 0, 0, 0] }), img);
+    } },
+  venetian: { name: 'Venetian Blinds', cat: 'Transition', kernels: [['fx_generate', 'gen_venetian'], ['lumina_trans', 'lt_scale']], params: [
+      fxDonePct(),
+      { id: 'direction', label: 'Direction°', def: 90, min: -3600, max: 3600, dec: 1 },
+      { id: 'width', label: 'Width', def: 30, min: 2, max: 1000, dec: 0 },
+      { id: 'feather', label: 'Feather', def: 0, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // stripes of Width close across the layer, measured from its centre (misc::venetian_cover, venetian_origin)
+      const done = fxDone(q); if (done <= 0) return img;
+      const a = fxDeg(E, q('direction')) * Math.PI / 180, width = Math.max(1, q('width') * E.sc), sigma = Math.max(0, q('feather')) * E.sc / 2;
+      // wider than a few stripes the feather blurs them into an even veil
+      if (sigma > 8 * width) return E.run('lumina_trans', 'lt_scale', fxP({}, { 0: [1 - done, 0, 0, 0] }), img);
+      const dx = Math.cos(a), dy = Math.sin(a), [ox, oy] = E.pt(.5 + .6 / E.bw, .5 + .6 / E.bh), d = new Float32Array(4 * E.w + 2 * E.h);
+      for (let x = 0; x < E.w; x++) { const cx = fxRem((x + .5 - ox) * dx, width); d.set([...fxHL(cx), ...fxHL(cx - width)], 4 * x); }
+      for (let y = 0; y < E.h; y++) d.set(fxHL(fxRem((y + .5 - oy) * dy, width)), 4 * E.w + 2 * y);
+      const n = sigma < 1e-3 ? 0 : clamp(Math.ceil(4 * sigma / width) + 1, 1, 40);
+      return E.run('fx_generate', 'gen_venetian', fxP({ 0: [4 * E.w, n, 0, 0] }, { 0: [width, done * width, sigma, 0] }), img, null, null, E.data(d));
+    } },
+  ccglasswipe: { name: 'CC Glass Wipe', cat: 'Transition', clip: true, kernels: [['fx_transition', 'ftr_plane'], ['fx_transition', 'ftr_glass'], ...BLUR_K], params: [
+      fxDonePct(), fxLayerPick('reveal', 'Layer to reveal', 'None'), fxLayerPick('gradient', 'Gradient layer'),
+      { id: 'softness', label: 'Softness %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'displacement', label: 'Displacement amount', def: 10, min: -100, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // the gradient layer's brightness (this layer's when none) melts the layer away like glass, bending what shows through
+      const c = fxDone(q); if (c <= 0) return img;
+      let g = E.run('fx_transition', 'ftr_plane', fxP({ 0: [4, 0, 0, 0] }), fxLayerOr(E, img, q('gradient'), 'glassgrad'));
+      const sm = q('softness') * E.sc * .2; if (sm > .05) g = fxGauss(E, g, sm, sm, true);
+      const rev = fxOther(E, q('reveal'), 'glassrev'), [tab, row] = rev ? E.rows(rev) : [null, 0];
+      return E.run('fx_transition', 'ftr_glass', fxP({ 0: [rev ? 1 : 0, 0, 0, 0], 3: [row, E.w, E.h, 0] }, { 0: [c, q('softness') / 100 * .5 + .01, q('displacement') * E.sc * 4, 0] }), img, g, null, tab);
+    } },
+  ccgridwipe: { name: 'CC Grid Wipe', cat: 'Transition', kernels: [['lumina_trans', 'lt_grid']], params: [
+      fxDonePct(),
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'border', label: 'Border', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'tiles', label: 'Tiles', def: 10, min: 1, max: 500, dec: 1 },
+      { id: 'shape', label: 'Shape', type: 'pick', def: 1, opts: [[0, 'Doors'], [1, 'Radial'], [2, 'Rectangular']] },
+      { id: 'reverse', label: 'Reverse transition', type: 'check', def: false }],
+    run(E, img, q) {
+      // tiles shrink away, nearest the centre first (or last, reversed)
+      const done = fxDone(q); if (done <= 0) return img;
+      const c = q('center'), a = fxDeg(E, q('rotation')) * Math.PI / 180, s = Math.sin(a), co = Math.cos(a), shape = q('shape'), cs = Math.max(1, E.lw / Math.round(clamp(q('tiles'), 1, 500)));
+      const metric = (dx, dy) => { const qx = dx * co + dy * s, qy = -dx * s + dy * co; return shape === 0 ? Math.abs(qx) : shape === 2 ? Math.max(Math.abs(qx), Math.abs(qy)) : Math.hypot(qx, qy); };
+      return E.run('lumina_trans', 'lt_grid', fxP({ 0: [shape, q('reverse'), 0, 0] }, { 0: [...c, s, co], 1: [cs, fxMaxCorner(E, c, metric), done, Math.max(0, q('border')) * E.sc] }), img);
+    } },
+  ccimagewipe: { name: 'CC Image Wipe', cat: 'Transition', kernels: [['fx_transition', 'ftr_plane'], ['fx_transition', 'ftr_image_wipe'], ...BLUR_K], params: [
+      fxDonePct(),
+      { id: 'borderSoft', label: 'Border softness %', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'autoSoft', label: 'Auto softness', type: 'check', def: true },
+      fxLayerPick('layer', 'Layer'),
+      { id: 'property', label: 'Property', type: 'pick', def: 4, opts: ['Red', 'Green', 'Blue', 'Alpha', 'Luminance', 'Lightness', 'Saturation'].map((n, i) => [i, n]) },
+      { id: 'blur', label: 'Blur', def: 0, min: 0, max: 200, dec: 1 },
+      { id: 'inverse', label: 'Inverse gradient', type: 'check', def: false }],
+    run(E, img, q) {
+      // a channel of the picked layer (this layer when none) decides what goes first
+      const c = fxDone(q); if (c <= 0) return img;
+      const prop = q('property'), src = prop === 5 ? 6 : prop === 6 ? 7 : Math.min(prop, 4);
+      let g = E.run('fx_transition', 'ftr_plane', fxP({ 0: [src, 0, 0, 0] }), fxLayerOr(E, img, q('layer'), 'imagewipe'));
+      const bl = q('blur') * E.sc * .5; if (bl > .05) g = fxGauss(E, g, bl, bl, true);
+      let w = q('borderSoft') / 100 * .5; if (q('autoSoft')) w = Math.max(w, .02);
+      return E.run('fx_transition', 'ftr_image_wipe', fxP({ 0: [q('inverse'), 0, 0, 0] }, { 0: [c, w, 0, 0] }), img, g);
+    } },
+  // CC Jaws and CC Radial ScaleWipe push the picture out of the layer's box; EffectCraft's buffer cuts it off there
+  ccjaws: { name: 'CC Jaws', cat: 'Transition', clip: true, kernels: [['fx_transition', 'ftr_jaws']], params: [
+      fxDonePct(),
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'direction', label: 'Direction°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'height', label: 'Height %', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'width', label: 'Width', def: 50, min: 1, max: 1000, dec: 1 },
+      { id: 'shape', label: 'Shape', type: 'pick', def: 0, opts: [[0, 'Spikes'], [1, 'RoboJaw'], [2, 'Block'], [3, 'Waves']] }],
+    run(E, img, q) {
+      // the layer splits along a toothed line and the two halves slide apart
+      const c = fxDone(q); if (c <= 0) return img;
+      const [cx, cy] = q('center'), a = fxDeg(E, q('direction')) * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a), width = Math.max(1, q('width') * E.sc), amp = q('height') / 100 * width * .5;
+      const vmax = fxCorners(E).reduce((m, [x, y]) => Math.max(m, Math.abs(-(x - cx) * sn + (y - cy) * cs)), 0);
+      return E.run('fx_transition', 'ftr_jaws', fxP({ 0: [q('shape'), 0, 0, 0] }, { 0: [cx, cy, sn, cs], 1: [width, amp, c * (vmax + 2 * amp + 2), 0] }), img);
+    } },
+  cclightwipe: { name: 'CC Light Wipe', cat: 'Transition', kernels: [['fx_light', 'flt_wipe']], params: [
+      fxDonePct(),
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'intensity', label: 'Intensity', def: 100, min: 0, max: 1000, dec: 1 },
+      { id: 'shape', label: 'Shape', type: 'pick', def: 1, opts: [[0, 'Doors'], [1, 'Round'], [2, 'Square']] },
+      { id: 'direction', label: 'Direction°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'fromSource', label: 'Color from source', type: 'check', def: false },
+      { id: 'color', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'reverse', label: 'Reverse transition', type: 'check', def: false }],
+    run(E, img, q) {
+      // a glowing edge opens from the centre, wiping the layer away behind it
+      const done = fxDone(q); if (done <= 0) return img;
+      const c = q('center'), shape = q('shape'), a = fxDeg(E, q('direction')) * Math.PI / 180, s = Math.sin(a), co = Math.cos(a), rev = q('reverse');
+      const maxd = fxMaxCorner(E, c, (dx, dy) => { const qx = dx * co + dy * s, qy = -dx * s + dy * co; return shape === 0 ? Math.abs(qx) : shape === 2 ? Math.max(Math.abs(qx), Math.abs(qy)) : Math.hypot(qx, qy); });
+      const ramp = Math.min(done * 20, 1) * Math.min((1 - done) * 20, 1);
+      return E.run('fx_light', 'flt_wipe', fxP({ 0: [shape, q('fromSource'), rev, 0] },
+        { 0: [...c, s, co], 1: [(rev ? 1 - done : done) * maxd, Math.max(2, maxd * .06), q('intensity') / 100 * ramp, 0], 2: [...q('color'), 0] }), img);
+    } },
+  cclinesweep: { name: 'CC Line Sweep', cat: 'Transition', kernels: [['fx_transition', 'ftr_line_sweep']], params: [
+      fxDonePct(),
+      { id: 'direction', label: 'Direction°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'thickness', label: 'Thickness', def: 20, min: 1, max: 500, dec: 1 },
+      { id: 'slant', label: 'Slant', def: 20, min: -500, max: 500, dec: 1 },
+      { id: 'flip', label: 'Flip direction', type: 'check', def: false }],
+    run(E, img, q) {
+      // strips of Thickness wipe across one after another, each Slant behind the last
+      const c = fxDone(q); if (c <= 0) return img;
+      const a = fxDeg(E, q('direction')) * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a), thick = Math.max(1, q('thickness') * E.sc), slant = q('slant') * E.sc;
+      const uv = fxCorners(E).map(([x, y]) => [x * cs + y * sn, -x * sn + y * cs]), u0 = Math.min(...uv.map(p => p[0])), u1 = Math.max(...uv.map(p => p[0]));
+      const v0 = Math.min(...uv.map(p => p[1])), v1 = Math.max(...uv.map(p => p[1])), nstr = Math.max(1, Math.ceil((v1 - v0) / thick));
+      return E.run('fx_transition', 'ftr_line_sweep', fxP({ 0: [q('flip'), slant >= 0, 0, 0] },
+        { 0: [sn, cs, v0, u0], 1: [thick, Math.abs(slant), nstr, (u1 - u0) + Math.abs(slant) * nstr + 1], 2: [c, 0, 0, 0] }), img);
+    } },
+  ccradialscalewipe: { name: 'CC Radial ScaleWipe', cat: 'Transition', clip: true, kernels: [['fx_transition', 'ftr_radial_scale']], params: [
+      fxDonePct(),
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'reverse', label: 'Reverse transition', type: 'check', def: false }],
+    run(E, img, q) {
+      // a hole opens at the centre and pushes the picture out to the edges (reversed, the picture shrinks into it)
+      const done = fxDone(q); if (done <= 0) return img;
+      const c = q('center');
+      return E.run('fx_transition', 'ftr_radial_scale', fxP({ 0: [q('reverse'), 0, 0, 0] }, { 0: [...c, fxMaxCorner(E, c, Math.hypot), done] }), img);
+    } },
+  // EffectCraft's buffer keeps the stretch inside the layer's box
+  ccscalewipe: { name: 'CC Scale Wipe', cat: 'Transition', clip: true, kernels: [['fx_transition', 'ftr_scale']], params: [
+      { id: 'stretch', label: 'Stretch', def: 0, min: 0, max: 1000, dec: 2 },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'direction', label: 'Direction°', def: 90, min: -3600, max: 3600, dec: 1 }],
+    run(E, img, q) {
+      // everything past the centre line is smeared out towards the direction
+      const st = Math.max(0, q('stretch')); if (st <= 0) return img;
+      const a = fxDeg(E, q('direction')) * Math.PI / 180;
+      return E.run('fx_transition', 'ftr_scale', fxP({}, { 0: [...q('center'), Math.sin(a), -Math.cos(a)], 1: [st, 0, 0, 0] }), img);
+    } },
+  cctwister: { name: 'CC Twister', cat: 'Transition', clip: true, kernels: [['fx_transition', 'ftr_twister']], params: [
+      fxDonePct(), fxLayerPick('backside', 'Backside'),
+      { id: 'shading', label: 'Shading', type: 'check', def: true },
+      { id: 'center', label: 'Center', type: 'pt', def: [.5, .5] },
+      { id: 'axis', label: 'Axis°', def: 45, min: -3600, max: 3600, dec: 1 }],
+    run(E, img, q) {
+      // the layer twists like a ribbon about the axis, showing the backside layer (or itself) as it turns over
+      const c = fxDone(q); if (c <= 0) return img;
+      const [cx, cy] = q('center'), a = fxDeg(E, q('axis')) * Math.PI / 180, back = fxOther(E, q('backside'), 'twistback');
+      return E.run('fx_transition', 'ftr_twister', fxP({ 0: [back ? 1 : 0, q('shading'), 0, 0] }, { 0: [cx, cy, Math.sin(a), Math.cos(a)], 1: [Math.hypot(E.lw, E.lh) / 2, c, 0, 0] }), img, back);
+    } },
+  ccwarpomatic: { name: 'CC WarpoMatic', cat: 'Transition', clip: true, kernels: [['fx_transition', 'ftr_plane'], ['fx_transition', 'ftr_react_contrast'], ['fx_transition', 'ftr_react_local'],
+      ['fx_transition', 'ftr_warpo'], ...BLUR_K], params: [
+      fxDonePct(), fxLayerPick('reveal', 'Layer to reveal', 'None'), fxLayerPick('reactorLayer', 'Reactor layer'),
+      { id: 'reactor', label: 'Reactor', type: 'pick', def: 0, opts: [[0, 'Brightness'], [1, 'Contrast differences'], [2, 'Local differences']] },
+      { id: 'smoothness', label: 'Smoothness', def: 10, min: 0, max: 200, dec: 1 },
+      { id: 'warpAmount', label: 'Warp amount', def: 50, min: -1000, max: 1000, dec: 1 },
+      { id: 'warpDir', label: 'Warp direction', type: 'pick', def: 0, opts: [[0, 'Joint'], [1, 'Opposing'], [2, 'Twisting']] },
+      { id: 'blendSpan', label: 'Blend span %', def: 10, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      // the layer warps away along the reactor's slopes while the layer to reveal warps in
+      const c = fxDone(q); if (c <= 0) return img;
+      let m = E.run('fx_transition', 'ftr_plane', fxP({ 0: [4, 0, 0, 0] }), fxLayerOr(E, img, q('reactorLayer'), 'warporeact'));
+      const sm = q('smoothness') * E.sc * .5; if (sm > .05) m = fxGauss(E, m, sm, sm, true);
+      if (q('reactor') === 1) m = E.run('fx_transition', 'ftr_react_contrast', fxP(), m, fxGauss(E, m, 8 * E.sc, 8 * E.sc, true));
+      else if (q('reactor') === 2) m = E.run('fx_transition', 'ftr_react_local', fxP(), m, m);
+      const rev = fxOther(E, q('reveal'), 'warporev'), [tab, row] = rev ? E.rows(rev) : [null, 0];
+      return E.run('fx_transition', 'ftr_warpo', fxP({ 0: [q('warpDir'), rev ? 1 : 0, 0, 0], 3: [row, E.w, E.h, 0] }, { 0: [c, q('blendSpan') / 100 * .5, q('warpAmount') * E.sc * 20, 0] }), img, m, null, tab);
     } },
   // ---- Round 6: color correction (EffectCraft's pointwise kernel, modes 1, 3, 4 and 8) ----
   // Channel Control picks Master or one of the six colour ranges; ranges with a change run in fx_tone's op 14 (EffectCraft's

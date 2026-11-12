@@ -7,20 +7,25 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 23 (Transitions) (Round 22 done 2026-11-11); Round 22 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 24 (Channel) (Round 23 done 2026-11-11); Round 23 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 22 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 23 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–22 and the Round 6 leftovers are done. **Round 23 is next, Transitions** (WORKPLAN.md's round table): Block
-Dissolve, Card Wipe, Gradient Wipe, Iris/Linear/Radial Wipe, Venetian Blinds, CC Glass/Grid/Image/Light/Radial Scale/Scale
-Wipe, CC Jaws, Line Sweep, Twister, WarpoMatic (none of them is an effect in Lumina yet; Lumina's own clip transitions are
-separate). Most hosts are in EffectCraft's fx_transition.rs, already saved in the scratchpad as
-ec13/fx_transition_gpu.rs (Card Wipe stays on EffectCraft's CPU). Round 22's helpers: `fxNorm3`, `fxLightDir`
+Rounds 8–23 and the Round 6 leftovers are done. **Round 24 is next, Channel** (WORKPLAN.md's round table): Arithmetic,
+Blend, Calculations, CC Composite, Channel Combiner, Compound Arithmetic, Invert, Minimax, Remove Color Matting, Set
+Channels, Set Matte, Shift Channels, Solid Composite (check which are already in Lumina first). Find their host code in
+EffectCraft's crates/gpu/src (check each file's `IDS` list) and the CPU plans in crates/effects/src. Round 23's helpers:
+`fxDone`, `fxDeg` (an angle turned with the layer), `fxCorners` / `fxMaxCorner` (transition::max_corner_dist over the
+layer's on-screen box), `fxHL` (f32 hi/lo pairs), `fxOther` (a picked layer or null), `fxPlaced` (transition::place_layer:
+tile, centre or stretch another layer over this one's box), `fxRotAxis` / `fxRotOrdered` (card3d), `fxCardCam` /
+`fxCamEye` / `fxCardShade` / `fxPiece` / `fxCardPlan` / `fxDrawCards` (card3d's camera and lighting, sim2's pieces, drawn by
+lt_cards), `fxDonePct`; `fxLayerPick` takes a third argument, the "none" label; new kernel family `lumina_trans`
+(shaders/lumina_trans.wgsl: lt_place, lt_scale, lt_iris, lt_grid, lt_cards). Round 22's helpers: `fxNorm3`, `fxLightDir`
 (perspective::light_dir), `fxRotXYZ` (rot_xyz) / `fxRotRows`, `FX_SHADING` + `fxShading` (perspective::Shading into f[1],
 f[3..6]), `FX_FACES`, `fxLayerBox(E, M)` (another layer's on-screen box and scale as last drawn), `GLASSES_VIEWS`; new kernel
 family `fx_extra` (fx_generate + fx_extra, the bevels). Round 21's helpers: `fxPhaseTerms` (fx_noise::phase_terms), `fxGrainLook` / `fxGrainPlanes` /
@@ -441,7 +446,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 23 (Transitions)**.
+EffectCraft carries on at **Round 24 (Channel)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -463,8 +468,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–22 and the Round 6 leftovers are done; Round 23 (Transitions) is next.** About 112
-   effects are left, in Rounds 23–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–23 and the Round 6 leftovers are done; Round 24 (Channel) is next.** About 95
+   effects are left, in Rounds 24–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -580,6 +585,27 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 23 done (2026-11-11): Transitions.** A new **Transition** group with **Block Dissolve**, **Card
+  Wipe**, **Gradient Wipe**, **Iris Wipe**, **Linear Wipe**, **Radial Wipe**, **Venetian Blinds**, **CC Glass Wipe**, **CC
+  Grid Wipe**, **CC Image Wipe**, **CC Jaws**, **CC Light Wipe**, **CC Line Sweep**, **CC Radial ScaleWipe**, **CC Scale
+  Wipe**, **CC Twister** and **CC WarpoMatic** (17). These are effects on a layer, separate from Lumina's own clip
+  transitions.
+  - Kernels: fx_transition's ftr_blocks / ftr_mul / ftr_radial_scale / ftr_scale / ftr_glass / ftr_image_wipe / ftr_jaws /
+    ftr_line_sweep / ftr_twister / ftr_react_* / ftr_warpo (host code from fx_transition.rs); fx_generate's gen_linear_wipe /
+    gen_venetian / gen_radial_wipe / gen_gradient_wipe (fx_generate.rs, f64 edges as hi/lo tables); fx_light's flt_wipe (CC
+    Light Wipe). New Lumina shader shaders/lumina_trans.wgsl for what EffectCraft does on the CPU: Iris Wipe (lt_iris), CC
+    Grid Wipe's tiles (lt_grid, f32 instead of EffectCraft's f64 coverage table), Gradient Wipe's placement and Card Wipe's
+    back and gradient layers (lt_place), and Card Wipe's cards (lt_cards: card3d's camera and lighting and sim2's pieces
+    worked out in JavaScript, the cards binned into 16-pixel tiles and drawn far to near). Nothing was downloaded.
+  - Distances and edges are measured over the layer's on-screen box, and the angles turn with the layer. CC Jaws, CC Radial
+    ScaleWipe, CC Scale Wipe, CC Glass Wipe, CC Twister and CC WarpoMatic stay inside the layer's box, as EffectCraft's buffer
+    keeps them; Card Wipe's cards can turn out of it. Other layers (gradient, reveal, backside, reactor) are used as they sit
+    in the frame, except Gradient Wipe's gradient and Card Wipe's back, which are placed over the layer's box. Card Wipe
+    offers Camera Position and Corner Pins and a distant or point light (no comp camera or comp light yet); its Back Layer
+    can be None, This Layer or another layer.
+  - Speeds 5.1–6.6 ms a frame at 1080p.
+  - Test: the fx suite's transitionKernels, transitionTri (0 %, 50 %, 100 % for each), transitionDetails, transitionMenu
+    and round23speed steps.
 - **EffectCraft Round 22 done (2026-11-11): Perspective.** A new **Perspective** group with **Drop Shadow**, **Radial
   Shadow**, **Bevel Alpha**, **Bevel Edges**, **CC Cylinder**, **CC Sphere**, **CC Spotlight**, **CC Environment** and **3D
   Glasses** (9).

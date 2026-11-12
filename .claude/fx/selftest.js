@@ -1427,6 +1427,49 @@
       step('round22speed', r22speed);
     }
 
+    // ---- Round 23: Transitions. The card at half size in the middle (x 480-1440, y 270-810) over black, as Round 22
+    {
+      const cl = (a, b, t = 2) => a.every((v, k) => Math.abs(v - b[k]) <= t), BK = [0, 0, 0];
+      const kerr = async (fam, e) => { const pp = FXG.pipes[fam + ':' + e]; if (pp?.pipe) return null; const m = FXG.mods[fam]; return { err: pp?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }; };
+      const ids = ['blockdissolve', 'cardwipe', 'gradientwipe', 'iriswipe', 'linearwipe', 'radialwipe', 'venetian', 'ccglasswipe', 'ccgridwipe', 'ccimagewipe', 'ccjaws',
+        'cclightwipe', 'cclinesweep', 'ccradialscalewipe', 'ccscalewipe', 'cctwister', 'ccwarpomatic'], K23 = {};
+      for (const id of ids) { await only(id); for (const [fam, e] of FX[id].kernels) { const r = await kerr(fam, e); if (r) K23[fam + ':' + e] = r; } }
+      step('transitionKernels', { ...K23, works: !Object.keys(K23).length });
+      L.p.scale = .5; while (L.fx?.length) delFX(L, 0); draw(); const half = frame(), H0 = (x, y) => { const i = (y * 1920 + x) * 4; return [half[i], half[i + 1], half[i + 2]]; };
+      const lit = fr => { let n = 0; for (let i = 0; i < fr.length; i += 4) if (fr[i] + fr[i + 1] + fr[i + 2] > 12) n++; return n; }, L0 = lit(half);
+      // each transition: untouched at 0 %, part of the layer left at 50 %, nothing at 100 % (CC Twister: the layer turned over)
+      const tri = {}, ok = {};
+      for (const id of ids.filter(i => !['iriswipe', 'ccscalewipe'].includes(i))) {
+        f = await only(id); if (id === 'blockdissolve') { set(f, 'blockWidth', 20); set(f, 'blockHeight', 20); } draw(); const z = diff(half, frame()).changed; set(f, 'completion', 50); draw(); const m = lit(frame()); set(f, 'completion', 100); draw(); const e = lit(frame());
+        tri[id] = { z, m, e }; ok[id] = z === 0 && m > L0 * .15 && m < L0 * .9 && (id === 'cctwister' ? e > L0 * .5 : e < L0 * .02);
+      }
+      step('transitionTri', { L0, ...tri, bad: Object.keys(ok).filter(k => !ok[k]), works: Object.values(ok).every(Boolean) });
+      // Linear Wipe at 90°: the left half goes first; Radial Wipe clockwise from 12: the right half first
+      f = await only('linearwipe'); set(f, 'completion', 50); draw(); const lw = [px(560, 650), px(1400, 650), H0(1400, 650)];
+      f = await only('radialwipe'); set(f, 'completion', 50); draw(); const rw = [px(1300, 650), px(600, 650), H0(600, 650)];
+      // Iris Wipe: nothing at 0 radius; a 100 px hole round the centre
+      f = await only('iriswipe'); draw(); const irZ = diff(half, frame()).changed; set(f, 'outer', 200); draw(); const ir = [px(960, 540), px(560, 700), H0(560, 700)];
+      // CC Scale Wipe (stretch 2, right of the centre): x 1300 shows what was at 960 + 340 / 3
+      f = await only('ccscalewipe'); draw(); const swZ = diff(half, frame()).changed; set(f, 'stretch', 2); draw(); const sw = [px(1300, 400), H0(1073, 400), px(700, 400), H0(700, 400)];
+      // Card Wipe at 50 %: the left column has turned away, the right one hasn't moved; with this layer on the back the
+      // turned cards show it; a turned camera moves the cards at 0 %
+      f = await only('cardwipe'); set(f, 'completion', 50); draw(); const cw = [px(510, 650), px(1410, 650), H0(1410, 650)];
+      f.back = -1; set(f, 'completion', 100); draw(); const cwBack = lit(frame()); f.back = 0; set(f, 'completion', 0); set(f, 'camRotY', 30); draw(); const cwCam = diff(half, frame()).changed;
+      step('transitionDetails', { lw: lw.map(String), rw: rw.map(String), irZ, ir: ir.map(String), swZ, sw: sw.map(String), cw: cw.map(String), cwBack, cwCam,
+        works: cl(lw[0], BK) && cl(lw[1], lw[2]) && cl(rw[0], BK) && cl(rw[1], rw[2]) && irZ === 0 && cl(ir[0], BK) && cl(ir[1], ir[2])
+          && swZ === 0 && cl(sw[0], sw[1], 4) && cl(sw[2], sw[3]) && cl(cw[0], BK) && cl(cw[1], cw[2], 3) && cwBack > L0 * .5 && cwCam > 10000 });
+      const menuT = [...document.querySelectorAll('#fx-add optgroup')].find(g => g.label === 'Transition');
+      step('transitionMenu', { count: menuT?.children.length, works: menuT?.children.length === 17 });
+      const r23speed = {};
+      for (const id of ids) {
+        f = await only(id); set(f, 'completion', 50); if (id === 'iriswipe') set(f, 'outer', 200); if (id === 'ccscalewipe') set(f, 'stretch', 2);
+        draw(); ctx.getImageData(0, 0, 1, 1);
+        const t0 = performance.now(); for (let i = 0; i < 10; i++) draw(1.1 + i / 30); ctx.getImageData(0, 0, 1, 1); r23speed[id] = +((performance.now() - t0) / 10).toFixed(1);
+      }
+      while (L.fx?.length) delFX(L, 0); L.p.scale = 1; draw();
+      step('round23speed', r23speed);
+    }
+
     // ---- C4: anime VFX (Lumina's own shaders). Patches: black 0-320, white 320-640, red 640-960 at y 270
     f = await only('rgbsplit');
     if (!FXG.pipes['lumina_vfx:lvx_rgbsplit']?.pipe) { const m = FXG.mods.lumina_vfx; step('lvxKernel', { err: FXG.pipes['lumina_vfx:lvx_rgbsplit']?.err, log: m ? (await m.getCompilationInfo()).messages.slice(0, 8).map(x => `${x.lineNum}:${x.linePos} ${x.message}`) : null }); }
