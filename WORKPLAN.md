@@ -54,7 +54,9 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 23 ✅ | Transitions | Block Dissolve, Card Wipe, Gradient Wipe*, Iris/Linear/Radial Wipe, Venetian Blinds, CC Glass/Grid/Image/Light/Radial Scale/Scale Wipe, CC Jaws, Line Sweep, Twister, WarpoMatic |
 | 24 ✅ | Channel* | Arithmetic, Blend, Calculations, CC Composite, Channel Combiner, Compound Arithmetic, Invert, Minimax, Remove Color Matting, Set Channels, Set Matte, Shift Channels, Solid Composite |
 | 25 ✅ | Time* | Echo, Posterize Time, Time Difference, Time Displacement, Timewarp, Pixel Motion Blur, CC Force Motion Blur, CC Wide Time, Camera-Shake Deblur, Rolling Shutter Repair |
-| 26–28 | Simulation | Particles (CC Particle World, Particle Systems II, Particle Playground), weather (Rainfall, Snowfall, Drizzle, Bubbles), Shatter, Card Dance, Caustics, Foam, Wave World, Ball Action, Hair, Mr. Mercury, Pixel Polly, Scatterize, Star Burst |
+| 26 ✅ | Simulation: particles | CC Particle World, CC Particle Systems II, CC Mr. Mercury (EffectCraft's sim/engine.rs, particle_fx.rs) |
+| 27 | Simulation: weather and more | CC Rainfall, CC Snowfall, CC Bubbles, CC Drizzle, CC Star Burst (sim/weather.rs), CC Hair, Particle Playground (sim3.rs) |
+| 28 | Simulation: pieces and surfaces | CC Ball Action, CC Pixel Polly, CC Scatterize, Card Dance, Shatter, Caustics, Wave World, Foam (sim2/) |
 | 29 | Utility & Text | Apply LUT, Cineon, Color Profile Converter, HDR Compander/Compression, CC Overbrights, Grow Bounds, Numbers, Timecode |
 | 30 | Audio-driven | Audio Spectrum, Audio Waveform |
 | 31+ | Big tools (one each) | Liquify, Puppet, Paint, Roto Brush, Warp Stabilizer, Camera Tracker, Object Matte, Face Tracking, 3D Channel effects |

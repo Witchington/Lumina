@@ -7,20 +7,27 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 26 (Simulation, first part) (Round 25 done 2026-11-11); Round 25 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 27 (Simulation: weather and more) (Round 26 done 2026-11-13); Round 26 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 25 is committed (2026-11-11; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 26 is committed (2026-11-13; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–25 and the Round 6 leftovers are done. **Round 26 is next, Simulation (first part)** (WORKPLAN.md's round
-table, Rounds 26–28): split the list into three Rounds first (particles; weather; Shatter, Card Dance, Caustics, Foam, Wave
-World and the rest), and check which are already in Lumina. Find their host code in EffectCraft's crates/gpu/src (check
-each file's `IDS` list; fetch with `gh api` at commit 3768ff4 into the scratchpad) and the CPU plans in
-crates/effects/src. Round 25's helpers: `fxSelfAt(E, T2, tm)` (EffectHost::self_at: the layer at another timeline time,
+Rounds 8–26 and the Round 6 leftovers are done. **Round 27 is next, Simulation: weather and more** (WORKPLAN.md's
+round table): CC Rainfall, CC Snowfall, CC Bubbles, CC Drizzle, CC Star Burst (EffectCraft's crates/effects/src/sim/
+weather.rs; closed-form, every frame on its own), CC Hair and Particle Playground (sim3.rs). Their GPU host code is in
+crates/gpu/src/fx_sim.rs (rainfall/snowfall/star burst/hair go through `sprite_plan` and fx_sim's `sprites`; bubbles,
+drizzle have their own fxm_ kernels) and fx_particles.rs (playground). The Round 26 source is in the scratchpad's ec26
+folder (sim/*.rs, sim2/*.rs, sim3.rs, gpu fx_sim.rs / fx_particles.rs / particles.rs). Lumina's own Rain and Snow
+(Atmosphere) are separate from these. Round 28 is the sim2 effects. Round 26's helpers: `fxValueNoise` / `fxLattice`
+(generate::value_noise), the stepped engine `fxPsSpawn` / `fxPsStep` / `fxPsRun` (SimCache checkpoints, `PS_CACHE`),
+`fxPsRates` (rate_history), `fxPsState`, `fxPsLook` / `fxTypeSprite` / `fxSpriteBox` (sim::sprites), `fxSprites` (fx_sim's
+sprite_layer through fxp_raster) and `fxChunked` (fx_particles' Chunked passes), `fxLp` / `fxLv` / `fxPl` (layer pixels
+↔ frame pixels, Buf::to_px), the menus `PW_ANIMS`, `PARTICLE_TYPES`, `PS_TRANSFER`; Lumina's shaders/lumina_sim.wgsl
+(`lsm_texsq`). The fx_particles family already holds fx_sim.wgsl (every fxm_ kernel). Round 25's helpers: `fxSelfAt(E, T2, tm)` (EffectHost::self_at: the layer at another timeline time,
 through the effects above, placed as at time tm), `fxThen` (the same, or the input when it is the same moment),
 `fxLayerAt` / `fxFitAt` (another layer at a given time, fitted), `fxMeanOf`, `fxWeighted`, `fxFlow` / `fxMotion`
 (raster::flow's block matching and timewarp_interpolate on the graphics card), `fxPixelMotion`, `fxTwSource` /
@@ -84,7 +91,7 @@ PhotoCraft is a Rust app (egui + wgpu) with only 2 WGSL shaders, so like EffectC
 with PhotoCraft (https://github.com/storytold/photocraft, MIT or Apache-2.0, commit 3ef886c on 2026-11-08) as the reference.
 Its own estimate: ~45% of Photoshop, 2,300–4,100 h to full parity, so Lumina takes the parts people use most. The rounds are in
 "PhotoCraft rounds" below. **Rounds P1 (Save as image), P2 (moving pictures, sequences, opening every image
-format) and P3 (Image mode basics) are done**; P4 (Painting) is saved for later, to pick up when the user asks; Round PW (Workspaces) comes right after P4. P4 builds on Image mode: a paint layer is a new layer
+format) and P3 (Image mode basics) are done**; P4 (Painting) is saved for later, to pick up when the user asks; Round PW (Workspaces) comes right after P4. The last PhotoCraft Round is P14 (Photoshop layout, added 2026-11-11), which makes the Image side look like Photoshop. P4 builds on Image mode: a paint layer is a new layer
 kind holding its own pixels, at the canvas size, listed in the Layers panel like the rest.
 
 **Round IX, Image mode fixes: DONE 2026-11-11.** `useWorkspace` now leaves Image mode for any workspace but Image (so the
@@ -124,7 +131,12 @@ theme today, and Greyscale only turns it grey with a filter. Each theme should g
 - **Tests:** for each theme, the top-left logo and the welcome logo use that theme's file; main gets the right icon path
   and every icon file exists in the build; switching back to Default puts the purple icon back; the floating panels match.
 
-**For later: Rounds SM1 + SM2, Style Match (the user, 2026-11-10; not started, after Round IX).** The idea: someone connected
+**Style Match (SM1–SM14) goes LAST (the user, 2026-11-11: "save the Style Match for last, that way we will have all the
+effects and other rounds done").** It comes after everything else in this roadmap: EffectCraft, After Effects A1–A12,
+the Premiere Pro extras, PhotoCraft P4–P14, the Adobe MAX Rounds AM1–AM13 and the on-hold items. That way, every effect, transition, text animator, mask,
+tracker and sound tool it needs to copy an edit already exists. Don't start any SM Round before then unless the user asks.
+
+**Rounds SM1 + SM2, Style Match (the user, 2026-11-10; not started; last in the order, see above).** The idea: someone connected
 through AI control (Claude or another AI) sends a link or imports a video with an editing style they like (cuts and effects
 synced to the beat of the song), uploads their own clips and pictures, and the AI makes a new edit in the same style with
 their footage. Not a copy of the video itself: the style (timing, beat sync, zooms, shakes, flashes, transitions, look).
@@ -196,6 +208,94 @@ SM1 + SM2).** Everything runs on this computer; no video, clip or recipe is uplo
   on-screen words (read correctly), subject position after reframing, a re-timed edit on a second song (cuts on its
   beats), the match score going up after Fix the low ones, and a saved `.lumistyle` that contains no video, audio or
   file paths.
+
+**Replica Style Match, SM8–SM14 (added 2026-11-11 at the user's request).** The user said: "send an edit and be able to
+match it to a T with everything that the edit has… so well designed that it's almost like a replica". These Rounds come after
+SM1–SM7. They raise the bar from "same style" to "every edit decision the same": every cut, keyframe, curve, effect
+setting, grade, text animation, overlay and sound, to the frame. The user's footage is different, so the pixels can't be
+identical. Everything else should be. Everything still runs on this computer, and nothing is uploaded.
+- **What "a replica" means, as numbers.** Each SM Round below is tested against these targets:
+  - Cuts land on exactly the same frame (0 frames off).
+  - Keyframe timing is within 1 frame, and motion (position, scale, rotation) is within 1% each frame.
+  - Speed ramps follow the reference's time curve within 1 frame of source time.
+  - Colour is on average within ΔE 3 of the reference, per shot.
+  - Text sits within 2 px, at the same size and with the same timing; the font is the closest one installed.
+  - Sound effects and audio edits are within 10 ms.
+  - Every effect and transition found in the reference appears in the replica, or is listed in the gap report (SM12).
+    Nothing is dropped without saying so.
+- **SM8 Frame-by-frame breakdown.** Study every frame, not just every shot.
+  - **Layers in each frame:** split each frame into what sits on top of what: the main footage, picture-in-picture and
+    split-screen tiles, text, stickers and graphics, overlays (light leaks, film burns, dust, grain, flares), black bars and
+    borders. Note each layer's box, opacity and blend mode.
+  - **Sub-frame timing:** find where each change starts and ends, even inside a transition (for example, a zoom blur that
+    peaks on frame 3 of 6).
+  - **Frame rate tricks:** dropped or doubled frames, choppy "on twos" motion (Posterize Time), frame blending and
+    stutters.
+  - **Masks and shapes:** where a mask or shape reveals or hides part of a shot, with its path over time.
+- **SM9 The effect solver (inverse fitting).** This is the core of the replica.
+  - **Effect fingerprints:** Lumina renders each of its effects and transitions at many settings on test footage, and
+    keeps a library of what each one looks like. The library is built once and updated as EffectCraft adds effects.
+  - **Naming what's on screen:** each moment of the reference is matched against the library, so Lumina knows "Directional
+    Blur at about 40° plus Chromatic Aberration", not just "blurry".
+  - **Fitting the exact settings:** Lumina then searches the effect's settings and keyframes on the graphics card (coarse
+    to fine) until its render matches the reference frame as closely as possible. It does the same for keyframe curves and
+    easing, shake (amount, frequency, direction, per frame), camera moves, motion blur and the time-remap curve.
+  - **When two answers look alike:** Lumina picks the closest and keeps the runners-up, so the user (or the AI) can switch
+    with one click.
+  - **The self-check:** if the user has the reference's own source clips (their own earlier edit), Lumina rebuilds the
+    reference from them and compares pixel by pixel. That is how the solver's accuracy is measured.
+- **SM10 Text, graphics and overlays to the letter.**
+  - **Text:** the exact words, line breaks, alignment, letter spacing, stroke, shadow, glow, gradient and background box.
+    The font is found by comparing letter shapes against every installed font. If a better match is a free font that
+    isn't installed, say which one and ask before downloading anything.
+  - **Text animation:** per-letter and per-word timing (typewriter, pop, bounce, shake, karaoke highlight), with the curve
+    for each, using the A6 text animators when they exist.
+  - **Graphics and stickers:** shapes become shape layers (A5); emoji and stickers are matched with Lumina's stickers;
+    anything else is cut out as a picture with see-through edges so it can be placed the same way.
+  - **Overlays:** light leaks, film burns, grain, dust and flares are matched with Lumina's own (Atmosphere, EffectCraft
+    noise). An overlay that can't be rebuilt is cut out from the reference for the user's own use only, and the window
+    says so.
+- **SM11 Sound to the millisecond.**
+  - **The song:** where in the song the edit starts and ends, and the edits inside the song (cuts, loops, reverse, a
+    rewind, slowed or sped-up versions, pitch, bass boost, reverb, a muffled "underwater" filter). These are rebuilt on the
+    user's copy of the song.
+  - **Sound effects:** each whoosh, hit, riser, camera click or record scratch, with its time and loudness, matched from a
+    local sound library. Adding a library to download is asked about first.
+  - **Volume:** fade curves, ducking under voices, and the clip's own sound coming in and out.
+- **SM12 Gap report (nothing missed).**
+  - After a study, a checklist of everything the reference does, each marked **matched**, **close** (with the closest
+    Lumina tool and how far off it is) or **Lumina can't do this yet**.
+  - Every "can't do yet" item is written as a note for the roadmap (which EffectCraft, After Effects or PhotoCraft Round
+    would add it), so over time the gaps close. The user decides when.
+- **SM13 Replica mode.**
+  - SM5's "how closely to copy" slider gets a top setting, **Replica**: every cut, keyframe, setting, text and sound is
+    kept as the solver found it. Only the footage changes.
+  - Fitting the user's footage: each clip is re-framed, re-timed and colour-matched so it fills the reference shot's role
+    (subject in the same place, motion the same way and speed, same brightness and colour). Where no clip fits, the shot
+    is marked, and the AI says what kind of clip would work ("a close-up moving left, about 0.4 s").
+  - The same frame size and frame rate as the reference, automatically.
+- **SM14 Frame-by-frame review.**
+  - **A/B flip** between reference and replica on the same frame, **onion skin** (one over the other, see-through), and a
+    **difference heat map** showing where they disagree.
+  - A **mismatch strip** on the timeline: green where every target is met, yellow where it's close, red where it's off.
+    Click a mark to jump there and see which target failed (cut, motion, colour, text, sound).
+  - **Fix until it matches:** the AI (or a button) re-runs the solver on red and yellow parts until the targets are met
+    or nothing gets better. Each fix is one undo step.
+  - A **replica score** out of 100, with the parts behind it.
+- **Tests for SM8–SM14:**
+  - made-up references built in Lumina itself with known answers (every effect setting, keyframe, font, sound time), which
+    the study must recover within the targets above
+  - the self-check: rebuild a reference from its own source clips and compare pixel by pixel
+  - each overlay and text animation type is named correctly
+  - the gap report lists a deliberately unsupported trick
+  - Replica mode on new footage meets the cut, motion and timing targets
+  - Fix until it matches raises the replica score
+  - no reference video, song or file path ends up in a saved `.lumistyle`
+- **Order and what it needs:** SM8–SM14 come after SM1–SM7, and all of Style Match comes last in the whole roadmap. By then
+  EffectCraft's effects, A5 shapes, A6 text animators, A7 masks, A9 tracking and the rest exist. Before starting, rebuild
+  SM9's effect library from everything Lumina has at that point. The gap report shows anything still missing.
+- **Fair use:** as in SM1, the window reminds the user to use only videos they're allowed to, that posting the song is up
+  to them, and that the replica copies the editing, not the other video's footage.
 
 The CapCut phase (C1–C14), the beginner layout (B1–B4) and C15 Friends test release are all done (2026-11-07).
 The Converter tab (links → MP3/MP4 via yt-dlp) was added the same day, then the timeline scrolling fix, layer mute
@@ -460,7 +560,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 26 (Simulation, first part)**.
+EffectCraft carries on at **Round 27 (Simulation: weather and more)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -482,8 +582,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–25 and the Round 6 leftovers are done; Round 26 (Simulation) is next.** About 72
-   effects are left, in Rounds 26–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–26 and the Round 6 leftovers are done; Round 27 (Simulation: weather and more) is
+   next.** About 69 effects are left, in Rounds 27–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -529,9 +629,140 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
 | P11 | Type and vectors | Photoshop-style text options, shape tools, pen paths; true vector SVG/PDF export of shapes and text. |
 | P12 | Opening layered files | PSD with layers (PhotoCraft's `crates/psd` as the guide), OpenRaster; Camera Raw-lite. |
 | P13 | Filters | Blur gallery, Smart Sharpen / Unsharp Mask, noise, distort, mostly from EffectCraft effects. |
+| P14 | Photoshop layout (added 2026-11-11 at the user's request: make the Image side look like Photoshop / PhotoCraft) | The last PhotoCraft Round. It is a full pass over how Image mode looks and works, so it matches Photoshop once P4–P13 have added the tools behind each button. Details below. |
 
-After those two (only when the user says so): Claude's own features, fixes and tweaks — motion blur, pen-tool masks with
+**P14 Photoshop layout, details.** These come from the user's screenshots on 2026-11-11, which put Lumina's Image mode next to
+PhotoCraft's Photoshop-style window. Round PW builds the Image workspace's frame. P14 then goes over every piece once the
+tools behind it exist, so no button is empty. No Adobe names or logos.
+- **Menus.** In Image mode the menu bar reads File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help.
+  Composition and Effect are hidden, and their picture commands move under Image and Filter.
+- **Options bar instead of the toolbar.** The big video toolbar is hidden in Image mode (Import media, Text, Shape,
+  Sticker, 3D shape, Atmosphere, Color grade, Undo, Redo). In its place is a thin options bar that changes with the tool.
+  - Move tool: Auto-Select with a Layer/Group menu, Show Transform Controls, align and distribute buttons, and "…" for more.
+  - Brush tool: size, hardness, mode, opacity and flow.
+- **Tool column on the left, instead of the CapCut rail.** It is one column of icon tools, in groups divided by lines:
+  1. Move
+  2. Marquee and Lasso
+  3. Quick Select / Magic Wand and Crop
+  4. Eyedropper
+  5. Healing and Brush
+  6. Clone Stamp and History Brush
+  7. Eraser and Gradient
+  8. Blur/Sharpen and Dodge/Burn
+  9. Pen and Type
+  10. Path Select and Shape
+  11. Hand and Zoom
+
+  A small corner triangle means more tools are under it (press and hold, or right-click). Below the tools:
+  - the foreground and background colour chips, with swap and reset
+  - Quick Mask
+  - Screen Mode
+  - "…" to edit the toolbar
+
+  A "»" at the top switches to two columns. The tools have one-key shortcuts (V, M, L, W, C, I, J, B, S, E, G, O, P, T,
+  A, U, H, Z, with X, D, Q and F for the colour chips, Quick Mask and Screen Mode).
+- **The left panel is hidden** (Project, Effects & Presets, and the Image tab with its big tiles). Its commands move:
+  - Image size, Canvas size, Rotate and Flip go to the Image menu.
+  - Crop becomes the Crop tool.
+  - The background choice moves to the Background layer and the New image dialog.
+- **Document tabs above the canvas.** There is one tab per open picture, like "name.jpg @ 30.1% (Layer name, RGB/8)*".
+  Each has × to close it, and * shows unsaved changes. Several pictures can be open at once.
+- **Canvas.** The area around the picture is plain mid-grey with no checker. The checker is only for see-through areas
+  inside the picture. The big "Drop pictures here" text goes; dropping still works, and an empty picture shows a short
+  hint.
+- **Panel icon strip.** A thin column of icons sits between the canvas and the panels: Adjustments, Properties,
+  Colour/Swatches, Layers and History. When a panel is collapsed, its icon opens it as a fly-out.
+- **Properties and Adjustments tabs**, with a ≡ panel menu.
+  - Properties shows the picked layer's own settings:
+    - An adjustment layer shows its controls. For Curves that is a channel menu, the histogram behind the curve,
+      draggable points, Input/Output, "Adjustment visible", "Clip to layer below" and Reset to defaults.
+    - A type layer shows its text settings.
+    - A pixel layer shows its size and position.
+  - Adjustments is a grid of icons, one per adjustment layer, to add it.
+- **Layers, Channels and Paths tabs.**
+  - **Top of Layers:**
+    - a Kind filter (search, plus icons for pixel, adjustment, type, shape and smart-object layers)
+    - the blend mode menu (Normal…)
+    - Opacity and Fill boxes in %
+    - Lock buttons: transparent pixels, image pixels, position, artboard and all
+  - **Each layer row:**
+    - the eye, a thumbnail, and the name with its kind under it (Type, Shape, Curves)
+    - an fx mark, with the layer's effects listed under it (Effects › Drop Shadow), each with its own eye; the list folds
+      open and shut
+    - The Background layer is in italics with a lock. The picked row is lit. Double-click a name to rename it, and drag
+      rows to reorder them.
+  - **Bottom icon buttons:** link, fx (layer style), mask, new adjustment, group, new layer and delete. They replace the
+    Up / Down / Duplicate / Delete text buttons.
+  - **Channels** lists RGB, Red, Green and Blue with thumbnails. **Paths** lists the pen paths.
+- **Status bar at the bottom:**
+  - a zoom % box you can type into
+  - the colour mode and bits (RGB Color · 8 bit)
+  - the size in px
+  - the layer count
+  - the last action ("Opened great-wave.jpg")
+- **Top right.** A workspace menu with Lumina's own names, plus search and the light/dark button. The Video | Image switch
+  stays.
+- **Look.** Flatter greys, smaller type, thin lines and small icons, as in the screenshot. It follows each Lumina theme
+  (Default, Greyscale, Cozy, Aero) instead of one fixed grey.
+- **Video mode doesn't change.** Switching back to Video brings back its own layout. Every setting stays shown, with no
+  Beginner/Pro split.
+- **Tests:**
+  - In Image mode: the menus, tool column, options bar for each tool, document tabs, panel tabs, Layers controls and
+    status bar are there and work.
+  - After switching back to Video, the video layout is the same as before.
+  - Each theme is checked.
+  - A screenshot of the result is compared with the reference by eye, together with the user.
+
+3. **Adobe MAX Rounds, AM1–AM13** (added 2026-11-13 at the user's request). These come **after PhotoCraft** (P4–P14).
+   They are features shown at Adobe MAX 2026, built Lumina's own way with **Lumina's own names** (never Adobe's tool
+   names or branding). Sources: the user's list, and a third-party summary page
+   (bestproductivityresources.com/guides/everything-about-adobe-max), which gives one line per feature and says some are
+   betas or previews. So each Round is designed from what the feature does, not from Adobe's version.
+
+### Adobe MAX Rounds (written 2026-11-13)
+
+**Ground rules for these Rounds.**
+- **AI models.** Many of these need an AI model (relighting, restyling, generating video, sound and music, removing
+  objects, reading text). **Before each such Round, ask the user** which way to go: a model that runs on this computer
+  (say what it is, its size, its licence, and that it goes on D:, never C:), or the user's own connected AI (Edit › AI
+  connections). Nothing is downloaded and no account is made without a clear yes.
+- **Privacy.** Nothing here may show or send the user's IP address, keys or files to anyone the user didn't choose.
+  There is no Lumina server.
+- **No Beginner/Pro mode.** Even the "describe what you want" parts show every setting.
+- **Already in Lumina:** AI control for other AIs (M1–M5, the same idea as Adobe's MCP preview), AI background removal and
+  a content-aware fill box. These Rounds build on them.
+
+| Round | Lumina name | What |
+|---|---|---|
+| AM1 | **Ask Lumina** (assistant with a Plan view) | An assistant panel inside Lumina. You type what you want ("cut this to the beat, add captions, export for TikTok") and it does several steps in a row. **Plan view:** it first shows the steps as a list you can read, edit, reorder or untick, then runs them on your OK. Each step is its own undo, a Stop button halts it, and a log shows what was done. **Helpers that keep running:** recurring jobs while Lumina is open (for example, "when a clip lands in this folder, trim the silence and add it to the project"). It works through the AI connections Lumina already has. |
+| AM2 | **Tidy & Export All** | Layer tidying: name layers from what's in them, group related layers, colour-label them by kind, find hidden or unused layers, and sort them, with a preview before anything changes. Export All: export every layer, artboard, page or marker range at once, in several sizes and formats (for example 1x/2x/3x PNG plus SVG plus PDF), with file-name patterns and saved export presets. |
+| AM3 | **Flow** (node graph) | A node-based workspace. Boxes for inputs (files, folders, layers, text prompts), steps (effects, adjustments, resize, AI tools, captions), and outputs (export, save). Draw lines between them to make a workflow, preview any box, run it on one file or a whole folder, and save it as a reusable recipe. A Flow recipe can also be dropped on a layer like an effect preset. |
+| AM4 | **Studio canvas** (one canvas for everything) | One canvas where vector shapes (A5), pixel layers (Image mode), 3D objects (A8) and text all live together. Pages and artboards of any size. **Print:** mm/in/pt units, DPI, bleed and safe areas, crop marks, a CMYK proof view, spot colours, and print-ready PDF export. Layouts and on-brand charts and graphs (bar, line, pie from a table or CSV, styled with the project's colours and fonts). |
+| AM5 | **Prototype** (prompts into clickable mockups) | Describe an app or website screen and Lumina builds it as artboards with real layers you can edit. Then link them: hotspots, buttons, click / hover / timer triggers, transitions between screens, scrolling areas, and hover and pressed states. A play view lets you click through it, and it exports as a stand-alone HTML folder. |
+| AM6 | **Relight** and **Change Angle** | Relight: Lumina guesses the depth and surface shape of a picture or video frame, then you place lights (point, spot, sun, rim), set their colour, strength and softness, and darken or brighten the original light. It works on video too, carried over time. Change Angle: turn the view a little (left, right, up, down) from the depth guess, filling the revealed edges. |
+| AM7 | **Style Shift** and **Edit Just This** | Style Shift: restyle a picture or clip from a prompt or style preset (painting, anime, clay, film…), with sliders for strength, how much of the original shapes and colours to keep, and detail. Edit Just This: pick or brush one part of the picture, describe the change, and only that part changes. The rest stays pixel-for-pixel the same. |
+| AM8 | **Pull Text** (flat text into editable text layers) | Find the text in a flat picture (or a video frame), read it, match the font from the installed fonts (closest match, shown so you can change it), and size, colour, angle and spacing. Then fill the background behind it and put it back as real, editable text layers in the same place. |
+| AM9 | **Grade** (a colour-grading mode) | A colour-grading workspace for video. Scopes (waveform, RGB parade, vectorscope, histogram), colour wheels (shadows, mids, highlights, offset), curves including hue-vs-hue, hue-vs-saturation and luma-vs-saturation, HSL picking with a mask view, and a list of grade steps per clip. Plus shot matching (match this clip to that one), saving and loading LUTs (.cube), a before/after split, a still gallery to compare against, and grading a whole track or adjustment layer. It builds on the Lumetri-style effects from EffectCraft. |
+| AM10 | **Erase Object** (removal in video) | Brush over or click an object in a video. Lumina finds its outline (A10's Roto Brush), follows it across frames, and fills the hole, first from other frames where the background shows, then with AI fill where it never does. Also works on still pictures. |
+| AM11 | **Make Media** (generate clips, sound and music in the timeline) | Make a video clip, a sound effect or a music bed from a prompt, right in the timeline. Pick a gap or a range and it fits that length. Music can follow a tempo and mood, and sound effects can be matched to what's on screen. Several versions to choose from, and the prompt is kept on the clip so it can be made again. |
+| AM12 | **Photo Fix** and **Quick Assemble** | Upscale (2x/4x) and denoise for pictures and video, HDR (merge brackets, or lift one picture into HDR), fix closed eyes (open them from another frame or picture of the same person), and blemish removal (a spot brush plus auto-find). Quick Assemble: give it clips, pictures and sounds, and it builds a first-cut video (order, timing to the music, simple transitions), which you then edit as normal. |
+| AM13 | **Edit Together** (live co-editing, video and image) | Two or more people edit the same project at the same time and see each other's cursors, picks and changes. **Live presence** (the user, 2026-11-13: see who is in the project, their cursor and what they've clicked or are editing): a row of people at the top (a coloured circle with each person's name and initials); click one to jump to where they are. Each person's **mouse cursor** moves live with a name tag over the viewer, the timeline, the canvas and the panels, in their colour. **What they've picked** is outlined in their colour (clips on the timeline, layers, keyframes, a selection on the canvas), with their name on it. **What they're editing** shows live as they do it: a slider or box they're dragging moves on your screen too, with a tag like "Sam · Opacity", text they type appears letter by letter, a clip being dragged or trimmed moves as they drag it, and a brush stroke appears as it's painted. Their tool and panel shows next to their name ("Pen tool", "Effect Controls"). Each person can hide their own cursor. **Everyone keeps their own view** (the user, 2026-11-13: "my client is my client and their client is their client"): only the project itself is shared, never anyone's screen. What one person clicks never moves, switches or kicks out anyone else. Each person has their own Video / Image mode, workspace and panel layout, open picture tab, zoom and scroll, playhead, tool, selection and open menus or dialogs. If I switch to Image mode, my friend stays in Video mode doing what they were doing. Following someone happens only when you click **Follow** yourself, and any click of your own stops it. If someone deletes or changes the thing you're working on, you get a small notice (with the option to keep your copy) instead of being thrown out of it. **Works in Video mode and Image mode** (the user, 2026-11-13): in Video mode the timeline, clips, cuts, effects, keyframes, text, audio and markers are all shared live; each person has their own playhead, with a "Follow" button to watch someone else's, and a clip or layer someone is editing is marked with their name and colour. Media files (videos, pictures, sounds) are sent to the others once, in the background, while they can already start editing; a file someone already has is not sent again. Undo only undoes your own changes. A small chat sits in the panel. **Really easy setup** (the user, 2026-11-13): one **Edit Together** button → Lumina shows a short invite code (and a copy button). The other person clicks **Join**, types the code, and they're in. **Nickname first** (the user, 2026-11-13): before anyone hosts or joins, Lumina asks them to type a nickname, and they can't connect without one. The box starts empty: no name is filled in or guessed from the computer, the Windows account or anything else, and nothing about them is shown but the nickname they chose (the "Sam" in the tags above is only an example). Lumina offers last time's nickname to reuse or change, and it can be changed during the session. No accounts, no port or firewall settings, no addresses to type. The host can remove someone or end the session at any time. **Private by design:** computers connect directly and everything is end-to-end encrypted; there is no Lumina server, and no IP addresses are shown in Lumina. The same home network needs nothing else. **Over the internet** two computers need a meeting point to find each other; how that works (and what it can see) is decided with the user before this Round starts, and set up only on their OK. |
+
+**Later, if the user wants it:** a phone app to send Ask Lumina jobs to Lumina from a phone (Adobe showed a mobile agent
+in preview). It is not a Round yet.
+
+**Tests for every AM Round:** the self-test checks each tool's result in numbers, not by eye (for example: Edit Just This
+leaves every pixel outside the picked area unchanged; Pull Text's layers read back the same words; Export All writes every
+file with the right size; Flow gives the same picture as doing the steps by hand; Grade's scopes match counts done on the
+CPU; Edit Together keeps two copies of the project the same). AI-model Rounds also test that nothing is downloaded or sent
+without a yes.
+
+After those (only when the user says so): Claude's own features, fixes and tweaks — motion blur, pen-tool masks with
 feather animated over time, the on-hold list below, and fixes spotted along the way.
+
+**Last of all: Style Match, SM1–SM14** (the user, 2026-11-11). It copies an edit's style, up to a near-replica, onto your own
+footage. It goes at the very end so every tool it needs is built first. The details are in the Style Match sections near the
+top of this file.
 
 ### CapCut phase record (done)
 Sources:
@@ -599,6 +830,30 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 26 done (2026-11-13): Simulation, particles.** A new **Simulation** group with **CC Particle
+  World**, **CC Particle Systems II** and **CC Mr. Mercury** (none was in Lumina before). Simulation was split into three
+  Rounds following EffectCraft's own files: 26 particles (sim/engine, particle_fx), 27 weather and more (sim/weather, sim3),
+  28 pieces and surfaces (sim2).
+  - **The particle engine** (sim/engine.rs, ported to JavaScript): particles are stepped from layer time 0 at 60 steps a
+    second, with checkpoints every 15 steps (SimCache), so any frame can be drawn straight away and is the same frame
+    playing or scrubbing reaches. Birth Rate can be keyframed: each step is born at the rate of its own time. All ten
+    Animations (Explosive, Direction Axis, Cone Axis, Viscouse, Twirly, Vortex, Fire, Jet Sideways, Fractal Omni / Uni) and
+    all nine Particle Types. The particles replace the layer, as in After Effects; Add adds them together.
+  - **Drawing** is on the graphics card with EffectCraft's own kernels: fx_particles' fxp_raster (the sprites, in several
+    passes when there are many) and fx_sim's fxm_raster + fxm_mercury (Mr. Mercury's blob field, then its lighting).
+    CC Particle World's **Textured Square with a Texture Layer** is CPU-only in EffectCraft; Lumina draws it on the card
+    with its own shaders/lumina_sim.wgsl (lsm_texsq), the same per-pixel arithmetic. Particles turn and scale with the
+    layer, and points are kept in the layer's own pixels, so moving the layer doesn't restart the simulation.
+  - **Not yet:** CC Particle World through a comp camera layer (Lumina has none until A8) and its motion-blur trails
+    (until A3's motion blur); Inherit Velocity is there but, as in EffectCraft, does nothing yet.
+  - Host code fetched from EffectCraft's crates/effects/src/sim* and crates/gpu/src (fx_sim, fx_particles, particles)
+    with `gh api` into the scratchpad; nothing was downloaded or installed.
+  - Speed at 1080p, 3 s in: about 6 ms a frame for each of the three.
+  - Test: the fx suite's simKernels, simDetails (the engine: about 120 particles alive at 120 a second; falling ½ g t²
+    within 2.5 %; resistance slowing them; checkpoints giving exactly the particles of a fresh run; a Birth Rate keyframed
+    from 0 at 1 s draws nothing before 1 s; the drawn layer replaced; scrubbing and drawing from nothing give the same
+    frame; the producer point moving the burst; gravity pulling it down; CC Particle World's camera distance shrinking the
+    burst; Textured Square showing a hidden green layer; Mr. Mercury's blobs), simMenu and round26speed.
 - **EffectCraft Round 25 done (2026-11-11): Time.** A new **Time** group with **Echo**, **Posterize Time**, **Time
   Difference**, **Time Displacement**, **Timewarp**, **CC Force Motion Blur**, **CC Wide Time** and **Pixel Motion Blur**;
   **Camera-Shake Deblur** joins Blur & Sharpen and **Rolling Shutter Repair** joins Distort (10; none was in Lumina before).
@@ -1352,7 +1607,8 @@ Sources:
   - **A. Tool icons** in the tools bar (select, hand, zoom, pen, text, shapes, brush). This is the smallest.
   - **B. AE-style timeline columns:** switches, parent & link, twirl-down properties.
   - **C. Dockable panels:** drag, resize, dock, with tabs. This is the biggest.
-  - **D. Photoshop-style panels** for Image mode: Layers, Adjustments, Properties.
+  - **D. Photoshop-style panels** for Image mode: Layers, Adjustments, Properties. (Now part of PhotoCraft Round P14,
+    Photoshop layout, 2026-11-11.)
 
 ## On hold from before
 3D text, extruded SVG logos, 3D look-and-feel pass, faster export with presets, auto captions.
@@ -1365,9 +1621,9 @@ Linux build: merged and built by GitHub since 0.9.1 (the user asked for it 2026-
 - After every change: close Lumina first, otherwise the rebuild fails with EBUSY. Then run `npm run dist` with `C:\Program Files\nodejs` on PATH, and then all twelve suites.
 - The twelve suites and their expected `false` results (`beat` and `speed` were added 2026-11-06, `timeline` 2026-11-07, `image` and `photo` 2026-11-08, `mcp` 2026-11-09; all six expect none):
   - `mcp`: none
-  - `photo`: none
+  - `photo`: the nine `roundIX` state values (`switchIn.timeline`, `default.still`… — recorded states such as "timeline hidden in Image mode", not failures; the step's `works` is true)
   - `image`: none
-  - `timeline`: none
+  - `timeline`: `floatPanels.nosel.afterDrop` and `floatPanels.works` (seen before Round 26 too: the test windows open minimized on this PC, at −32000, so the drop isn't over Lumina)
   - `beat`: none
   - `speed`: none
   - `.claude`: `dirtyAfter`
