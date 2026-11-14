@@ -64,3 +64,51 @@ fn lsm_texsq(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     textureStore(out, p, d);
 }
+
+// Particle Playground's Layer Map particles (EffectCraft Round 27, sim3::blit_layer): a copy of the map layer centred on
+// each particle, turned and scaled, over the base (src). Records: (x, y, cos, sin, 1 / x scale, 1 / y scale, opacity, ...)
+// then the four pixel bounds. aux = the map layer as drawn in the frame at that moment; f[0] = (a, b, c, d) and f[1] =
+// (e, f, width, height) = the map layer's own pixels (centred) → frame pixels. u[0] = (_, _, items offset, item stride);
+// u[1].x = tiles across.
+@compute @workgroup_size(16, 16)
+fn lsm_blit(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let dims = out_dims();
+    let p = vec2<i32>(gid.xy);
+    if (p.x >= dims.x || p.y >= dims.y) {
+        return;
+    }
+    let tile = u32(p.y / 16) * P.u[1].x + u32(p.x / 16);
+    let start = u32(data[tile]);
+    let end = u32(data[tile + 1u]);
+    let stride = P.u[0].w;
+    let x = f32(p.x) + 0.5;
+    let y = f32(p.y) + 0.5;
+    let sz = P.f[1].zw;
+    var d = textureLoad(src, p, 0);
+    for (var k = start; k < end; k++) {
+        let at = P.u[0].z + u32(data[k]) * stride;
+        let bb = at + stride - 4u;
+        if (f32(p.x) < data[bb] || f32(p.y) < data[bb + 1u] || f32(p.x) > data[bb + 2u] || f32(p.y) > data[bb + 3u]) {
+            continue;
+        }
+        let dx = x - data[at];
+        let dy = y - data[at + 1u];
+        let ca = data[at + 2u];
+        let sa = data[at + 3u];
+        // undo the turn, then the scale: into the map layer's own pixels round its centre
+        let u = (dx * ca + dy * sa) * data[at + 4u] + sz.x * 0.5;
+        let v = (-dx * sa + dy * ca) * data[at + 5u] + sz.y * 0.5;
+        if (u < 0.0 || v < 0.0 || u >= sz.x || v >= sz.y) {
+            continue;
+        }
+        let lu = u - sz.x * 0.5;
+        let lv = v - sz.y * 0.5;
+        let s = sample_bilinear(aux, P.f[0].x * lu + P.f[0].z * lv + P.f[1].x, P.f[0].y * lu + P.f[0].w * lv + P.f[1].y);
+        if (s.w <= 0.0) {
+            continue;
+        }
+        let al = data[at + 6u];
+        d = s * al + d * (1.0 - s.w * al);
+    }
+    textureStore(out, p, d);
+}
