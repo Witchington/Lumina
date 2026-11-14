@@ -1,7 +1,7 @@
 {
   "name": "lumina",
   "productName": "Lumina",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Lumina: a video editor for everything",
   "main": "electron/main.js",
   "private": true,

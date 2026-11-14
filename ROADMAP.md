@@ -366,6 +366,9 @@ enable the workflow, push the tag, check the assets, disable the workflow.
 **0.10.0 released (2026-11-10, the user asked: "update the github with everything ... as well as update the setup"):** all local
 work since 0.9.2 (EffectCraft Rounds, floating panels FP/FP2, the MCP rounds through M5) pushed with tag v0.10.0, same steps as
 0.9.2. Checked before the push: no key, control file, `.mcp.json`, personal path or IP other than 127.0.0.1 in any tracked file.
+**0.11.0 released (2026-11-14, the user asked: "push all the updates to the github my friend wants to try it out"):** all
+work since 0.10.0 (EffectCraft Rounds 31 Roto Brush and 32 3D Camera Tracker, and the fixes since) pushed with tag v0.11.0,
+same steps. Checked before the push: no key, control file, `.mcp.json`, personal path or IP other than 127.0.0.1.
 The beginner layout, for reference:
 - **B1 Tool rail (done):** icon tabs down the left (Media, Text, Stickers, Effects, Transitions, Captions, Audio, Adjust), each
   opening a browsable panel with previews to click or drag in, like CapCut. Leave room for an Image tab (PhotoCraft).
