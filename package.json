@@ -32,7 +32,8 @@
       "THIRD-PARTY-NOTICES.md",
       "electron/**",
       "vendor/**",
-      "shaders/**"
+      "shaders/**",
+      "workers/**"
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/ffmpeg*"

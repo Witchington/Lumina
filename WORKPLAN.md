@@ -59,7 +59,8 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 28 ✅ | Simulation: pieces and surfaces | CC Ball Action, CC Pixel Polly, CC Scatterize, Card Dance, Shatter, Caustics, Wave World, Foam (sim2/) |
 | 29 ✅ | Utility & Text | Apply LUT, Cineon, Color Profile Converter, HDR Compander/Compression, CC Overbrights, Grow Bounds, Numbers, Timecode |
 | 30 ✅ | Audio-driven | Audio Spectrum, Audio Waveform |
-| 31+ | Big tools (one each) | Liquify, Puppet, Paint, Roto Brush, Warp Stabilizer, Camera Tracker, Object Matte, Face Tracking, 3D Channel effects |
+| 31 ✅ | Big tool: Roto Brush | Roto Brush & Refine Edge (the classic engine, no AI model) |
+| 32+ | Big tools (one each, largest first, the user's choice) | Camera Tracker, Warp Stabilizer, Puppet, Paint, Face Tracking, 3D Channel effects, Object Matte, Liquify |
 | optional | | Audio effects (13), VR effects (12), OCIO (5) |
 
 \* needs a second layer or other frames. Best done after Lumina Stage 1.

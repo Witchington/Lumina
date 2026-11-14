@@ -760,6 +760,9 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
       </select>
       <select id="fps" class="vid-only" title="Frame rate"><option>30</option><option selected>60</option></select>
       <span class="cropbar" id="cropBar" hidden>Crop to <b id="cropSize"></b><button class="primary" id="cropOk" title="Enter">Crop</button><button id="cropNo" title="Esc">Cancel</button></span>
+      <span class="cropbar" id="rotoBar" hidden><select id="rotoMode" title="Which brush"><option value="roto">Roto Brush</option><option value="refine">Refine Edge</option></select>
+        <label title="Brush size in layer pixels (Ctrl+drag on the preview)">Size <input id="rotoSize" type="range" min="2" max="400" step="1"> <b id="rotoSizeN"></b></label>
+        <label title="Show the layer cut out while you paint"><input type="checkbox" id="rotoResult"> Show the cut-out</label><button class="primary" id="rotoDone" title="Esc">Done</button></span>
       <span class="spacer"></span>
       <span class="hint" id="vsize"></span>
     </div>
@@ -2473,8 +2476,9 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   lumina_time: ['lumina_time'],       // Round 25: motion vectors, Time Displacement, Deblur, Rolling Shutter Repair (shaders/)
   lumina_sim: ['lumina_sim'],         // Round 26: CC Particle World's textured squares (shaders/)
   fx_text: ['fx_text'],               // Round 29: Numbers' and Timecode's text over the layer (ftx_text)
+  lumina_roto: ['lumina_roto'],       // Round 31: Roto Brush & Refine Edge's matte over the frame (shaders/)
   lumina_util: ['lumina_util'] };     // Round 29: CC Overbrights, HDR Highlight Compression, HDR Compander, Cineon Converter (shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl', lumina_sim: 'shaders/lumina_sim.wgsl', lumina_util: 'shaders/lumina_util.wgsl' };
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl', lumina_sim: 'shaders/lumina_sim.wgsl', lumina_util: 'shaders/lumina_util.wgsl', lumina_roto: 'shaders/lumina_roto.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2656,6 +2660,7 @@ function fxApply(L, t, lc) {
     const D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), t, E);
     E.fx = f; E.idx = i;
     cur = D.run(E, cur, q) || cur;
+    if (E.stop) break;
     if (typeof D.clip === 'function' ? D.clip(q) : D.clip) { clip = true; grow = Math.max(grow, E.grow); }
   }
   if (E.usedTime && L.kind === 'video') vfAhead(L, E.ahead > 0 ? Math.min(3, E.ahead + .25) : 0);
@@ -2693,6 +2698,263 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 31 helpers (Roto Brush & Refine Edge): EffectCraft's crates/effects/src/roto.rs (the strokes, the chain of
+//      frames from the base frame out, the frozen mattes) on Lumina's side; the segmentation itself runs in
+//      workers/roto.js (track/src/roto.rs and its modules), and shaders/lumina_roto.wgsl lays the matte over the frame ----
+const ROTO_K = [['lumina_roto', 'lr_apply'], ['kernels', 'warp_blend'], ['kernels', 'fill']];
+const ROTO_SPAN = 20, ROTO_GRID = 2048, ROTO_FINAL_MAX = 900 * 2 ** 20;
+// want: the frame on screen; queue: other frames asked for (Work out every frame, Freeze, export); have: the chain keys
+// the worker holds a segmentation for; outline: each frame's matte edge for the overlay; final: each frame's matte
+const ROTO = { worker: null, seq: 0, wait: new Map(), have: new Set(), outline: new Map(), final: new Map(), finalBytes: 0,
+  want: null, queue: [], busy: false, grab: null, plan: null, tool: null, last: {}, frozen: {}, rgba: new Map(), hash: new WeakMap(), errors: 0 };
+function rotoW() {
+  if (!ROTO.worker) {
+    ROTO.worker = new Worker(new URL('workers/roto.js', location.href));
+    ROTO.worker.onmessage = e => { const r = ROTO.wait.get(e.data.id); ROTO.wait.delete(e.data.id); r?.(e.data.res || { error: 'no answer' }); };
+    ROTO.worker.onerror = e => { console.warn('roto worker:', e.message); for (const r of ROTO.wait.values()) r({ error: e.message }); ROTO.wait.clear(); };
+  }
+  return ROTO.worker;
+}
+const rotoCall = (op, m = {}, tr = []) => new Promise(r => { const id = ++ROTO.seq; ROTO.wait.set(id, r); rotoW().postMessage({ ...m, id, op }, tr); });
+// FNV-1a over a string, twice (two seeds), as 16 hex digits
+function rotoHash(s) {
+  let a = 0x811c9dc5, b = 0x9747b28c;
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 16777619); b = Math.imul(b ^ c, 2246822519); }
+  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
+}
+const rotoSegKind = k => k === 'fg' || k === 'bg';
+const rotoEmpty = d => !d || d.base == null || !d.strokes?.some(s => rotoSegKind(s.k));
+const rotoInSpan = (d, g) => !rotoEmpty(d) && g >= d.span[0] && g <= d.span[1];
+// the layer's frames (layer frame g is timeline time start + g / fps)
+const rotoFrame = (L, T) => Math.floor((T - (L.start || 0)) * S.fps + 1e-6);
+const rotoTime = (L, g) => (L.start || 0) + g / S.fps + 1e-4;
+function rotoLimits(L) { const [a, b] = liveRange(L), s = L.start || 0; return [Math.max(0, Math.ceil((a - s) * S.fps - 1e-6)), Math.max(0, Math.floor((b - s) * S.fps - 1e-6))]; }
+// the layer's own pixel grid (EffectCraft's layer_grid): the layer box at gs grid pixels a layer pixel, and M, frame
+// pixel → grid pixel (3 × 3 rows)
+function rotoGrid(E) {
+  const bw = E.bw, bh = E.bh; if (!(bw > 0 && bh > 0)) return null;
+  const inv = m3inv(m3of(E.m)); if (!inv) return null;
+  const gs = Math.min(1, E.w / bw, E.h / bh, ROTO_GRID / Math.max(bw, bh)), gw = Math.max(1, Math.round(bw * gs)), gh = Math.max(1, Math.round(bh * gs));
+  return { gs, gw, gh, bw, bh, M: m3mul(m3s(gs, gs), m3mul(m3t(bw / 2, bh / 2), inv)) };
+}
+// the effect's input on the grid, read back (8-bit straight RGBA, gw × gh)
+function rotoRead(E, img, G) {
+  const wp = fxWarp(E, img, G.M), R = E.read(wp, Math.max(E.w, E.h)), d = new Uint8Array(G.gw * G.gh * 4);
+  for (let y = 0; y < G.gh; y++) d.set(R.d.subarray(y * R.w * 4, (y * R.w + G.gw) * 4), y * G.gw * 4);
+  E.free(wp); return { w: G.gw, h: G.gh, d };
+}
+// what a frame's segmentation depends on besides the strokes: the layer's content (not where it sits), the effects
+// before this one, the grid and the Roto Brush Propagation settings (EffectCraft's seed)
+const ROTO_PLACE = new Set(['x', 'y', 'scale', 'rotation', 'rotX', 'rotY', 'opacity', 'volume']);
+function rotoSeed(E, q, G) {
+  const L = E.L, own = new Set((L.fx || []).slice(E.idx).map(f => `fx${f.uid}_`)), keep = o => Object.fromEntries(Object.entries(o || {}).filter(([k]) => !ROTO_PLACE.has(k) && ![...own].some(p => k.startsWith(p))));
+  const before = (L.fx || []).slice(0, E.idx).filter(f => f.on !== false).map(f => JSON.stringify(f));
+  return rotoHash(JSON.stringify([L.kind, L.media, L.text, L.shape, L.src, keep(L.p), keep(L.keys), L.mask, before, G.gw, G.gh,
+    q('searchRadius'), q('motionThreshold'), q('motionDamping'), q('quality')]));
+}
+function rotoStrokeHash(s) { let h = ROTO.hash.get(s); if (!h) { h = rotoHash(JSON.stringify(s)); ROTO.hash.set(s, h); } return h; }
+// the chain (RotoData::chain_keys): the base frame's key from the seed and its strokes, every other frame's from its
+// neighbour towards the base, its own strokes and which source frame it shows
+function rotoChain(E, q, f, G) {
+  const L = E.L, d = f.roto, seed = rotoSeed(E, q, G), at = {};
+  for (const s of d.strokes) (at[s.f] ||= []).push(s);
+  const stamp = g => L.kind === 'video' ? Math.round(srcTime(L, rotoTime(L, g)) * 1000) : 0;
+  const key = (prev, g) => rotoHash(prev + '|' + g + '|' + stamp(g) + '|' + (at[g] || []).map(rotoStrokeHash).join(','));
+  const keys = new Map(), k0 = key(seed, d.base); keys.set(d.base, k0);
+  for (let g = d.base + 1, k = k0; g <= d.span[1]; g++) { k = key(k, g); keys.set(g, k); }
+  for (let g = d.base - 1, k = k0; g >= d.span[0]; g--) { k = key(k, g); keys.set(g, k); }
+  const rr = d.strokes.filter(s => s.k === 'refine').reduce((m, s) => Math.max(m, s.r), 0);
+  const opts = { scale: G.gs, searchRadius: Math.max(0, q('searchRadius')), motionThreshold: q('motionThreshold'), motionDamping: q('motionDamping'), best: q('quality') === 1 };
+  return { d, keys, at, rr, opts, src: g => g === d.base || !rotoInSpan(d, g) ? null : g > d.base ? g - 1 : g + 1 };
+}
+// the matte settings (refine::MatteParams)
+const rotoMP = q => ({ rbFeather: Math.max(0, q('rbFeather')), rbContrast: q('rbContrast'), rbShift: q('rbShift'), rbChatter: q('rbChatter'),
+  smooth: Math.max(0, q('smooth')), feather: Math.max(0, q('reFeather')), contrast: q('reContrast'), shift: q('reShift'), chatter: q('reChatter'),
+  motionBlur: !!q('motionBlur'), mbSamples: clamp(Math.round(q('mbSamples')), 1, 64), shutterAngle: q('shutterAngle'), higherQuality: !!q('higherQuality'),
+  decontaminate: !!q('decontaminate'), decontamination: q('deconAmount'), extendWhereSmoothed: !!q('extendSmoothed'), increaseRadius: Math.max(0, q('deconRadius')) });
+const rotoNeedsNb = mp => mp.rbChatter > 0 || mp.chatter > 0 || mp.motionBlur;
+// the frames a frame's final matte reads: itself, and its neighbours in the span when Reduce Chatter or motion blur is on
+const rotoFrames = (C, g, mp) => [g, ...(rotoNeedsNb(mp) ? [g - 1, g + 1].filter(x => rotoInSpan(C.d, x)) : [])];
+const rotoFinalKey = (C, g, mp) => rotoHash(rotoFrames(C, g, mp).map(x => C.keys.get(x)).join('|') + JSON.stringify(mp) + '|' + C.rr);
+function rotoFinalPut(k, v) {
+  const old = ROTO.final.get(k); if (old) { ROTO.finalBytes -= old.bytes; ROTO.final.delete(k); }
+  v.bytes = v.a8.length + v.idx.length * 8; ROTO.final.set(k, v); ROTO.finalBytes += v.bytes;
+  for (const [kk, e] of ROTO.final) { if (ROTO.finalBytes <= ROTO_FINAL_MAX || ROTO.final.size < 2) break; ROTO.final.delete(kk); ROTO.finalBytes -= e.bytes; }
+}
+const rotoLru = (m, k) => { const v = m.get(k); if (v !== undefined) { m.delete(k); m.set(k, v); } return v; };
+// the grid picture the kernel reads: rgb the decontaminated edge colour of each partly see-through pixel (or the
+// map), a the matte (kept for the last few frames shown)
+function rotoRGBA(fin, view) {
+  const id = fin.key + (view ? 'm' : 'c'), had = rotoLru(ROTO.rgba, id); if (had) return had;
+  const n = fin.w * fin.h, o = new Uint8Array(n * 4), { a8, idx, col, map } = fin;
+  for (let i = 0; i < n; i++) o[i * 4 + 3] = a8[i];
+  for (let k = 0; k < idx.length; k++) { const i = idx[k] * 4; if (view) o[i] = o[i + 1] = o[i + 2] = map[k]; else { o[i] = col[k * 3]; o[i + 1] = col[k * 3 + 1]; o[i + 2] = col[k * 3 + 2]; } }
+  ROTO.rgba.set(id, o); while (ROTO.rgba.size > 4) ROTO.rgba.delete(ROTO.rgba.keys().next().value);
+  return o;
+}
+function rotoApply(E, img, G, fin, view, decon) {
+  if (fin.w !== G.gw || fin.h !== G.gh) return img;
+  const tex = E.texFrom8(rotoRGBA(fin, view), G.gw, G.gh);
+  return E.run('lumina_roto', 'lr_apply', fxP({ 0: [view ? 1 : 0, 0, G.gw, G.gh], 1: [decon ? 1 : 0, 0, 0, 0] }, { 0: G.M[0], 1: G.M[1] }), img, tex);
+}
+// ---- the work: the frame on screen first, then anything queued; one frame's segmentation (or final matte) at a time
+// a job: { L, f, g, C, G, mp, fk, final (the matte, not only the segmentation), frozen, done() }
+function rotoWant(job) {
+  const w = ROTO.want;
+  if (!w || w.fk !== job.fk || w.f !== job.f || w.final !== job.final || w.g !== job.g) ROTO.want = job;
+  rotoPump();
+}
+const rotoQueued = () => ROTO.want || ROTO.queue.length;
+async function rotoPump() {
+  if (ROTO.busy) return; ROTO.busy = true;
+  try {
+    for (;;) {
+      const job = ROTO.want || ROTO.queue[0]; if (!job) break;
+      let done = false;
+      try { done = await rotoWork(job); } catch (e) { console.warn('roto:', e); ROTO.errors++; done = true; job.failed = String(e.message || e); }
+      if (done) {
+        if (ROTO.want === job) ROTO.want = null; else ROTO.queue = ROTO.queue.filter(x => x !== job);
+        job.done?.(job);
+      }
+    }
+  } finally { ROTO.busy = false; }
+}
+// the next piece of work for a job; true once it is finished
+async function rotoWork(job) {
+  const { L, f, C } = job;
+  if (!S.layers.includes(L) || !L.fx?.includes(f) || f.roto !== C.d) return true;   // the strokes changed: the job is stale
+  if (job.frozen) return rotoFinalFrozen(job);
+  for (const g of job.final ? rotoFrames(C, job.g, job.mp) : [job.g]) {
+    const k = C.keys.get(g); if (!k) continue;
+    if (ROTO.have.has(k)) continue;
+    // the frames on the way: from the nearest one the worker already has (or the base frame) out to g
+    const path = [g]; let x = g;
+    for (;;) { const s = C.src(x); if (s == null) break; if (ROTO.have.has(C.keys.get(s))) break; path.push(s); x = s; }
+    await rotoStep(job, path[path.length - 1]);
+    return false;
+  }
+  // (Freeze also needs the Refine Edge band, which a matte made for the screen leaves out)
+  if (!job.final || (ROTO.final.has(job.fk) && (!job.band || ROTO.final.get(job.fk).b8))) return true;
+  const nb = rotoFrames(C, job.g, job.mp), k = C.keys.get(job.g), prevKey = nb.includes(job.g - 1) ? C.keys.get(job.g - 1) : null, nextKey = nb.includes(job.g + 1) ? C.keys.get(job.g + 1) : null;
+  const ask = img => rotoCall('final', { key: k, prevKey, nextKey, mp: job.mp, rr: C.rr, scale: job.G.gs, img, wantBand: !!job.band }, img ? [img.d.buffer] : []);
+  let r = await ask(null);
+  if (r.need === 'img') { const img = await rotoGrab(job, job.g); if (!img) return true; r = await ask(img); }
+  if (r.need === 'seg') { ROTO.have.delete(k); return false; }
+  if (r.error) throw new Error(r.error);
+  rotoFinalPut(job.fk, { key: job.fk, w: r.w, h: r.h, a8: r.a8, idx: r.idx, col: r.col, map: r.map, b8: r.b8 });
+  return true;
+}
+// one frame's segmentation: the root cut from its strokes, or carried on from its neighbour towards the base
+async function rotoStep(job, g) {
+  const { C } = job, key = C.keys.get(g), s = C.src(g), prevKey = s == null ? null : C.keys.get(s), root = s == null;
+  const send = (img, prevImg) => rotoCall('step', { key, prevKey, root, strokes: C.at[g] || [], opts: C.opts, rr: C.rr, img, prevImg },
+    [img?.d.buffer, prevImg?.d.buffer].filter(Boolean));
+  const img = await rotoGrab(job, g); if (!img) { job.failed = 'the frame could not be read'; return; }
+  let r = await send(img, null);
+  if (r.need === 'prev') { const p = await rotoGrab(job, s); if (!p) return; r = await send(null, p); }
+  if (r.need === 'img') { const i2 = await rotoGrab(job, g); if (!i2) return; r = await send(i2, null); }
+  if (r.need === 'seg') { ROTO.have.delete(prevKey); return; }
+  if (r.error) throw new Error(r.error);
+  if (r.ok) {
+    ROTO.have.add(key); for (const k of r.evicted || []) ROTO.have.delete(k);
+    ROTO.outline.set(key, { o: r.outline, band: r.band, gs: C.opts.scale, area: r.area });
+    while (ROTO.outline.size > 600) ROTO.outline.delete(ROTO.outline.keys().next().value);
+  }
+}
+// the effect's input at layer frame g on the grid: the layer painted at that moment and the effects before this one
+// run (fxApply in grab mode stops at this effect). Video frames are decoded first.
+async function rotoGrab(job, g) {
+  const { L, f } = job, T = rotoTime(L, g);
+  if (L.kind === 'video' && L.media) for (let i = 0; i < 40 && !vfFrame(L, srcTime(L, T)); i++) { await vfSettle(); await new Promise(r => setTimeout(r, 15)); }
+  await fxWarm(f.id); await fxWarmUsed();
+  const r = RT[L.id] || (ensureRT(L), RT[L.id]) || (RT[L.id] = {}), keep = { m: r.m, box: r.box }, at = VF_AT, rt = renderT, lc = layerCanvas('rotograb');
+  ROTO.grab = { uid: f.uid, out: null };
+  VF_AT = T; renderT = T;
+  try { paintLayer(L, T, lc.cx); fxApply(L, T, lc); }
+  finally { VF_AT = at; renderT = rt; r.m = keep.m; r.box = keep.box; }
+  const out = ROTO.grab.out; ROTO.grab = null;
+  return out;
+}
+// a frozen frame's final matte: the frozen alpha, with the edge colours decontaminated again (that needs the picture)
+async function rotoFinalFrozen(job) {
+  if (ROTO.final.has(job.fk)) return true;
+  const fr = job.frozen, img = await rotoGrab(job, job.g); if (!img) return true;
+  const r = await rotoCall('final', { key: 'frozen:' + job.fk, frozen: { a: fr.a, b: fr.b }, mp: job.mp, rr: job.C.rr, scale: job.G.gs, img }, [img.d.buffer]);
+  if (r.error) throw new Error(r.error);
+  rotoFinalPut(job.fk, { key: job.fk, w: r.w, h: r.h, a8: r.a8, idx: r.idx, col: r.col, map: r.map });
+  return true;
+}
+// ---- Freeze: every frame's final matte and Refine Edge band kept in the project (run-length coded, base64)
+function rotoRLE(a) {
+  const out = []; for (let i = 0; i < a.length;) { const v = a[i]; let n = 1; while (i + n < a.length && a[i + n] === v && n < 65535) n++; out.push(n & 255, n >> 8, v); i += n; }
+  let s = ''; const b = Uint8Array.from(out); for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+  return btoa(s);
+}
+function rotoUnRLE(str, n) {
+  const b = Uint8Array.from(atob(str), c => c.charCodeAt(0)), o = new Uint8Array(n); let k = 0;
+  for (let i = 0; i + 2 < b.length && k < n; i += 3) { const run = b[i] | b[i + 1] << 8; o.fill(b[i + 2], k, Math.min(n, k + run)); k += run; }
+  return o;
+}
+// what the frozen mattes depend on: every chain key and the matte settings (frozen_key)
+const rotoFrozenKey = (C, mp) => rotoHash([...C.keys.entries()].sort((a, b) => a[0] - b[0]).map(e => e.join(':')).join(',') + JSON.stringify(mp));
+function rotoFrozenAt(f, C, mp, g, G) {
+  const F = f.frozen && ROTO.frozen[f.frozen]; if (!F || F.w !== G.gw || F.h !== G.gh || F.key !== rotoFrozenKey(C, mp)) return null;
+  const fr = F.frames[g]; if (!fr) return null;
+  const n = F.w * F.h; return fr.dec || (fr.dec = { a: rotoUnRLE(fr.a, n), b: rotoUnRLE(fr.b, n) });
+}
+// plan mode: a render at frame g that only works out what that frame needs (the same code path as the screen)
+async function rotoPlan(L, f, g, final, band) {
+  ROTO.plan = { uid: f.uid, job: null, final, band };
+  const r = RT[L.id] || (ensureRT(L), RT[L.id]) || (RT[L.id] = {}), keep = { m: r.m, box: r.box }, at = VF_AT, rt = renderT, T = rotoTime(L, g), lc = layerCanvas('rotoplan');
+  VF_AT = T; renderT = T;
+  try { await fxWarm(f.id); await fxWarmUsed(); paintLayer(L, T, lc.cx); fxApply(L, T, lc); }
+  finally { VF_AT = at; renderT = rt; r.m = keep.m; r.box = keep.box; }
+  const job = ROTO.plan.job; ROTO.plan = null; return job;
+}
+// every frame of the span worked out (Work out every frame, Freeze, export): resolves with the jobs once all are done
+async function rotoAll(L, f, { final = true, band = false, progress } = {}) {
+  const d = f.roto; if (rotoEmpty(d)) return [];
+  const jobs = [];
+  for (let g = d.span[0]; g <= d.span[1]; g++) {
+    const job = await rotoPlan(L, f, g, final, band); if (!job) continue;
+    jobs.push(new Promise(res => { job.done = res; ROTO.queue.push(job); }));
+  }
+  rotoPump();
+  let n = 0; return Promise.all(jobs.map(p => p.then(j => { progress?.(++n, jobs.length); return j; })));
+}
+async function rotoFreeze(L, f) {
+  if (rotoEmpty(f.roto)) return toast('Paint over the object with the Roto Brush first.');
+  f.frozen = null; ROTO.status = 'Freezing…'; inspector();
+  const jobs = await rotoAll(L, f, { band: true, progress: (n, m) => { ROTO.status = `Freezing… ${n} of ${m} frames`; } });
+  const frames = {}; let size = null, key = null;
+  for (const j of jobs) {
+    const fin = ROTO.final.get(j.fk); if (!fin || !fin.b8) continue;
+    frames[j.g] = { a: rotoRLE(fin.a8), b: rotoRLE(fin.b8) }; size = [fin.w, fin.h]; key = rotoFrozenKey(j.C, j.mp);
+  }
+  ROTO.status = '';
+  if (!size) { inspector(); return toast('Nothing to freeze yet.'); }
+  const id = 'rf' + f.uid + '_' + Date.now().toString(36);
+  ROTO.frozen[id] = { key, w: size[0], h: size[1], frames }; f.frozen = id; commit(); inspector();
+  notice(`Froze ${Object.keys(frames).length} frames of the Roto Brush matte. They are kept in the project.`);
+}
+// export: every Roto Brush frame in the video worked out before recording starts
+async function rotoWarmAll() {
+  for (const L of S.layers) for (const f of L.fx || []) if (f.id === 'rotobrush' && f.on !== false && !rotoEmpty(f.roto)) {
+    notice('Roto Brush: working out the mattes before exporting…');
+    await rotoAll(L, f, { progress: (n, m) => { ROTO.status = `Working out the Roto Brush mattes: ${n} of ${m}`; } });
+    ROTO.status = '';
+  }
+}
+// ---- the strokes (roto.stroke): the first foreground or background stroke sets the base frame and a span of 20
+// frames each side; later strokes outside the span stretch it. Points and radius in layer pixels
+function rotoAddStroke(L, f, s, g) {
+  if (f.frozen) { toast('This Roto Brush is frozen. Unfreeze it to paint again.'); return false; }
+  const d = f.roto ? { ...f.roto, span: [...f.roto.span], strokes: [...f.roto.strokes] } : { base: null, span: [g, g], strokes: [] }, [lo, hi] = rotoLimits(L);
+  if (d.base == null) { if (rotoSegKind(s.k)) { d.base = g; d.span = [Math.max(lo, g - ROTO_SPAN), Math.max(g, Math.min(hi, g + ROTO_SPAN))]; } }
+  else d.span = [Math.min(d.span[0], g), Math.max(d.span[1], g)];
+  d.strokes.push({ k: s.k, f: g, r: +s.r.toFixed(2), p: s.p.map(p => [+p[0].toFixed(2), +p[1].toFixed(2)]) });
+  f.roto = d; return true;
+}
 // ---- Round 30 helpers (Audio-driven): EffectCraft's generate3/audio.rs (the FFT, the audio window, the baseline, the
 //      marks) and fx_gen2.rs's marks (fg2_segs coverage, a hard core and a soft halo, through fg2_marks) ----
 const AUDIO_K = [['fx_gen2', 'fg2_segs'], ['fx_gen2', 'fg2_marks'], ['kernels', 'fill']];
@@ -8137,6 +8399,65 @@ const FX = {
       if (disp === 1) fxPolySegs(pts, false, r, 1, segs); else if (disp === 2) for (const p of pts) segs.push([p[0], p[1], p[0], p[1], r, 1]);
       return auMarks(E, img, q, segs, thick, soft);
     } },
+  // ---- Round 31: Roto Brush & Refine Edge (EffectCraft's crates/effects/src/roto.rs; the classic engine of
+  //      track/src/roto.rs, run in workers/roto.js). Paint over the object on the preview (the Roto Brush tool); the
+  //      first stroke sets the base frame and a span of 20 frames each side, and each frame's matte is carried on from
+  //      its neighbour towards the base. Outside the span the layer is see-through; with no strokes it passes through.
+  rotobrush: { name: 'Roto Brush & Refine Edge', cat: 'Matte', kernels: ROTO_K, params: [
+      { id: 'tool', type: 'btn', text: 'Paint on the preview', label: f => ROTO.tool?.uid === f.uid && ROTO.tool.mode === 'roto' ? 'Roto Brush: painting (Esc ends)' : 'Roto Brush tool',
+        act(L, f) { rotoTool(L, f, 'roto'); } },
+      { id: 'refineTool', type: 'btn', text: 'Paint soft edges', label: f => ROTO.tool?.uid === f.uid && ROTO.tool.mode === 'refine' ? 'Refine Edge: painting (Esc ends)' : 'Refine Edge tool',
+        act(L, f) { rotoTool(L, f, 'refine'); } },
+      { id: 'spanStart', type: 'btn', text: 'Start at playhead', label: f => rotoEmpty(f.roto) ? 'Span: paint a stroke first' : `Span: layer frames ${f.roto.span[0]}–${f.roto.span[1]} (base frame ${f.roto.base})`,
+        act(L, f) { rotoSetSpan(L, f, 0); } },
+      { id: 'spanEnd', type: 'btn', text: 'End at playhead', label: 'Span end', act(L, f) { rotoSetSpan(L, f, 1); } },
+      { id: 'propagate', type: 'btn', text: 'Work out every frame', label: 'Frames in the span', act(L, f) { rotoPropagate(L, f); } },
+      { id: 'freeze', type: 'btn', text: f => f.frozen ? 'Unfreeze' : 'Freeze', label: f => f.frozen ? 'Frozen: the mattes are kept in the project' : 'Freeze the mattes',
+        act(L, f) { if (f.frozen) { f.frozen = null; commit(); inspector(); } else rotoFreeze(L, f); } },
+      { id: 'clearStrokes', type: 'btn', text: 'Remove all strokes', label: f => `Strokes: ${f.roto?.strokes?.length || 0}`,
+        act(L, f) { if (f.frozen) return toast('This Roto Brush is frozen. Unfreeze it first.'); f.roto = null; commit(); inspector(); } },
+      { id: 'quality', label: 'Quality', type: 'pick', def: 0, opts: [[0, 'Standard'], [1, 'Best']] },
+      { id: 'searchRadius', label: 'Search radius', def: 15, min: 0, max: 100, dec: 1 },
+      { id: 'motionThreshold', label: 'Motion threshold', def: 10, min: 0, max: 100, dec: 0 },
+      { id: 'motionDamping', label: 'Motion damping', def: 20, min: 0, max: 100, dec: 0 },
+      { id: 'viewSearch', label: 'View search region', type: 'check', def: false },
+      { id: 'rbFeather', label: 'Roto Brush matte: feather', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'rbContrast', label: 'Roto Brush matte: contrast', def: 0, min: 0, max: 100, dec: 0 },
+      { id: 'rbShift', label: 'Roto Brush matte: shift edge', def: 0, min: -100, max: 100, dec: 0 },
+      { id: 'rbChatter', label: 'Roto Brush matte: reduce chatter', def: 0, min: 0, max: 100, dec: 0 },
+      { id: 'smooth', label: 'Refine Edge: smooth', def: 1, min: 0, max: 100, dec: 1 },
+      { id: 'reFeather', label: 'Refine Edge: feather', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'reContrast', label: 'Refine Edge: contrast', def: 0, min: 0, max: 100, dec: 0 },
+      { id: 'reShift', label: 'Refine Edge: shift edge', def: 0, min: -100, max: 100, dec: 0 },
+      { id: 'reChatter', label: 'Refine Edge: reduce chatter', def: 0, min: 0, max: 100, dec: 0 },
+      { id: 'motionBlur', label: 'Use motion blur', type: 'check', def: false },
+      { id: 'mbSamples', label: 'Motion blur samples', def: 11, min: 1, max: 64, dec: 0 },
+      { id: 'shutterAngle', label: 'Shutter angle', def: 180, min: 0, max: 720, dec: 0 },
+      { id: 'higherQuality', label: 'Higher quality', type: 'check', def: true },
+      { id: 'decontaminate', label: 'Decontaminate edge colors', type: 'check', def: true },
+      { id: 'deconAmount', label: 'Decontamination amount', def: 100, min: 0, max: 100, dec: 0 },
+      { id: 'extendSmoothed', label: 'Extend where smoothed', type: 'check', def: true },
+      { id: 'deconRadius', label: 'Increase decontamination radius', def: 0, min: 0, max: 100, dec: 1 },
+      { id: 'viewMap', label: 'View decontamination map', type: 'check', def: false }],
+    run(E, img, q) {
+      const f = E.fx, L = E.L, G = rotoGrid(E); if (!G) return img;
+      // grab mode (the worker wants this frame's input): read it and stop
+      if (ROTO.grab?.uid === f.uid) { ROTO.grab.out = rotoRead(E, img, G); E.stop = true; return img; }
+      const d = f.roto, plan = ROTO.plan?.uid === f.uid ? ROTO.plan : null;
+      if (rotoEmpty(d)) { if (plan) E.stop = true; return img; }
+      const g = rotoFrame(L, E.T), tool = !plan && E.depth === 0 && ROTO.tool?.uid === f.uid && !ROTO.tool.result;
+      if (!rotoInSpan(d, g)) { if (plan) E.stop = true; return tool ? img : E.clear(img); }
+      const C = rotoChain(E, q, f, G), mp = rotoMP(q), fk = rotoFinalKey(C, g, mp), frozen = f.frozen ? rotoFrozenAt(f, C, mp, g, G) : null;
+      const job = { L, f, g, C, G, mp, fk: frozen ? 'F' + fk : fk, final: !tool, frozen };
+      if (plan) { Object.assign(job, { final: plan.final, band: plan.band }); plan.job = job; E.stop = true; return img; }
+      if (E.depth === 0) ROTO.last[f.uid] = job;
+      // painting: the whole layer, with the matte's edge drawn over it on the preview
+      if (tool) { rotoWant(job); return img; }
+      let fin = rotoLru(ROTO.final, job.fk);
+      if (!fin && frozen && !mp.decontaminate) fin = { key: job.fk, w: G.gw, h: G.gh, a8: frozen.a, idx: new Uint32Array(0), col: new Uint8Array(0), map: new Uint8Array(0) };
+      if (!fin) { rotoWant(job); return img; }
+      return rotoApply(E, img, G, fin, q('viewMap'), mp.decontaminate);
+    } },
   // ---- Round 29: Utility & Text (EffectCraft's utility.rs, utility2.rs, ocio/ (Color Profile Converter) and textfx.rs:
   //      Grow Bounds, CC Overbrights, HDR Highlight Compression, HDR Compander, Cineon Converter, Color Profile
   //      Converter, Apply Color LUT, Numbers, Timecode) ----
@@ -10200,7 +10521,7 @@ function fxPanel(L) {
         <canvas class="curvebox" data-fxi="${i}" data-fxk="${d.id}" title="Drag a point to move it, click to add one, double-click a point to remove it"></canvas>
         <div class="frow"><label for="${id}">Points</label><input id="${id}" type="text" data-fxi="${i}" data-fxk="${d.id}" value="${esc(curveStr(L, f, d))}" spellcheck="false"></div></div>`;
       if (d.type === 'text') return `<div class="frow"><label for="${id}">${d.label}</label><input id="${id}" type="text" data-fxi="${i}" data-fxk="${d.id}" value="${esc(v ?? '')}" spellcheck="false"></div>`;
-      if (d.type === 'btn') return `<div class="frow"><label>${esc(typeof d.label === 'function' ? d.label(f) : d.label)}</label><button data-act="fxbtn" data-fx="${i}" data-k="${d.id}">${esc(d.text)}</button></div>`;
+      if (d.type === 'btn') return `<div class="frow"><label>${esc(typeof d.label === 'function' ? d.label(f) : d.label)}</label><button data-act="fxbtn" data-fx="${i}" data-k="${d.id}">${esc(typeof d.text === 'function' ? d.text(f) : d.text)}</button></div>`;
       if (d.type === 'check') return `<div class="frow"><label for="${id}">${d.label}</label><label><input id="${id}" type="checkbox" data-fxi="${i}" data-fxk="${d.id}"${v ? ' checked' : ''}> On</label></div>`;
       return `<div class="frow"><label for="${id}">${d.label}</label><input id="${id}" type="color" data-fxi="${i}" data-fxk="${d.id}" value="${v}"></div>`;
     }).join('');
@@ -11470,7 +11791,7 @@ function drawLoadingNote() {
 }
 function drawOverlay() {
   octx.setTransform(1, 0, 0, 1, 0, 0); octx.clearRect(0, 0, ov.width, ov.height);
-  drawBookmarkNotes(); drawLoadingNote();
+  drawBookmarkNotes(); drawLoadingNote(); drawRotoNote();
   if (CROP) { drawCrop(); return; }
   const L = selLayer(), r = L && RT[L.id];
   if (!r || !r.m || S.exporting) return;
@@ -11488,6 +11809,7 @@ function drawOverlay() {
     maskPath(octx, L, S.time, w, h, true); octx.stroke(); octx.setLineDash([]);
   }
   drawTracks(L);
+  rotoOverlay(L);
 }
 function compPoint(e) {
   const r = ov.getBoundingClientRect();
@@ -11526,6 +11848,126 @@ ov.addEventListener('wheel', e => {
   syncInspector(true);
   clearTimeout(wheelT); wheelT = setTimeout(() => { commit(); buildTimeline(); }, 400);
 }, { passive: false });
+// ---- Round 31: the Roto Brush and Refine Edge tools on the preview (EffectCraft's ui-egui roto_tool.rs: green
+// foreground strokes, Alt for red background strokes, Refine Edge strokes along soft edges, the matte's edge in pink) ----
+function rotoMenu() {
+  const L = selLayer();
+  if (!L || !['video', 'image', 'text', 'shape'].includes(L.kind) && !L.media) return toast('Select a video or picture layer first.');
+  let f = L.fx?.find(x => x.id === 'rotobrush');
+  if (!f) { f = addFX(L, 'rotobrush'); commit(); }
+  setRightTab('fx'); rotoTool(L, f, 'roto', true);
+}
+function rotoTool(L, f, mode, keep) {
+  if (!keep && ROTO.tool?.uid === f.uid && ROTO.tool.mode === mode) return rotoToolEnd();
+  if (f.frozen) return toast('This Roto Brush is frozen. Unfreeze it to paint again.');
+  S.sel = L.id; pause();
+  ROTO.tool = { lid: L.id, uid: f.uid, mode, size: ROTO.tool?.size || 25, result: false, stroke: null, hover: null };
+  rotoBarUI(); refresh();
+  notice(mode === 'roto' ? 'Paint over the object. Hold Alt to paint what isn’t part of it. Ctrl+drag changes the brush size. Esc ends.'
+    : 'Paint along soft edges such as hair or fur. Hold Alt to take some away. Esc ends.');
+}
+function rotoToolEnd() { if (!ROTO.tool) return; ROTO.tool = null; rotoBarUI(); refresh(); }
+function rotoBarUI() {
+  const t = ROTO.tool; $('#rotoBar').hidden = !t; ov.style.cursor = t ? 'none' : '';
+  if (t) { $('#rotoSize').value = Math.round(t.size); $('#rotoSizeN').textContent = Math.round(t.size); $('#rotoMode').value = t.mode; $('#rotoResult').checked = !!t.result; }
+}
+$('#rotoMode').onchange = e => { if (ROTO.tool) { ROTO.tool.mode = e.target.value; inspector(); } e.target.blur(); };
+$('#rotoSize').oninput = e => { if (ROTO.tool) { ROTO.tool.size = +e.target.value; $('#rotoSizeN').textContent = e.target.value; } };
+$('#rotoResult').onchange = e => { if (ROTO.tool) ROTO.tool.result = e.target.checked; e.target.blur(); };
+$('#rotoDone').onclick = () => { rotoToolEnd(); inspector(); };
+// the span's start or end at the playhead (the base frame stays inside it)
+function rotoSetSpan(L, f, end) {
+  const d = f.roto; if (rotoEmpty(d)) return toast('Paint over the object with the Roto Brush first.');
+  if (f.frozen) return toast('This Roto Brush is frozen. Unfreeze it first.');
+  const [lo, hi] = rotoLimits(L), g = clamp(rotoFrame(L, S.time), lo, hi), span = [...d.span];
+  if (end) span[1] = Math.max(g, d.base); else span[0] = Math.min(g, d.base);
+  f.roto = { ...d, span }; commit(); inspector();
+}
+async function rotoPropagate(L, f) {
+  if (rotoEmpty(f.roto)) return toast('Paint over the object with the Roto Brush first.');
+  const jobs = await rotoAll(L, f, { progress: (n, m) => { ROTO.status = `Roto Brush: ${n} of ${m} frames worked out`; } });
+  ROTO.status = ''; notice(`Roto Brush: ${jobs.length} frames worked out.`);
+}
+const rotoToolFx = () => { const t = ROTO.tool, L = t && byId(t.lid); return L && { L, f: L.fx?.find(x => x.uid === t.uid) }; };
+function rotoLayerPt(L, pt) {
+  const r = RT[L.id], q = r.m.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
+  return [q.x + r.box.w / 2, q.y + r.box.h / 2];
+}
+ov.addEventListener('pointerdown', e => {
+  const t = ROTO.tool; if (!t || e.button !== 0) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  const o = rotoToolFx(); if (!o?.f || !RT[o.L.id]?.m) return;
+  if (e.ctrlKey || e.metaKey) t.resize = { x: e.clientX, size: t.size };
+  else t.stroke = { k: t.mode === 'roto' ? (e.altKey ? 'bg' : 'fg') : (e.altKey ? 'erase' : 'refine'), r: t.size, p: [rotoLayerPt(o.L, compPoint(e))] };
+  try { ov.setPointerCapture(e.pointerId); } catch { }
+}, true);
+ov.addEventListener('pointermove', e => {
+  const t = ROTO.tool; if (!t) return;
+  e.stopImmediatePropagation(); t.hover = compPoint(e);
+  const o = rotoToolFx(); if (!o?.f || !RT[o.L.id]?.m) return;
+  if (t.resize) { const k = W() / ov.getBoundingClientRect().width / (Math.hypot(RT[o.L.id].m.a, RT[o.L.id].m.b) || 1); t.size = clamp(t.resize.size + (e.clientX - t.resize.x) * k, 2, 400); rotoBarUI(); return; }
+  if (t.stroke) {
+    const p = rotoLayerPt(o.L, t.hover), last = t.stroke.p[t.stroke.p.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= Math.max(1, t.stroke.r / 4)) t.stroke.p.push(p);
+  }
+}, true);
+ov.addEventListener('pointerup', e => {
+  const t = ROTO.tool; if (!t) return;
+  e.stopImmediatePropagation();
+  if (t.resize) { t.resize = null; return; }
+  const s = t.stroke; t.stroke = null; if (!s) return;
+  const o = rotoToolFx(); if (!o?.f) return;
+  if (rotoAddStroke(o.L, o.f, s, rotoFrame(o.L, S.time))) { commit(); inspector(); }
+}, true);
+ov.addEventListener('pointerleave', () => { if (ROTO.tool) ROTO.tool.hover = null; });
+// the overlay: this frame's strokes, the matte's edge (pink), the Refine Edge band (cyan), the search region, the brush
+function rotoOverlay(L) {
+  const k = ov.width / W(), r = RT[L.id]; if (!r?.m) return;
+  for (const f of L.fx || []) {
+    if (f.id !== 'rotobrush' || f.on === false) continue;
+    const t = ROTO.tool?.uid === f.uid ? ROTO.tool : null, job = ROTO.last[f.uid], g = rotoFrame(L, S.time);
+    const viewSearch = !!f.viewSearch;
+    if (!t && !viewSearch) continue;
+    const layerM = new DOMMatrix().scale(k, k).multiply(r.m).translate(-r.box.w / 2, -r.box.h / 2), lsc = Math.hypot(layerM.a, layerM.b) || 1;
+    // the strokes painted on this frame, faint
+    if (t) for (const s of f.roto?.strokes || []) if (s.f === g) rotoDrawStroke(layerM, lsc, s, .22);
+    const o = job && job.L === L && job.g === g && ROTO.outline.get(job.C.keys.get(g));
+    if (o) {
+      const gm = DOMMatrix.fromMatrix(layerM).scale(1 / o.gs, 1 / o.gs), gsc = lsc / o.gs;
+      octx.save(); octx.setTransform(gm);
+      const path = segs => { octx.beginPath(); for (let i = 0; i < segs.length; i += 4) { octx.moveTo(segs[i], segs[i + 1]); octx.lineTo(segs[i + 2], segs[i + 3]); } };
+      if (viewSearch) { path(o.o); octx.lineWidth = 2 * Math.max(1, job.C.opts.searchRadius * o.gs); octx.strokeStyle = 'rgba(255,214,64,.28)'; octx.stroke(); }
+      if (o.band) { path(o.band); octx.lineWidth = 1.5 / gsc; octx.strokeStyle = '#4fd8ff'; octx.stroke(); }
+      path(o.o); octx.lineWidth = 2 / gsc; octx.strokeStyle = '#ff4fa3'; octx.stroke();
+      octx.restore();
+    }
+    if (t?.stroke) rotoDrawStroke(layerM, lsc, t.stroke, .55);
+    if (t?.hover) {
+      octx.save(); octx.setTransform(layerM); const p = rotoLayerPt(L, t.hover);
+      octx.beginPath(); octx.arc(p[0], p[1], t.size, 0, Math.PI * 2); octx.lineWidth = 1.5 / lsc;
+      octx.strokeStyle = t.mode === 'refine' ? '#4fd8ff' : '#5be37a'; octx.stroke();
+      octx.beginPath(); octx.moveTo(p[0] - 4 / lsc, p[1]); octx.lineTo(p[0] + 4 / lsc, p[1]); octx.moveTo(p[0], p[1] - 4 / lsc); octx.lineTo(p[0], p[1] + 4 / lsc); octx.stroke();
+      octx.restore();
+    }
+  }
+}
+const ROTO_INK = { fg: '60,220,100', bg: '240,70,70', refine: '80,200,255', erase: '170,120,255' };
+function rotoDrawStroke(m, sc, s, a) {
+  octx.save(); octx.setTransform(m); octx.strokeStyle = `rgba(${ROTO_INK[s.k]},${a})`; octx.fillStyle = octx.strokeStyle;
+  octx.lineWidth = 2 * s.r; octx.lineCap = octx.lineJoin = 'round'; octx.beginPath();
+  if (s.p.length === 1) { octx.arc(s.p[0][0], s.p[0][1], s.r, 0, Math.PI * 2); octx.fill(); }
+  else { octx.moveTo(s.p[0][0], s.p[0][1]); for (const p of s.p.slice(1)) octx.lineTo(p[0], p[1]); octx.stroke(); }
+  octx.restore();
+}
+// "Roto Brush: working…" at the bottom left while frames are being worked out (above "Loading video…")
+function drawRotoNote() {
+  if (S.exporting || !(ROTO.busy || rotoQueued())) return;
+  const k = ov.width / 960, txt = ROTO.status || 'Roto Brush: working out the matte…';
+  octx.font = `600 ${Math.round(13 * k)}px system-ui, sans-serif`;
+  const w = octx.measureText(txt).width + 22 * k, h = 26 * k, x = 10 * k, y = ov.height - 2 * h - 16 * k;
+  octx.fillStyle = 'rgba(0,0,0,.65)'; octx.beginPath(); octx.roundRect(x, y, w, h, h / 2); octx.fill();
+  octx.fillStyle = '#ff9ccc'; octx.textBaseline = 'middle'; octx.fillText(txt, x + 11 * k, y + h / 2);
+}
 // ---------- motion tracking ----------
 // Tracks live on the video layer, in source-video coordinates (u, v in 0..1) against source time,
 // so trimming, moving or scaling the clip later keeps everything attached in the right place.
@@ -13793,6 +14235,7 @@ async function startExport(fmt = 'mp4') {
   pause(); audioInit(); await AC.resume().catch(() => {});
   await fxWarmAll();   // every effect's GPU kernels built before the first frame is recorded
   await auWarmAll();   // and the sound Audio Spectrum / Audio Waveform follow, decoded
+  await rotoWarmAll();   // and every Roto Brush frame's matte worked out
   const stream = canvas.captureStream(S.fps);
   recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
   const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.max(W(), H()) >= 1900 ? 16e6 : 8e6 });
@@ -13866,6 +14309,12 @@ function markDirty(v = true) {
   if (PROJ.dirty === v) return;
   PROJ.dirty = v; updateTitle(); window.lumina?.setDirty(v);
 }
+// the frozen Roto Brush mattes the layers use (their decoded copies left out)
+function rotoFrozenSave() {
+  const out = {};
+  for (const L of S.layers) for (const f of L.fx || []) { const F = f.frozen && ROTO.frozen[f.frozen]; if (F) out[f.frozen] = { key: F.key, w: F.w, h: F.h, frames: Object.fromEntries(Object.entries(F.frames).map(([g, v]) => [g, { a: v.a, b: v.b }])) }; }
+  return out;
+}
 function projectJSON() {
   const media = {};
   for (const id of new Set(S.layers.flatMap(L => [L.media, L.texMedia]).filter(Boolean))) {
@@ -13879,7 +14328,7 @@ function projectJSON() {
       if (l.dmin && (l.dmin.some(v => v !== 0) || l.dmax.some(v => v !== 1))) Object.assign(o, { dmin: l.dmin, dmax: l.dmax });
       if (l.raw && l.raw.some((v, i) => Math.abs(v - l.data[i]) > 1e-6)) o.raw = Array.from(l.raw, v => +v.toFixed(5));
     }
-  return JSON.stringify({ app: 'Lumina', version: 1, comp: { w: W(), h: H(), fps: S.fps }, uid, time: S.time, layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, media, luts });
+  return JSON.stringify({ app: 'Lumina', version: 1, comp: { w: W(), h: H(), fps: S.fps }, uid, time: S.time, layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, media, luts, rotoFrozen: rotoFrozenSave() });
 }
 async function saveProject(saveAs = false) {
   if (!window.lumina) { toast('Saving projects works in the Lumina desktop app.'); return false; }
@@ -13930,6 +14379,7 @@ async function openProject(filePath) {
     const data = l.data ? Float32Array.from(l.data) : null;
     LUTS[id] = { name: l.name, N: l.N || 0, data, n1: l.n1 || 0, d1: Float32Array.from(l.d1 || []), dmin: l.dmin || [0, 0, 0], dmax: l.dmax || [1, 1, 1], raw: l.raw ? Float32Array.from(l.raw) : data };
   }
+  Object.assign(ROTO.frozen, d.rotoFrozen || {});
   canvas.width = d.comp.w; canvas.height = d.comp.h; S.fps = d.comp.fps;
   syncRes(); CROP = null; cropUI();
   $('#fps').value = String(d.comp.fps);
@@ -14032,6 +14482,8 @@ new ResizeObserver(fitPreview).observe(vp);
 document.addEventListener('keydown', e => {
   if (e.target.matches('input[type=text], input[type=number], textarea') || S.exporting) return;
   if (CROP && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); endCrop(e.key === 'Enter'); return; }
+  if (e.key === 'Escape' && ROTO.tool) { rotoToolEnd(); inspector(); return; }
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); rotoMenu(); return; }
   if (e.key === 'Escape' && (trackMode || picking || wbPick)) { trackMode = null; picking = false; wbPick = false; inspector(); return; }
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -15361,7 +15813,8 @@ const MENUS = {
     ['Keyframe position', 'K', () => keyPosition(), !!selLayer()],
     ['Show keyframe lanes', '', () => action('klanes'), Object.keys(selLayer()?.keys || {}).length > 0, KOPEN.has(selLayer()?.id)],
     ['Separate audio', '', () => separateAudio(selLayer()), selLayer()?.kind === 'video' && !selLayer().freeze && !linkMate(selLayer())],
-    ['Show / hide layer', '', () => { const L = selLayer(); L.visible = !L.visible; commit(); refresh(); }, !!selLayer()]],
+    ['Show / hide layer', '', () => { const L = selLayer(); L.visible = !L.visible; commit(); refresh(); }, !!selLayer()], '-',
+    ['Roto Brush', 'Alt+W', rotoMenu, !!selLayer() && selLayer().kind !== 'audio']],
   Effect: () => [['Effect Controls', '', () => setRightTab('fx'), true, PANELS.props && RTAB === 'fx'],
     ['Effects & Presets', '', () => { if (!PANELS.project) { PANELS.project = true; applyPanels(); } setLeftTab('fxp'); }, true, PANELS.project && LTAB === 'fxp'], '-',
     ['Remove all effects', '', () => { const L = selLayer(); while (L.fx?.length) delFX(L, 0); commit(); refresh(); }, !!selLayer()?.fx?.length]],
