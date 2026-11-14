@@ -2197,22 +2197,27 @@ function makeLut(fn, N = 17) {
   }
   return d;
 }
-for (const [id, [name, fn]] of Object.entries(BUILTIN_LUTS)) LUTS['b:' + id] = { name, N: 17, data: makeLut(fn) };
+for (const [id, [name, fn]] of Object.entries(BUILTIN_LUTS)) LUTS['b:' + id] = { name, N: 17, data: makeLut(fn), n1: 0 };
 function parseCube(text, name) {
-  let N = 0, lo = [0, 0, 0], hi = [1, 1, 1]; const vals = [];
+  let n1 = 0, N = 0, lo = [0, 0, 0], hi = [1, 1, 1]; const vals = [], bad = () => new Error('This file is not a complete .cube LUT.');
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim(); if (!line || line[0] === '#') continue;
-    const parts = line.split(/\s+/);
-    if (parts[0] === 'LUT_3D_SIZE') N = +parts[1];
-    else if (parts[0] === 'LUT_1D_SIZE') throw new Error('1D LUTs are not supported. Use a 3D .cube file.');
-    else if (parts[0] === 'DOMAIN_MIN') lo = parts.slice(1, 4).map(Number);
-    else if (parts[0] === 'DOMAIN_MAX') hi = parts.slice(1, 4).map(Number);
-    else if (/^[-\d.]/.test(parts[0]) && parts.length >= 3) vals.push(+parts[0], +parts[1], +parts[2]);
+    const parts = line.split(/\s+/), k = parts[0];
+    if (k === 'TITLE') continue;
+    if (k === 'LUT_1D_SIZE') n1 = +parts[1];
+    else if (k === 'LUT_3D_SIZE') N = +parts[1];
+    else if (k === 'DOMAIN_MIN') lo = parts.slice(1, 4).map(Number);
+    else if (k === 'DOMAIN_MAX') hi = parts.slice(1, 4).map(Number);
+    else if (k === 'LUT_1D_INPUT_RANGE' || k === 'LUT_3D_INPUT_RANGE') { lo = [0, 0, 0].fill(+parts[1]); hi = [0, 0, 0].fill(+parts[2]); }
+    else if (/^[a-z]/i.test(k)) continue;
+    else { const v = parts.slice(0, 3).map(Number); if (parts.length < 3 || !v.every(Number.isFinite)) throw bad(); vals.push(...v); }
   }
-  if (!N || vals.length < N * N * N * 3) throw new Error('This file is not a complete 3D .cube LUT.');
-  const d = new Float32Array(N * N * N * 3);
-  for (let i = 0; i < d.length; i++) { const c = i % 3; d[i] = clamp((vals[i] - lo[c]) / (hi[c] - lo[c]), 0, 1); }
-  return { name, N, data: d };
+  if (!Number.isInteger(n1) || !Number.isInteger(N) || n1 < 0 || N < 0 || (!n1 && !N) || n1 === 1 || N === 1 || N > 256 || vals.length !== (n1 + N * N * N) * 3) throw bad();
+  if (![...lo, ...hi].every(Number.isFinite)) throw bad();
+  const d1 = Float32Array.from(vals.slice(0, n1 * 3)), rawT = N ? Float32Array.from(vals.slice(n1 * 3)) : null;
+  let data = null;
+  if (N) { data = new Float32Array(rawT.length); for (let i = 0; i < data.length; i++) { const c = i % 3; data[i] = clamp((rawT[i] - lo[c]) / (hi[c] - lo[c]), 0, 1); } }
+  return { name, N, data, n1, d1, dmin: lo, dmax: hi, raw: rawT };
 }
 function gradeGL(src, w, h, L, t) {
   if (!GG) {
@@ -2263,7 +2268,7 @@ function gradeGL(src, w, h, L, t) {
   gl.uniform3fv(u('lift'), wheel(v('cLiftH'), v('cLiftA') * .15));
   gl.uniform3fv(u('gam'), wheel(v('cGamH'), v('cGamA') * .5));
   gl.uniform3fv(u('gain'), wheel(v('cGainH'), v('cGainA') * .4));
-  const lut = L.lut && LUTS[L.lut];
+  const lut = L.lut && LUTS[L.lut]?.N > 1 ? LUTS[L.lut] : null;
   gl.uniform1f(u('lutMix'), lut ? clamp(v('cLut'), 0, 1) : 0);
   gl.activeTexture(gl.TEXTURE1);
   if (lut) {
@@ -2466,8 +2471,10 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   lumina_chan: ['lumina_chan'],       // Round 24: Minimax's passes over the frame or the layer's box (shaders/)
   fx_time: ['fx_time'],               // Round 25 on: the Time effects' sums, mixes and Time Difference (ftm_*)
   lumina_time: ['lumina_time'],       // Round 25: motion vectors, Time Displacement, Deblur, Rolling Shutter Repair (shaders/)
-  lumina_sim: ['lumina_sim'] };       // Round 26: CC Particle World's textured squares (shaders/)     // Round 25: motion vectors, Time Displacement, Deblur, Rolling Shutter Repair (shaders/)     // Round 24: Minimax's passes over the frame or the layer's box (shaders/)   // Round 23: Iris Wipe, CC Grid Wipe, Card Wipe's cards, placing another layer (EffectCraft does them on the CPU; shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl', lumina_sim: 'shaders/lumina_sim.wgsl' };
+  lumina_sim: ['lumina_sim'],         // Round 26: CC Particle World's textured squares (shaders/)
+  fx_text: ['fx_text'],               // Round 29: Numbers' and Timecode's text over the layer (ftx_text)
+  lumina_util: ['lumina_util'] };     // Round 29: CC Overbrights, HDR Highlight Compression, HDR Compander, Cineon Converter (shaders/)
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl', lumina_sim: 'shaders/lumina_sim.wgsl', lumina_util: 'shaders/lumina_util.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2643,20 +2650,21 @@ function fxApply(L, t, lc) {
   dev.queue.copyExternalImageToTexture({ source: lc.cv }, { texture: src, premultipliedAlpha: true }, [w, h]);
   E.orig = src;   // the layer before its effects (CC Composite's original)
   E.L = L;
-  let cur = src, clip = false;
+  let cur = src, clip = false, grow = 0;
+  E.grow = 0;   // Grow Bounds' pixels so far (layer pixels)
   for (const [i, f] of list.entries()) {
     const D = FX[f.id], q = id => fxValue(L, f, D.params.find(d => d.id === id), t, E);
     E.fx = f; E.idx = i;
     cur = D.run(E, cur, q) || cur;
-    if (typeof D.clip === 'function' ? D.clip(q) : D.clip) clip = true;
+    if (typeof D.clip === 'function' ? D.clip(q) : D.clip) { clip = true; grow = Math.max(grow, E.grow); }
   }
   if (E.usedTime && L.kind === 'video') vfAhead(L, E.ahead > 0 ? Math.min(3, E.ahead + .25) : 0);
   blit(cur);
   if (temp.length) dev.queue.onSubmittedWorkDone().then(() => temp.forEach(x => x.destroy()));
   const c = lc.cx; c.save(); c.setTransform(1, 0, 0, 1, 0, 0); Object.assign(c, { globalCompositeOperation: 'copy', globalAlpha: 1, filter: 'none' });
   c.drawImage(FXG.cv, 0, 0);
-  // generators (noise) fill the layer's own box, not the whole frame
-  if (clip) { c.globalCompositeOperation = 'destination-in'; c.setTransform(m); c.fillStyle = '#fff'; c.fillRect(-bw / 2, -bh / 2, bw, bh); }
+  // generators (noise) fill the layer's own box, not the whole frame (grown by any Grow Bounds before them)
+  if (clip) { c.globalCompositeOperation = 'destination-in'; c.setTransform(m); c.fillStyle = '#fff'; c.fillRect(-bw / 2 - grow, -bh / 2 - grow, bw + 2 * grow, bh + 2 * grow); }
   c.restore();
 }
 // ---- Round 14: 3 × 3 matrices (rows) for the warps: Transform, Corner Pin, and shifting a picture ----
@@ -2685,6 +2693,141 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 29 helpers (Utility & Text): EffectCraft's utility.rs, utility2.rs, ocio/effects.rs + ocio/space.rs (Color
+//      Profile Converter), ocio/program.rs + fx_lut.rs (colour programs for fx_lut.wgsl's fxl_point), textfx.rs + fx_text.rs
+//      (Numbers, Timecode) and footage.rs (cineon_log_to_lin, in shaders/lumina_util.wgsl) ----
+const UTIL_K = [['lumina_util', 'lu_point']], LUT_K = [['fx_color', 'fxl_point']];
+const TEXT_K = [['fx_gen2', 'fg2_segs'], ['fx_gen2', 'fg2_text'], ['fx_text', 'ftx_text'], ['kernels', 'fill']];
+// ocio/space.rs: 3 × 3 matrices (rows) in f64, primaries and whites (xy)
+const cpMul = (A, B) => A.map(r => [0, 1, 2].map(j => r[0] * B[0][j] + r[1] * B[1][j] + r[2] * B[2][j]));
+const cpInv = m => m3inv(m) || [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+const cpVec = (m, v) => m.map(r => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]);
+const CP_D65 = [.3127, .3290], CP_ACESW = [.32168, .33767];
+const CP_PRIMS = { rec709: [[.640, .330], [.300, .600], [.150, .060]], rec2020: [[.708, .292], [.170, .797], [.131, .046]],
+  p3: [[.680, .320], [.265, .690], [.150, .060]], ap0: [[.7347, .2653], [0, 1], [.0001, -.0770]], ap1: [[.713, .293], [.165, .830], [.128, .044]] };
+// transfer functions as fx_lut.rs's tf_code: [code, gamma]
+const CP_TF = { linear: [0, 0], srgb: [1, 0], g24: [2, 2.4] };
+// ocio/effects.rs's PROFILES and profile(): [primaries, white, transfer, linear by default]. Lumina's working space is
+// sRGB (not linear), so Project Working Space is sRGB
+const CP_PROFILES = [['Project Working Space', 'rec709', CP_D65, 'srgb', false], ['sRGB IEC61966-2.1', 'rec709', CP_D65, 'srgb', false],
+  ['HDTV (Rec. 709)', 'rec709', CP_D65, 'g24', false], ['Rec. 2020', 'rec2020', CP_D65, 'g24', false], ['Display P3', 'p3', CP_D65, 'srgb', false],
+  ['ACEScg', 'ap1', CP_ACESW, 'linear', true], ['ACES2065-1', 'ap0', CP_ACESW, 'linear', true]];
+// rgb_to_xyz: linear RGB → XYZ with the space's own white
+function cpRgbXyz(prims, w) {
+  const xyz = c => [c[0] / c[1], 1, (1 - c[0] - c[1]) / c[1]], P = prims.map(xyz), M = [0, 1, 2].map(r => P.map(p => p[r]));
+  const s = cpVec(cpInv(M), xyz(w));
+  return M.map(r => r.map((v, j) => v * s[j]));
+}
+// Bradford adaptation from white src to white dst
+function cpBradford(src, dst) {
+  if (src[0] === dst[0] && src[1] === dst[1]) return [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const MB = [[.8951, .2664, -.1614], [-.7502, 1.7135, .0367], [.0389, -.0685, 1.0296]], xyz = c => [c[0] / c[1], 1, (1 - c[0] - c[1]) / c[1]];
+  const s = cpVec(MB, xyz(src)), d = cpVec(MB, xyz(dst));
+  return cpMul(cpInv(MB), cpMul([[d[0] / s[0], 0, 0], [0, d[1] / s[1], 0], [0, 0, d[2] / s[2]]], MB));
+}
+// Space::to_ref: linear RGB → XYZ D65 (Bradford-adapted when adapt)
+const cpToRef = (p, adapt) => { const m = cpRgbXyz(CP_PRIMS[p[1]], p[2]); return adapt ? cpMul(cpBradford(p[2], CP_D65), m) : m; };
+// ocio/program.rs's Color Profile Converter program (Decode, Matrix, Gamut / Max0, Encode; empty when it changes nothing)
+function cpProgram(q) {
+  const ii = clamp(q('inputProfile'), 0, 6), oi = clamp(q('outputProfile'), 0, 6), inp = CP_PROFILES[ii], out = CP_PROFILES[oi], intent = q('intent');
+  const inLin = q('linearizeIn') || inp[4] && ii === 0, outLin = q('linearizeOut') || out[4] && oi === 0;
+  const dec = inLin ? 'linear' : inp[3], enc = outLin ? 'linear' : out[3];
+  // Absolute Colorimetric keeps the source white (no adaptation); the others adapt
+  const m = intent === 3 ? cpMul(cpInv(cpToRef(out, false)), cpToRef(inp, false)) : cpMul(cpInv(cpToRef(out, true)), cpToRef(inp, true));
+  const ident = dec === enc && m.every((r, i) => r.every((v, j) => Math.abs(v - (i === j ? 1 : 0)) < 1e-9));
+  if (ident) return null;
+  const d = [];
+  if (dec !== 'linear') d.push(1, ...CP_TF[dec]);
+  d.push(3, ...m.flat());
+  if (intent === 0) d.push(6, ...cpToRef(out, true)[1]);
+  else if (intent === 2) d.push(7);
+  if (enc !== 'linear') d.push(2, ...CP_TF[enc]);
+  d.push(0);
+  return d;
+}
+// Apply Color LUT's program for fxl_point: one LUT op (tetrahedral, forward), then the table as fx_lut.rs's push_lut lays
+// it out (n1, n3, domain min, domain max, the 1D table, the lattice red fastest). Kept with the LUT once made
+function lutProgram(l) {
+  if (l._prog) return l._prog;
+  const n1 = l.n1 || 0, n3 = l.N || 0, d1 = l.d1 || [], d3 = l.raw || l.data || [], P = new Float32Array(6 + 8 + n1 * 3 + n3 * n3 * n3 * 3);
+  P.set([8, 6, 2, 0, -1, 0, n1, n3, ...(l.dmin || [0, 0, 0]), ...(l.dmax || [1, 1, 1])]);
+  P.set(d1.length ? d1 : [], 14); P.set(d3.length ? d3 : [], 14 + n1 * 3);
+  return (l._prog = P);
+}
+// textfx.rs's stroke-font layout: grid unit and stroke radius for a font size, advance and ink edge, line width
+const txUnit = size => size * .7 / 6, txWeight = size => Math.max(size * .045, .35);
+function txAdvance(c, prop) {
+  if (c === ' ') return 3; if (!prop) return 5.6;
+  let lo = Infinity, hi = -Infinity; for (const s of fxGlyph(c)) for (const q of s) { lo = Math.min(lo, q[0]); hi = Math.max(hi, q[0]); }
+  return lo > hi ? 3 : hi - lo + 1.6;
+}
+const txInkLeft = (c, prop) => prop ? Math.min(Math.min(...fxGlyph(c).flat().map(q => q[0]), Infinity), 4) - .8 : .8;
+function txLineWidth(text, size, tracking, prop) {
+  const u = txUnit(size), cs = [...text]; if (!cs.length) return 0;
+  return cs.reduce((a, c) => a + txAdvance(c, prop) * u, 0) + tracking * (cs.length - 1) - 1.6 * u;
+}
+// layout_line: the glyph polylines (frame pixels) of a line whose baseline starts at origin
+function txLayout(text, origin, size, tracking, prop) {
+  const u = txUnit(size), out = []; let x = origin[0];
+  for (const c of text) {
+    const left = txInkLeft(c, prop);
+    for (const s of fxGlyph(c)) out.push(s.map(q => [x + (q[0] - left - .8) * u, origin[1] + (q[1] - 6) * u]));
+    x += txAdvance(c, prop) * u + tracking;
+  }
+  return out;
+}
+// timecode(): HH:MM:SS:FF at a whole frame rate
+function txTimecode(frames, fps) {
+  const fr = Math.max(1, Math.round(fps)), f = Math.abs(frames), p = v => String(v).padStart(2, '0');
+  const s = `${p(Math.floor(f / (fr * 3600)))}:${p(Math.floor(f / (fr * 60)) % 60)}:${p(Math.floor(f / fr) % 60)}:${p(f % fr)}`;
+  return frames < 0 ? '-' + s : s;
+}
+// drop_frame(): the SMPTE drop-frame label at 30 or 60
+function txDropFrame(frames, nominal) {
+  const drop = nominal / 15, perMin = nominal * 60 - drop, per10 = perMin * 10 + drop, f = Math.max(0, frames), d = Math.floor(f / per10), m = f % per10;
+  const adj = m > drop ? f + drop * 9 * d + drop * Math.floor((m - drop) / perMin) : f + drop * 9 * d, p = v => String(v).padStart(2, '0');
+  return `${p(Math.floor(adj / (nominal * 3600)))};${p(Math.floor(adj / (nominal * 60)) % 60)};${p(Math.floor(adj / nominal) % 60)};${p(adj % nominal)}`;
+}
+const TX_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const TX_DAYS = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+// date_from_days: the proleptic Gregorian date of a day count since 2000-01-01 (a Saturday), for any count (the calendar
+// repeats every 400 years); the weekday Saturday-indexed
+function txDate(days) {
+  const cyc = Math.floor(days / 146097), rest = days - cyc * 146097, d = new Date(Date.UTC(2000, 0, 1) + rest * 864e5);
+  return [d.getUTCFullYear() + cyc * 400, d.getUTCMonth() + 1, d.getUTCDate(), (d.getUTCDay() + 1) % 7];
+}
+// numbers_text: what Numbers shows (time in seconds into the layer)
+function txNumbers(q, time, seed) {
+  const kind = q('type'), dp = clamp(Math.round(q('decimals')), 0, 10), cur = q('currentTime');
+  let v = q('value');
+  if (q('random')) v = fxH(Math.floor(time * S.fps) >>> 0, 17, seed) * q('value');
+  const t = cur ? time + v : v, p2 = n => String(n).padStart(2, '0');
+  switch (kind) {
+    case 1: { const s = Math.abs(v).toFixed(dp), [ip, fp] = s.split('.'); return (v < 0 ? '-' : '') + ip.padStart(5, '0') + (fp != null ? '.' + fp : ''); }
+    case 2: case 3: case 4: { const fps = [30, 25, 24][kind - 2]; return txTimecode(Math.floor(t * fps + 1e-6), fps); }
+    case 5: { const s = Math.floor(t), a = Math.abs(s); return (s < 0 ? '-' : '') + `${p2(Math.floor(a / 3600))}:${p2(Math.floor(a / 60) % 60)}:${p2(a % 60)}`; }
+    case 6: case 7: case 8: {
+      const [y, m, d, wd] = txDate(Math.floor(v));
+      if (kind === 6) return `${p2(m)}/${p2(d)}/${p2(((y % 100) + 100) % 100)}`;
+      if (kind === 7) return `${TX_MONTHS[m - 1].slice(0, 3)} ${d}, ${y}`;
+      return `${TX_DAYS[wd]}, ${TX_MONTHS[m - 1]} ${d}, ${y}`;
+    }
+    case 9: { const i = Math.sign(v) * Math.round(Math.abs(v)); return i < 0 ? '-' + (-i).toString(16).toUpperCase() : i.toString(16).toUpperCase(); }
+    default: return (cur ? t : v).toFixed(dp);
+  }
+}
+// text_coverage on the graphics card (fg2_segs): the glyph strokes at radius r → fill (x); with a stroke of width sw the
+// outer (y) and inner (z) edges of its ring
+function txCoverage(E, img, polys, r, sw) {
+  const it = fxItems(E, 10), pad = r + Math.max(0, sw) * .5 + 1, inner = r - sw * .5 > .05;
+  for (const pl of polys) {
+    const segs = pl.length === 1 ? [[pl[0], pl[0]]] : pl.slice(1).map((b, i) => [pl[i], b]);
+    for (const [a, b] of segs) fxItemPush(it, [Math.min(a[0], b[0]) - pad, Math.min(a[1], b[1]) - pad, Math.max(a[0], b[0]) + pad, Math.max(a[1], b[1]) + pad], [a[0], a[1], b[0], b[1], r, 1]);
+  }
+  const D = fxItemData(it); if (!D) return { cov: E.clear(img), inner };
+  const cov = E.run('fx_gen2', 'fg2_segs', fxP({ 0: [D.at, 10, it.tx, sw > 0 ? 3 : 1] }, { 0: [1, 0, .05, 1], 1: [1, sw * .5, .05, 1], 2: [1, -sw * .5, .05, 1] }), img, null, null, E.data(D.d));
+  return { cov, inner };
+}
 // ---- Round 28 helpers (Simulation: pieces and surfaces): EffectCraft's sim2/ (pieces.rs, pixels.rs, shatter.rs,
 //      surfaces.rs, foam.rs); GPU host code from fx_sim.rs (piece_pass, wave_height, caustics) and fx_particles.rs (foam).
 //      The piece effects work in frame pixels: layer pixel (x, y) sits at off + (x, y) · scale, as in sim2's layer buffer
@@ -5812,7 +5955,8 @@ const LMT_TONES = ['RGB', 'Red', 'Green', 'Blue'].flatMap(c => ['Shadows', 'Midt
 const LMT_RGB = [['rgbMaster', 'RGB curve'], ['rgbRed', 'Red curve'], ['rgbGreen', 'Green curve'], ['rgbBlue', 'Blue curve']];
 const LMT_HS = [['hueVsSat', 'Hue vs saturation', true], ['hueVsHue', 'Hue vs hue', true], ['hueVsLuma', 'Hue vs luma', true], ['lumaVsSat', 'Luma vs saturation', false], ['satVsSat', 'Saturation vs saturation', false]];
 const LMT_LOOKS = ['None', 'Custom (a LUT)', 'Warm film', 'Cool night', 'Bleach bypass', 'Teal & orange', 'Faded matte', 'Monochrome'];
-const lutOpts = () => [['', 'None'], ...Object.entries(LUTS).map(([id, l]) => [id, esc(l.name)])];
+// the LUT menus: those with a 3D table (Lumetri), or every LUT (Apply Color LUT)
+const lutOpts = (all = false) => [['', 'None'], ...Object.entries(LUTS).filter(([, l]) => all || l.N > 1).map(([id, l]) => [id, esc(l.name)])];
 const LMT_PARAMS = (() => {
   const sec = (n, list) => list.map(d => ({ ...d, show: f => +(f.section ?? 0) === n && (!d.show || d.show(f)) }));
   const bi = (id, label, def = 0) => ({ id, label, def, min: -100, max: 100, dec: 1 });
@@ -7819,6 +7963,111 @@ const FX = {
       if (!fl) return img;
       return E.run('lumina_time', 'lm_rsr', fxP({ 0: [q('scan'), fl.nx, fl.ny, 0] }, { 0: box, 1: [rate, fl.cell, 0, 0] }), img, null, null, E.data(fl.v));
     } },
+  // ---- Round 29: Utility & Text (EffectCraft's utility.rs, utility2.rs, ocio/ (Color Profile Converter) and textfx.rs:
+  //      Grow Bounds, CC Overbrights, HDR Highlight Compression, HDR Compander, Cineon Converter, Color Profile
+  //      Converter, Apply Color LUT, Numbers, Timecode) ----
+  // Lumina's effects work on the whole frame, so Grow Bounds has nothing to pad; it widens the layer's box that the
+  // effects filling it (generators, Numbers, Timecode) are cut to, as EffectCraft's padded buffer does
+  growbounds: { name: 'Grow Bounds', cat: 'Utility', kernels: [], params: [
+      { id: 'pixels', label: 'Pixels', def: 0, min: 0, max: 4000, dec: 0 }],
+    run(E, img, q) { E.grow = (E.grow || 0) + Math.max(0, Math.round(q('pixels'))); return img; } },
+  ccoverbrights: { name: 'CC Overbrights', cat: 'Utility', kernels: UTIL_K, params: [
+      { id: 'channel', label: 'Channel', type: 'pick', def: 0, opts: fxOpts(['Max RGB', 'Red', 'Green', 'Blue', 'Alpha', 'Luminance']) },
+      { id: 'highlightColor', label: 'Highlight color', type: 'color', def: '#ff0000' }],
+    run: (E, img, q) => E.run('lumina_util', 'lu_point', fxP({ 0: [0, q('channel'), 0, 0] }, { 0: [...q('highlightColor'), 0] }), img) },
+  hdrcompression: { name: 'HDR Highlight Compression', cat: 'Utility', kernels: UTIL_K, params: [
+      { id: 'amount', label: 'Amount', def: 100, min: 0, max: 100, dec: 1 }],
+    run(E, img, q) {
+      const t = clamp(q('amount') / 100, 0, 1);
+      return t > 0 ? E.run('lumina_util', 'lu_point', fxP({ 0: [1, 0, 0, 0] }, { 0: [t, 0, 0, 0] }), img) : img;
+    } },
+  hdrcompander: { name: 'HDR Compander', cat: 'Utility', kernels: UTIL_K, params: [
+      { id: 'mode', label: 'Mode', type: 'pick', def: 0, opts: fxOpts(['Compress range', 'Expand range']) },
+      { id: 'gain', label: 'Gain', def: 1, min: 1, max: 100, dec: 2 },
+      { id: 'gamma', label: 'Gamma', def: 1, min: .1, max: 10, dec: 2 }],
+    run(E, img, q) {
+      const gain = Math.max(1e-6, q('gain')), gamma = Math.max(1e-3, q('gamma'));
+      return gain === 1 && gamma === 1 ? img : E.run('lumina_util', 'lu_point', fxP({ 0: [2, q('mode'), 0, 0] }, { 0: [gain, gamma, 0, 0] }), img);
+    } },
+  cineon: { name: 'Cineon Converter', cat: 'Utility', kernels: UTIL_K, params: [
+      { id: 'conversion', label: 'Conversion type', type: 'pick', def: 1, opts: fxOpts(['Linear to log', 'Log to linear', 'Log to log']) },
+      { id: 'black10', label: '10 bit black point', def: 95, min: 0, max: 1023, dec: 0 },
+      { id: 'blackIn', label: 'Internal black point', def: 0, min: -1, max: 2, dec: 3 },
+      { id: 'white10', label: '10 bit white point', def: 685, min: 0, max: 1023, dec: 0 },
+      { id: 'whiteIn', label: 'Internal white point', def: 1, min: -1, max: 2, dec: 3 },
+      { id: 'gamma', label: 'Gamma', def: 1.7, min: .1, max: 5, dec: 2 },
+      { id: 'rolloff', label: 'Highlight rolloff', def: 20, min: 0, max: 100, dec: 0 }],
+    run: (E, img, q) => E.run('lumina_util', 'lu_point', fxP({ 0: [3, q('conversion'), 0, 0] },
+      { 0: [q('black10'), q('white10'), q('blackIn'), q('whiteIn')], 1: [q('gamma'), q('rolloff'), 0, 0] }), img) },
+  // EffectCraft's built-in profiles share a zero black point and none is scene-referred, so its last two settings are
+  // kept as it keeps them, and change nothing
+  colorprofile: { name: 'Color Profile Converter', cat: 'Utility', kernels: LUT_K, params: [
+      { id: 'inputProfile', label: 'Input profile', type: 'pick', def: 0, opts: fxOpts(CP_PROFILES.map(p => p[0])) },
+      { id: 'linearizeIn', label: 'Linearize input profile', type: 'check', def: false },
+      { id: 'outputProfile', label: 'Output profile', type: 'pick', def: 1, opts: fxOpts(CP_PROFILES.map(p => p[0])) },
+      { id: 'linearizeOut', label: 'Linearize output profile', type: 'check', def: false },
+      { id: 'intent', label: 'Intent', type: 'pick', def: 1, opts: fxOpts(['Perceptual', 'Relative colorimetric', 'Saturation', 'Absolute colorimetric']) },
+      { id: 'blackPointComp', label: 'Use black point compensation', type: 'check', def: true },
+      { id: 'sceneRef', label: 'Scene-ref. profile compensation', type: 'pick', def: 2, opts: fxOpts(['On', 'Off', 'Use project setting']) }],
+    run(E, img, q) {
+      const d = cpProgram(q);
+      return d ? E.run('fx_color', 'fxl_point', fxP({ 0: [0, 0, 0, 0] }), img, null, null, E.data(d)) : img;
+    } },
+  // the LUT menu lists Lumina's looks and the .cube files loaded so far (1D, 3D or both), and loads another
+  applylut: { name: 'Apply Color LUT', cat: 'Utility', kernels: LUT_K, params: [
+      { id: 'lut', label: 'LUT', type: 'pick', str: true, def: '', opts: () => [...lutOpts(true), ['__load', 'Load .cube file…']] }],
+    run(E, img, q) {
+      const l = LUTS[q('lut')];
+      return l && (l.N > 1 || l.n1 > 1) ? E.run('fx_color', 'fxl_point', fxP({ 0: [1, 0, 0, 0] }), img, null, null, E.data(lutProgram(l))) : img;
+    } },
+  numbers: { name: 'Numbers', cat: 'Text', clip: true, kernels: TEXT_K, params: [
+      { id: 'type', label: 'Type', type: 'pick', def: 0, opts: fxOpts(['Number', 'Number [leading zeros]', 'Timecode [30]', 'Timecode [25]', 'Timecode [24]', 'Time',
+        'Numerical date', 'Short date', 'Long date', 'Hexadecimal']) },
+      { id: 'random', label: 'Random values', type: 'check', def: false },
+      { id: 'value', label: 'Value/offset/random max', def: 0, min: -30000, max: 30000, dec: 3 },
+      { id: 'decimals', label: 'Decimal places', def: 2, min: 0, max: 10, dec: 0 },
+      { id: 'currentTime', label: 'Current time/date', type: 'check', def: false },
+      { id: 'position', label: 'Position', type: 'pt', def: [.5, .5] },
+      { id: 'display', label: 'Display options', type: 'pick', def: 0, opts: fxOpts(['Fill only', 'Stroke only', 'Fill over stroke', 'Stroke over fill']) },
+      { id: 'fillColor', label: 'Fill color', type: 'color', def: '#ff0000' },
+      { id: 'strokeColor', label: 'Stroke color', type: 'color', def: '#ffffff' },
+      { id: 'strokeWidth', label: 'Stroke width', def: 2, min: 0, max: 50, dec: 1 },
+      { id: 'size', label: 'Size', def: 36, min: 0, max: 512, dec: 1 },
+      { id: 'tracking', label: 'Tracking', def: 0, min: -100, max: 100, dec: 1 },
+      { id: 'proportional', label: 'Proportional spacing', type: 'check', def: true },
+      { id: 'onOriginal', label: 'Composite on original', type: 'check', def: true }],
+    run(E, img, q) {
+      const text = txNumbers(q, E.t, fxSeed(E)), size = Math.max(.5, q('size') * E.sc), tracking = q('tracking') * E.sc, prop = q('proportional'), [px, py] = q('position');
+      const w = txLineWidth(text, size, tracking, prop), polys = txLayout(text, [px - w * .5, py + txUnit(size) * 3], size, tracking, prop);
+      const display = q('display'), sw = Math.max(0, q('strokeWidth') * E.sc), r = txWeight(size), { cov, inner } = txCoverage(E, img, polys, r, display ? sw : 0);
+      return E.run('fx_gen2', 'fg2_text', fxP({ 0: [display, q('onOriginal') ? 1 : 0, display && sw > 0 ? 1 : 0, inner ? 1 : 0] },
+        { 0: [...q('fillColor'), 1], 1: [...q('strokeColor'), 1], 2: [1, 0, 0, 0] }), img, cov);
+    } },
+  timecode: { name: 'Timecode', cat: 'Text', clip: true, kernels: TEXT_K, params: [
+      { id: 'format', label: 'Display format', type: 'pick', def: 0, opts: fxOpts(['SMPTE HH:MM:SS:FF', 'Frames', 'Feet + frames (35mm)', 'Feet + frames (16mm)']) },
+      { id: 'source', label: 'Time source', type: 'pick', def: 0, opts: fxOpts(['Layer source', 'Composition', 'Custom']) },
+      { id: 'units', label: 'Time units', def: 30, min: 1, max: 120, dec: 2 },
+      { id: 'dropFrame', label: 'Drop frame', type: 'check', def: false },
+      { id: 'startFrame', label: 'Starting frame', def: 0, min: -1000000, max: 1000000, dec: 0 },
+      { id: 'textPos', label: 'Text position', type: 'pt', def: [.5, .9] },
+      { id: 'textSize', label: 'Text size', def: 36, min: 0, max: 512, dec: 1 },
+      { id: 'textColor', label: 'Text color', type: 'color', def: '#ffffff' },
+      { id: 'showBox', label: 'Show box', type: 'check', def: true },
+      { id: 'boxColor', label: 'Box color', type: 'color', def: '#000000' },
+      { id: 'opacity', label: 'Opacity', def: 100, min: 0, max: 100, dec: 1 },
+      { id: 'onOriginal', label: 'Composite on original', type: 'check', def: true }],
+    run(E, img, q) {
+      const src = q('source'), t = src === 1 ? E.T : E.t, fps = src === 2 ? Math.max(1, q('units')) : S.fps;
+      let frame = Math.floor(t * fps + 1e-6); if (src === 2) frame += Math.round(q('startFrame'));
+      const nominal = Math.round(fps), fmt = q('format'), p2 = v => String(v).padStart(2, '0');
+      const fe = n => `${Math.floor(frame / n)}+${p2(((frame % n) + n) % n)}`;
+      const text = fmt === 1 ? String(frame) : fmt === 2 ? fe(16) : fmt === 3 ? fe(40)
+        : q('dropFrame') && (nominal === 30 || nominal === 60) ? txDropFrame(frame, nominal) : txTimecode(frame, fps);
+      const size = Math.max(.5, q('textSize') * E.sc), [px, py] = q('textPos'), w = txLineWidth(text, size, 0, false), op = q('opacity') / 100, pad = size * .25;
+      const { cov } = txCoverage(E, img, txLayout(text, [px - w * .5, py + txUnit(size) * 3], size, 0, false), txWeight(size), 0);
+      return E.run('fx_text', 'ftx_text', fxP({ 0: [0, q('onOriginal') ? 1 : 0, q('showBox') ? 1 : 0, 0] },
+        { 0: [...q('textColor'), op], 1: [0, 0, 0, 0], 2: [px - w * .5 - pad, px + w * .5 + pad, py - size * .5, py + size * .5], 3: [...q('boxColor'), op] }), img, cov);
+    } },
   // ---- Round 28: Simulation, pieces and surfaces (EffectCraft's sim2/: CC Ball Action, CC Pixel Polly, CC Scatterize,
   // Card Dance, Shatter, Caustics, Wave World, Foam) ----
   ccballaction: { name: 'CC Ball Action', cat: 'Simulation', clip: false, kernels: WEATHER_K, params: [
@@ -8712,7 +8961,7 @@ const FX = {
         hdr ? Math.max(.01, P('hdrWhite')) : 1, hdr ? P('hdrSpecular') : 0, look];
       while (d.length < 64) d.push(-1);
       const tab = a => { const o = d.length; for (const v of a) d.push(v); return o; };
-      const lut = id => { const l = id && LUTS[id]; return l ? tab([l.N, ...l.data]) : -1; };
+      const lut = id => { const l = id && LUTS[id]; return l?.N > 1 ? tab([l.N, ...l.data]) : -1; };
       d[44] = lut(q('inLut')); d[45] = look === 1 ? lut(q('lookLut')) : -1;
       LMT_RGB.forEach(([k], i) => { const c = fxCurveFC(q(k)); d[46 + i] = c ? tab([c.xs[0], c.ys[0], c.ms[0], c.xs.at(-1), c.ys.at(-1), c.ms.at(-1), ...c.lut]) : -1; });
       LMT_HS.forEach(([k, , per], i) => { const c = fxOffsetCurve(q(k), per); d[50 + i] = c ? tab(c) : -1; });
@@ -12434,7 +12683,7 @@ function matchColors(L) {
 let wbPick = false, lutTarget = null;
 const C_ROWS = { Correction: ['cExpo', 'cCon', 'cHigh', 'cShad', 'cTemp', 'cTint', 'cSat', 'cVib'], 'Color balance': ['cLiftH', 'cLiftA', 'cGamH', 'cGamA', 'cGainH', 'cGainA'] };
 function colorPanel(L) {
-  const opts = [['', 'None'], ...Object.entries(LUTS).map(([id, l]) => [id, (id.startsWith('u:') ? '⬆ ' : '') + l.name]), ['__load', 'Load .cube file…']];
+  const opts = [['', 'None'], ...Object.entries(LUTS).filter(([, l]) => l.N > 1).map(([id, l]) => [id, (id.startsWith('u:') ? '⬆ ' : '') + l.name]), ['__load', 'Load .cube file…']];
   return `<div class="group"><h3>Color</h3>
     <canvas id="histo" width="300" height="70" aria-label="Histogram of the current frame"></canvas>
     <div class="row"><button data-act="autocolor">Auto correct</button><button data-act="pickwhite" class="${wbPick ? 'primary' : ''}">${wbPick ? 'Click something white or gray…' : 'Pick white'}</button><button data-act="colorreset">Reset</button></div>
@@ -12576,6 +12825,7 @@ $('#inspector').addEventListener('input', e => {
     if (el.value) { addFX(L, el.value); commit(); inspector(); if (LTAB === 'fxp') fxPresets(); }
   } else if (el.dataset.fxi !== undefined && L) {
     const f = L.fx?.[+el.dataset.fxi], k = el.dataset.fxk;
+    if (f && el.value === '__load') { el.value = f[k] || ''; lutTarget = { L: L.id, fx: f.uid, k }; $('#lutfile').click(); return; }
     if (f) { f[k] = el.type === 'checkbox' ? el.checked : el.dataset.num !== undefined ? +el.value : el.value; if (k === 'on' || FX[f.id]?.params.find(d => d.id === k)?.panel) inspector(); }
   } else if (el.dataset.trans && L) {
     if (el.dataset.trans === 'type') { if (el.value === 'none') delete L.trans; else L.trans = { dur: .5, ...L.trans, type: el.value }; inspector(); }
@@ -13447,8 +13697,13 @@ function projectJSON() {
     const m = MEDIA[id]; media[id] = { path: m.path || null, type: m.type, name: m.name, duration: m.duration, w: m.w, h: m.h, ...(m.svg ? { svg: true } : {}), ...(m.origPath ? { origPath: m.origPath } : {}) };
   }
   const luts = {};
-  for (const L of S.layers) for (const id of [L.lut, ...(L.fx || []).flatMap(f => [f.inLut, f.lookLut])])
-    if (typeof id === 'string' && id.startsWith('u:') && LUTS[id]) { const l = LUTS[id]; luts[id] = { name: l.name, N: l.N, data: Array.from(l.data, v => +v.toFixed(4)) }; }
+  for (const L of S.layers) for (const id of [L.lut, ...(L.fx || []).flatMap(f => [f.inLut, f.lookLut, f.id === 'applylut' ? f.lut : null])])
+    if (typeof id === 'string' && id.startsWith('u:') && LUTS[id]) {
+      const l = LUTS[id], o = luts[id] = { name: l.name, N: l.N, data: l.data ? Array.from(l.data, v => +v.toFixed(4)) : null };
+      if (l.n1) Object.assign(o, { n1: l.n1, d1: Array.from(l.d1, v => +v.toFixed(5)) });
+      if (l.dmin && (l.dmin.some(v => v !== 0) || l.dmax.some(v => v !== 1))) Object.assign(o, { dmin: l.dmin, dmax: l.dmax });
+      if (l.raw && l.raw.some((v, i) => Math.abs(v - l.data[i]) > 1e-6)) o.raw = Array.from(l.raw, v => +v.toFixed(5));
+    }
   return JSON.stringify({ app: 'Lumina', version: 1, comp: { w: W(), h: H(), fps: S.fps }, uid, time: S.time, layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, media, luts });
 }
 async function saveProject(saveAs = false) {
@@ -13496,7 +13751,10 @@ async function openProject(filePath) {
     if (m.svg || /\.svg$/i.test(m.path)) await reloadSVG(MEDIA[id]);
     else if (m.type === 'image') { try { MEDIA[id].img = await loadImage(await openImageURL(m.path)); } catch { MEDIA[id].img = null; } }
   }
-  for (const [id, l] of Object.entries(d.luts || {})) LUTS[id] = { name: l.name, N: l.N, data: Float32Array.from(l.data) };
+  for (const [id, l] of Object.entries(d.luts || {})) {
+    const data = l.data ? Float32Array.from(l.data) : null;
+    LUTS[id] = { name: l.name, N: l.N || 0, data, n1: l.n1 || 0, d1: Float32Array.from(l.d1 || []), dmin: l.dmin || [0, 0, 0], dmax: l.dmax || [1, 1, 1], raw: l.raw ? Float32Array.from(l.raw) : data };
+  }
   canvas.width = d.comp.w; canvas.height = d.comp.h; S.fps = d.comp.fps;
   syncRes(); CROP = null; cropUI();
   $('#fps').value = String(d.comp.fps);
@@ -13528,7 +13786,10 @@ $('#lutfile').onchange = async e => {
   try {
     const lut = parseCube(await f.text(), f.name.replace(/\.cube$/i, ''));
     const id = 'u:' + uid++; LUTS[id] = lut;
-    const L = byId(lutTarget); if (L) { L.lut = id; commit(); }
+    if (lutTarget && typeof lutTarget === 'object') {
+      const L = byId(lutTarget.L), fx = L?.fx?.find(x => x.uid === lutTarget.fx); if (fx) { fx[lutTarget.k] = id; commit(); }
+    } else if (lut.N > 1) { const L = byId(lutTarget); if (L) { L.lut = id; commit(); } }
+    else toast(`${f.name} has only a 1D table. It works in the Apply Color LUT effect.`);
     inspector();
   } catch (err) { toast(`Couldn't use ${f.name}: ${err.message}`); }
 };

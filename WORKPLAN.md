@@ -57,7 +57,7 @@ At 6–10 effects a round that's roughly 30 more rounds.
 | 26 ✅ | Simulation: particles | CC Particle World, CC Particle Systems II, CC Mr. Mercury (EffectCraft's sim/engine.rs, particle_fx.rs) |
 | 27 ✅ | Simulation: weather and more | CC Rainfall, CC Snowfall, CC Bubbles, CC Drizzle, CC Star Burst (sim/weather.rs), CC Hair, Particle Playground (sim3.rs) |
 | 28 ✅ | Simulation: pieces and surfaces | CC Ball Action, CC Pixel Polly, CC Scatterize, Card Dance, Shatter, Caustics, Wave World, Foam (sim2/) |
-| 29 | Utility & Text | Apply LUT, Cineon, Color Profile Converter, HDR Compander/Compression, CC Overbrights, Grow Bounds, Numbers, Timecode |
+| 29 ✅ | Utility & Text | Apply LUT, Cineon, Color Profile Converter, HDR Compander/Compression, CC Overbrights, Grow Bounds, Numbers, Timecode |
 | 30 | Audio-driven | Audio Spectrum, Audio Waveform |
 | 31+ | Big tools (one each) | Liquify, Puppet, Paint, Roto Brush, Warp Stabilizer, Camera Tracker, Object Matte, Face Tracking, 3D Channel effects |
 | optional | | Audio effects (13), VR effects (12), OCIO (5) |
