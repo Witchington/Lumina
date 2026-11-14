@@ -68,7 +68,7 @@
         await settle(T0); rotoTool(Vd, f31, 'roto'); const cx = (P.x0 + P.x1) / 2, mid = (P.y0 + P.y1) / 2;
         ROTO.tool.size = 60; await paint([[cx, P.y0 - 20], [cx, mid - 30]], true);
         const s = f31.roto.strokes.at(-1); rotoToolEnd();
-        const ok = await waitFor(() => !!fin()), top = red(frame()), n = f31.roto.strokes.length;
+        const ok = await waitFor(() => !!fin()), top = red(frame(), cx - 50, cx + 50), n = f31.roto.strokes.length;   // under the stroke (60 px each side of cx): the person's outer edges are a toss-up for the cut
         undo(); const V2 = S.layers.find(x => x.id === Vd.id); f31 = V2.fx.find(x => x.id === 'rotobrush');
         const ok2 = await waitFor(() => { const j = ROTO.last[f31.uid]; return j && j.f === f31 && ROTO.final.has(j.fk); }), back = red(frame());
         chk('background', [s?.k, n, ok, top.n, top.y0, P.y0, f31.roto.strokes.length, ok2, back.n], s?.k === 'bg' && ok && top.y0 > mid - 60 && top.n < P.n * .7 && f31.roto.strokes.length === n - 1 && ok2 && back.n > P.n * .9);

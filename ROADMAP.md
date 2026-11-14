@@ -915,6 +915,11 @@ Sources:
     scene, Create Text and undo, Delete with the Delete key solving again without tracking again, Specify Angle of View,
     Render Track Points, Solve Lens Distortion and Undistort Footage, the saved project), camtrack32Menu and
     round32speed; perspectiveMenu now expects 11.
+  - **Roto Brush's background check fixed (2026-11-14):** roto31Details' background check failed now and then (3 of 7 fx
+    runs). The same recorded video failed the same way on Round 31's build, so it wasn't Round 32. The Alt stroke is 120 px
+    wide but the person 150 px: whether the cut drops the strips at the sides is a toss-up, yet the check failed if any red
+    stayed above the stroke's end. It now looks only at the columns under the stroke (it still fails if the stroke does
+    nothing). Found by replaying one recorded video in a Roto-only suite (deleted after).
 - **EffectCraft Round 31 done (2026-11-13): Roto Brush & Refine Edge**, the first big tool (Matte group, now 5).
   - **Use:** Layer › Roto Brush (Alt+W), or the effect's Roto Brush tool button. Paint over the object on the preview
     (green); hold Alt to paint what isn't part of it (red); Ctrl+drag sets the brush size; the Refine Edge brush (blue,
