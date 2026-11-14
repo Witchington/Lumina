@@ -7,22 +7,32 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 32 (Camera Tracker) (Round 31 done 2026-11-13); Round 31 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 33 (Warp Stabilizer) (Round 32 done 2026-11-14); Round 32 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 31 is committed (2026-11-13; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 32 is committed (2026-11-14; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–31 and the Round 6 leftovers are done; every Simulation effect is in (18), the **Utility** (7) and **Text** (2)
-groups are in, Audio Spectrum and Audio Waveform joined Generate (Round 30), and **Roto Brush & Refine Edge** joined Matte
-(Round 31, the first big tool). **The big tools go largest first (the user, 2026-11-13: "Do Largest Tool to Smallest Tool
-get the harder bigger ones out the way first")**, one a Round, by the size of EffectCraft's code for each: **Round 32
-Camera Tracker**, then Warp Stabilizer, Puppet, Paint, Face Tracking, 3D Channel effects, Object Matte (it reuses Roto
-Brush's engine), Liquify. Face Tracking may need a model: ask the user before any download. Find each tool's host code in
-EffectCraft at the pinned commit with `gh api`, as before. Round 31's helpers: `workers/roto.js` (a Web Worker: the whole
+Rounds 8–32 and the Round 6 leftovers are done; every Simulation effect is in (18), the **Utility** (7) and **Text** (2)
+groups are in, Audio Spectrum and Audio Waveform joined Generate (Round 30), **Roto Brush & Refine Edge** joined Matte
+(Round 31, the first big tool) and the **3D Camera Tracker** joined Perspective (Round 32). **The big tools go largest
+first (the user, 2026-11-13: "Do Largest Tool to Smallest Tool get the harder bigger ones out the way first")**, one a
+Round, by the size of EffectCraft's code for each: **Round 33 Warp Stabilizer** (track/src/stabilize.rs, subspace.rs,
+effects/src/warp_stab.rs; it shares the Camera Tracker's feature tracks: `TrackAnalyzer` with a budget in
+workers/camtrack.js), then Puppet, Paint, Face Tracking, 3D Channel effects, Object Matte (it reuses Roto Brush's
+engine), Liquify. Face Tracking may need a model: ask the user before any download. Find each tool's host code in
+EffectCraft at the pinned commit with `gh api`, as before. Round 32's helpers: `workers/camtrack.js` (a Web Worker: KLT
+feature tracks, the camera solve, bundle adjustment, see the Round 32 entry; ops begin / push / finish / solve, and the
+tests klt / synth), `ctCall` / `ctReset()` (talk to it; Cancel ends a solve by ending the worker), `ctTracksKey` /
+`ctSettings` / `ctSolveKey` (content keys: tracking again only when the frames change, solving again when the settings
+or deleted points change), `ctWant` / `ctPump` / `ctGrab` (one analysis at a time in the background; `ctGrab` is
+rotoGrab's way of reading the effect's input at another frame), `ctOf(f)` (a tracker's tracks and solve now),
+`ctProject` / `ctVisible` / `ctTarget` / `ctPlaneAxes` / `ctFitPlane` (the solve on the main thread), `ctPinQuad` (Camera
+Track Pin's four corners), `ctSave` / `ctLoad` (the project's `camTrack`), `ctWarmAll()` (export waits on it); Lumina's
+shaders/lumina_camtrack.wgsl (`lct_undistort`). Round 31's helpers: `workers/roto.js` (a Web Worker: the whole
 classic segmentation engine, see the Round 31 entry), `rotoCall(op, m, transfer)` (talk to it), `rotoGrid(E)` (the
 layer's own pixel grid and the frame → grid matrix), `rotoRead(E, img, G)` (the effect's input on that grid, read back),
 `rotoChain` / `rotoSeed` / `rotoFinalKey` (content keys, so undo and reopening never see a stale matte), `rotoWant` /
@@ -592,7 +602,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 32 (Camera Tracker)**, then the other big tools, largest first.
+EffectCraft carries on at **Round 33 (Warp Stabilizer)**, then the other big tools, largest first.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -614,8 +624,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–31 and the Round 6 leftovers are done; Round 32 (Camera Tracker) is next.** About
-   42 effects are left, in Rounds 32+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–32 and the Round 6 leftovers are done; Round 33 (Warp Stabilizer) is next.** About
+   41 effects are left, in Rounds 33+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -862,6 +872,49 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 32 done (2026-11-14): 3D Camera Tracker**, the second big tool (Perspective group, now 11 with
+  Camera Track Pin).
+  - **Use:** Layer › Track Camera (After Effects: Animation › Track Camera), or Effect › Perspective › 3D Camera Tracker.
+    The analysis starts by itself in the background ("Analyzing in background (step 1 of 2)", then "Solving camera" at
+    the bottom left of the preview; Lumina stays usable); Analyze / Cancel in the effect. When it is solved the track
+    points show over the layer while it is selected (3D Solved, or the 2D Source tracks), each in its own colour. Select
+    track points (the effect's button) to pick them: click a point, click inside a triangle of three (the target shows
+    under the cursor: red and white rings on that plane), drag a box, Shift adds; Esc or Done ends. Right-click: Create
+    Text, Create Solid, Create Multiple Text Layers / Solids (one on each selected point), Delete Selected Points (Delete
+    key too). The effect's report: Method used, Average error, and "Partial solve: n of m frames" when some frames were
+    only interpolated. Settings as After Effects: Shot Type (Fixed / Variable Zoom / Specify Angle of View), Horizontal
+    Angle of View, Show Track Points, Render Track Points, Track Point Size, Target Size, Solve Method (Auto Detect,
+    Typical, Mostly Flat Scene, Tripod Pan), Detailed Analysis, Solve Lens Distortion, Undistort Footage, Auto-delete
+    Points Across Time, Hide Warning Banner.
+  - **The engine (workers/camtrack.js, a Web Worker):** EffectCraft's track/src/klt.rs and camtrack/*.rs ported line by
+    line: Shi–Tomasi corners followed with pyramidal Lucas–Kanade and a forward–backward check (long tracks, new corners
+    where the frame has none, at most 720 px; Detailed Analysis 1280 px and more features); parallax keyframes; a
+    two-view start from the essential matrix (8-point in RANSAC) or a homography decomposition; resection and
+    triangulation keyframe by keyframe; a sparse Levenberg–Marquardt bundle adjustment with the Schur complement over the
+    points and a Huber loss (banded Cholesky); the focal length searched over angles of view and refined; tripod pans
+    solved as rotations; radial lens distortion (k1, k2) solved jointly. One change: Auto Detect's quick tripod check also
+    tries five angles of view, since a pan looks like a flat scene to the general solve and its focal length is then
+    unreliable (without it, a tripod pan came out as Typical).
+  - **How it fits Lumina:** the frames are the effect's input on the layer's own grid (Roto Brush's rotoGrid / grab
+    mode), so the effects before it count and moving the layer doesn't re-analyse. The tracks are keyed by what the
+    frames are made from, the solve by the tracks plus Shot Type, Angle of View, Solve Method, the deleted points and
+    lens distortion: changing those solves again without tracking again, and undo / redo bring the earlier solve straight
+    back. The analyses are saved in the project file (`camTrack`; track positions as base64 floats). **Create** makes a
+    text or shape layer above the tracked one with **Camera Track Pin** (Lumina's own effect): its box is laid on the
+    target's plane through the solved camera on every frame, like Corner Pin. Lumina has no 3D camera or light layers
+    yet (After Effects Round A8), so Create Camera, Create Null, Shadow Catcher and Light, Set Ground Plane and Origin and
+    Export to Blender are left for then; the solve keeps everything they need.
+  - **Speed:** about 33 ms a frame to track at 720p in the worker; the solve took about 7–15 s for 60 made-up frames
+    (Specify Angle of View under 2 s); on a made-up 3-second, 177-frame video at 1080p the whole analysis took about 30 s (Average error 0.12 px, 49.8° found for a 50° camera); a solved frame draws in about 6 ms (10 ms with a pinned solid over it).
+  - Host code from EffectCraft's crates/effects/src/camera_tracker.rs, crates/track/src/klt.rs, fit.rs, camtrack.rs and
+    camtrack/*, engine/src/analysis/camera_track.rs, engine/src/cmd/camera_cmds.rs and ui-egui's camera_tracker_ui.rs,
+    read with `gh api`; nothing was downloaded or installed.
+  - Test: the fx suite's camtrack32Kernels, camtrack32Details (the engine: KLT on a shifted texture, made-up scenes with
+    a known 50° camera; a made-up video of a camera moving through a field of checker squares: Layer › Track Camera and
+    the analysis, the points on the preview, picking a triangle with the mouse, right-click › Create Solid following the
+    scene, Create Text and undo, Delete with the Delete key solving again without tracking again, Specify Angle of View,
+    Render Track Points, Solve Lens Distortion and Undistort Footage, the saved project), camtrack32Menu and
+    round32speed; perspectiveMenu now expects 11.
 - **EffectCraft Round 31 done (2026-11-13): Roto Brush & Refine Edge**, the first big tool (Matte group, now 5).
   - **Use:** Layer › Roto Brush (Alt+W), or the effect's Roto Brush tool button. Paint over the object on the preview
     (green); hold Alt to paint what isn't part of it (red); Ctrl+drag sets the brush size; the Refine Edge brush (blue,

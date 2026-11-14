@@ -763,6 +763,8 @@ body.still #pTimeline, body.still .vid-only { display: none !important; }
       <span class="cropbar" id="rotoBar" hidden><select id="rotoMode" title="Which brush"><option value="roto">Roto Brush</option><option value="refine">Refine Edge</option></select>
         <label title="Brush size in layer pixels (Ctrl+drag on the preview)">Size <input id="rotoSize" type="range" min="2" max="400" step="1"> <b id="rotoSizeN"></b></label>
         <label title="Show the layer cut out while you paint"><input type="checkbox" id="rotoResult"> Show the cut-out</label><button class="primary" id="rotoDone" title="Esc">Done</button></span>
+      <span class="cropbar" id="ctBar" hidden><b>3D Camera Tracker</b> <span>Click inside three points, drag a box (Shift adds), right-click to create.</span> <b id="ctBarN"></b>
+        <button class="primary" id="ctDone" title="Esc">Done</button></span>
       <span class="spacer"></span>
       <span class="hint" id="vsize"></span>
     </div>
@@ -2477,8 +2479,9 @@ const FX_FAMILIES = { kernels: [], fx_distort: ['fx_distort'], fx_light: ['fx_li
   lumina_sim: ['lumina_sim'],         // Round 26: CC Particle World's textured squares (shaders/)
   fx_text: ['fx_text'],               // Round 29: Numbers' and Timecode's text over the layer (ftx_text)
   lumina_roto: ['lumina_roto'],       // Round 31: Roto Brush & Refine Edge's matte over the frame (shaders/)
+  lumina_camtrack: ['lumina_camtrack'],   // Round 32: the 3D Camera Tracker's Undistort Footage (shaders/)
   lumina_util: ['lumina_util'] };     // Round 29: CC Overbrights, HDR Highlight Compression, HDR Compander, Cineon Converter (shaders/)
-const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl', lumina_sim: 'shaders/lumina_sim.wgsl', lumina_util: 'shaders/lumina_util.wgsl', lumina_roto: 'shaders/lumina_roto.wgsl' };
+const FX_PATHS = { lumina_vfx: 'shaders/lumina_vfx.wgsl', lumina_lumetri: 'shaders/lumina_lumetri.wgsl', lumina_key: 'shaders/lumina_key.wgsl', lumina_gen: 'shaders/lumina_gen.wgsl', lumina_noise: 'shaders/lumina_noise.wgsl', lumina_trans: 'shaders/lumina_trans.wgsl', lumina_chan: 'shaders/lumina_chan.wgsl', lumina_time: 'shaders/lumina_time.wgsl', lumina_sim: 'shaders/lumina_sim.wgsl', lumina_util: 'shaders/lumina_util.wgsl', lumina_roto: 'shaders/lumina_roto.wgsl', lumina_camtrack: 'shaders/lumina_camtrack.wgsl' };
 const FXG = { dev: null, failed: null, src: {}, mods: {}, pipes: {}, pool: [], poolKey: '' };
 FXG.ready = (async () => {
   try {
@@ -2698,6 +2701,255 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 32 helpers (3D Camera Tracker): EffectCraft's crates/effects/src/camera_tracker.rs (the settings, the
+//      solve keys, the track points, the targets), engine/src/analysis/camera_track.rs (the analysis in the
+//      background: step 1 tracks features through the layer, step 2 solves the camera) and engine/src/cmd/camera_cmds.rs
+//      (Create Text / Solid on a target, Delete Points) on Lumina's side; the tracking and the solve run in
+//      workers/camtrack.js. Lumina has no 3D camera layers yet (After Effects Round A8), so a layer made on a target
+//      gets the Camera Track Pin effect: it lays the layer on the target's plane through the solved camera, frame by frame.
+const CT_K = [['lumina_camtrack', 'lct_undistort'], ['lumina_gen', 'lg_put'], ['kernels', 'fill']];
+const CT_SHOT = ['fixed', 'variable', 'specify'], CT_METHOD = ['auto', 'typical', 'flat', 'tripod'];
+const CT_METHOD_NAME = { auto: 'Auto Detect', typical: 'Typical', flat: 'Mostly Flat Scene', tripod: 'Tripod Pan' };
+// tracks / solves: content-keyed analyses (tracks key: what the frames are made from; solve key: the tracks and the solve
+// settings); fail: why a solve failed; want: the analysis the screen asks for; job: the one running; last: each
+// tracker's keys as last drawn; saved: keys read from a project file; tool: picking points on the preview; sel: the
+// selected points; hits: the points drawn on the overlay (overlay pixels)
+const CT = { worker: null, seq: 0, wait: new Map(), tracks: new Map(), solves: new Map(), fail: new Map(), cancelled: new Set(),
+  want: null, job: null, grab: null, last: {}, saved: {}, tool: null, sel: { uid: null, ids: new Set() }, hits: [], hover: null, menu: null };
+function ctW() {
+  if (!CT.worker) {
+    CT.worker = new Worker(new URL('workers/camtrack.js', location.href));
+    CT.worker.onmessage = e => {
+      if (e.data.progress != null) { if (CT.job) { CT.job.sp = e.data.progress; drawOverlay(); } return; }
+      const r = CT.wait.get(e.data.id); CT.wait.delete(e.data.id); r?.(e.data.res || { error: 'no answer' });
+    };
+    CT.worker.onerror = e => { console.warn('camera tracker worker:', e.message); for (const r of CT.wait.values()) r({ error: e.message }); CT.wait.clear(); };
+  }
+  return CT.worker;
+}
+const ctCall = (op, m = {}, tr = []) => new Promise(r => { const id = ++CT.seq; CT.wait.set(id, r); ctW().postMessage({ ...m, id, op }, tr); });
+// a solve can't be stopped from outside: Cancel ends the worker (a new one starts with the next analysis)
+function ctReset() { CT.worker?.terminate(); CT.worker = null; for (const r of CT.wait.values()) r({ error: 'cancelled' }); CT.wait.clear(); }
+// the solve settings (camera_tracker::settings) and what a solve depends on besides the tracks (solve_key)
+function ctSettings(f, q) {
+  return { shot: CT_SHOT[q('shotType')] || 'fixed', hfov: q('hfov'), method: CT_METHOD[q('solveMethod')] || 'auto',
+    deleted: [...new Set(f.deleted || [])].sort((a, b) => a - b), lens: !!(q('lensDistortion') || q('detailed')) };
+}
+const ctSolveKey = (tk, st) => rotoHash(tk + '|' + st.shot + '|' + (st.shot === 'specify' ? (+st.hfov).toFixed(4) : '') + '|' + st.method + '|' + st.deleted.join(',') + (st.lens ? '|lens' : ''));
+// what the tracks are made from: the layer's content (not where it sits), the effects before this one, the grid, the
+// frames analysed and which source frames they show, Detailed Analysis (analysis::tracks_key)
+function ctTracksKey(E, G, detailed, lo, hi) {
+  const L = E.L, after = (L.fx || []).slice(E.idx).map(f => `fx${f.uid}_`), keep = o => Object.fromEntries(Object.entries(o || {}).filter(([k]) => !ROTO_PLACE.has(k) && !after.some(p => k.startsWith(p))));
+  const before = (L.fx || []).slice(0, E.idx).filter(f => f.on !== false).map(f => JSON.stringify(f));
+  const stamp = g => L.kind === 'video' ? Math.round(srcTime(L, rotoTime(L, g)) * 1000) : 0;
+  return rotoHash(JSON.stringify(['camtrack', L.kind, L.media, L.text, L.shape, L.src, keep(L.p), keep(L.keys), L.mask, before, G.gw, G.gh, !!detailed, lo, hi, stamp(lo), stamp(hi), S.fps]));
+}
+// ---- the solve on the main thread: frames, projection, targets (camtrack.rs)
+const ctRod = w => {
+  const th = Math.hypot(w[0], w[1], w[2]), K = [[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]], I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  if (th < 1e-12) return I.map((r, i) => r.map((v, j) => v + K[i][j]));
+  const a = Math.sin(th) / th, b = (1 - Math.cos(th)) / (th * th), KK = m3mul(K, K);
+  return I.map((r, i) => r.map((v, j) => v + a * K[i][j] + b * KK[i][j]));
+};
+const ctSub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], ctAdd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], ctSc = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const ctDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], ctCross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const ctNorm = a => { const n = Math.hypot(a[0], a[1], a[2]); return n > 0 ? ctSc(a, 1 / n) : a; };
+const ctMv = (m, v) => [ctDot(m[0], v), ctDot(m[1], v), ctDot(m[2], v)], ctMtv = (m, v) => [0, 1, 2].map(j => m[0][j] * v[0] + m[1][j] * v[1] + m[2][j] * v[2]);
+// the analysed frame showing at timeline time T (held at the ends)
+function ctFrameIdx(sol, L, T) { return clamp(rotoFrame(L, T) - sol.start, 0, sol.frames.length - 1); }
+function ctCam(sol, k) { const c = sol.frames[k]; return c && (c.R ||= ctRod(c.rot), c); }
+const ctDistNone = d => !d || d.radius <= 0 || (d.k1 === 0 && d.k2 === 0);
+// a world point on frame k → layer pixels (through the lens distortion unless `ideal`); null behind the camera
+function ctProject(sol, k, X, ideal) {
+  const c = ctCam(sol, k); if (!c) return null;
+  const p = ctMv(c.R, ctSub(X, c.center)); if (p[2] <= 1e-9) return null;
+  let u = c.focal * p[0] / p[2], v = c.focal * p[1] / p[2];
+  const d = sol.distortion;
+  if (!ideal && !ctDistNone(d)) { const r2 = (u * u + v * v) / (d.radius * d.radius), s = 1 + d.k1 * r2 + d.k2 * r2 * r2; u *= s; v *= s; }
+  return [u + sol.size[0] / 2, v + sol.size[1] / 2, p[2]];
+}
+// the points tracked on frame k: [{ id, x, y, z }] (layer pixels, camera depth)
+function ctVisible(sol, k, ideal) {
+  const out = [];
+  for (const p of sol.points) if (p.first - 0 <= k && k <= p.last) { const q = ctProject(sol, k, p.pos, ideal); if (q) out.push({ id: p.id, x: q[0], y: q[1], z: q[2] }); }
+  return out;
+}
+const ctMedianZ = v => { const z = v.map(p => p.z).sort((a, b) => a - b); return z.length ? z[z.length >> 1] : 1; };
+const ctTargetRadius = (pct, z, mz) => clamp(6 * pct / 100 * (mz / Math.max(z, 1e-9)), 1.5, 40);
+// a point's own colour (After Effects draws each target in its own colour)
+function ctColor(id) {
+  let h = Math.imul(id, 0x9e3779b9) ^ 0x5bd1e995; h ^= h >>> 15; h >>>= 0;
+  const hue = (h % 360) / 60, x = 1 - Math.abs(hue % 2 - 1), i = Math.floor(hue);
+  const [r, g, b] = i === 0 ? [1, x, 0] : i === 1 ? [x, 1, 0] : i === 2 ? [0, 1, x] : i === 3 ? [0, x, 1] : i === 4 ? [x, 0, 1] : [1, 0, x];
+  return [.25 + .75 * r, .25 + .75 * g, .25 + .75 * b].map(v => Math.round(v * 255));
+}
+// least-squares plane through points: [centroid, unit normal, RMS in-plane spread] (geometry::fit_plane)
+function ctFitPlane(P) {
+  if (P.length < 3) return null;
+  const k = 1 / P.length, c = ctSc(P.reduce(ctAdd, [0, 0, 0]), k), a = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (const q of P) { const d = ctSub(q, c); for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) a[i * 3 + j] += d[i] * d[j] * k; }
+  const v = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  for (let it = 0; it < 60; it++) {
+    let off = a[1] * a[1] + a[2] * a[2] + a[5] * a[5]; if (off < 1e-30) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      const apq = a[p * 3 + q]; if (Math.abs(apq) < 1e-300) continue;
+      const th = (a[q * 4] - a[p * 4]) / (2 * apq), t = th === 0 ? 1 : Math.sign(th) / (Math.abs(th) + Math.sqrt(th * th + 1)), cs = 1 / Math.sqrt(t * t + 1), sn = t * cs;
+      for (let r = 0; r < 3; r++) { const x = a[r * 3 + p], y = a[r * 3 + q]; a[r * 3 + p] = cs * x - sn * y; a[r * 3 + q] = sn * x + cs * y; }
+      for (let r = 0; r < 3; r++) { const x = a[p * 3 + r], y = a[q * 3 + r]; a[p * 3 + r] = cs * x - sn * y; a[q * 3 + r] = sn * x + cs * y; }
+      for (let r = 0; r < 3; r++) { const x = v[r * 3 + p], y = v[r * 3 + q]; v[r * 3 + p] = cs * x - sn * y; v[r * 3 + q] = sn * x + cs * y; }
+    }
+  }
+  const o = [0, 1, 2].sort((x, y) => a[x * 4] - a[y * 4]);
+  if (a[o[1] * 4] <= 1e-18) return null;
+  return [c, ctNorm([v[o[0]], v[3 + o[0]], v[6 + o[0]]]), Math.sqrt(Math.max(0, a[o[1] * 4] + a[o[2] * 4]))];
+}
+// the target: the plane through points `ids` seen from frame k, facing the camera, sized by their spread
+// (CameraSolve::target)
+function ctTarget(sol, ids, k) {
+  const P = ids.map(i => sol.points.find(p => p.id === i)?.pos).filter(Boolean), cam = ctCam(sol, k), fp = cam && ctFitPlane(P); if (!fp) return null;
+  let [c, n, spread] = fp; if (ctDot(n, ctSub(cam.center, c)) < 0) n = ctSc(n, -1);
+  return { center: c, normal: n, size: Math.max(spread * 2, Math.hypot(...ctSub(cam.center, c)) * 0.12) };
+}
+// a layer lying on a plane facing the camera: its x axis along the camera's right, projected on the plane; y = z × x
+// (camera_track::plane_orientation)
+function ctPlaneAxes(normal, right) {
+  const z = ctSc(normal, -1); let x = ctSub(right, ctSc(z, ctDot(right, z)));
+  if (Math.hypot(...x) < 1e-9) { x = Math.abs(z[0]) < .9 ? [1, 0, 0] : [0, 1, 0]; x = ctSub(x, ctSc(z, ctDot(x, z))); }
+  x = ctNorm(x); return { x, y: ctCross(z, x) };
+}
+// the solve and tracks a tracker effect has now (or the keys it had when the project was saved)
+function ctOf(f) {
+  const k = CT.last[f.uid] || CT.saved[f.uid]; if (!k) return {};
+  return { job: CT.last[f.uid], tracks: CT.tracks.get(k.tk), sol: CT.solves.get(k.sk), fail: CT.fail.get(k.sk), tk: k.tk, sk: k.sk };
+}
+function ctStatus(f) {
+  const { job, sol, fail, tracks, tk } = ctOf(f), j = CT.job;
+  if (j && j.f === f) return j.step === 1 ? `Analyzing in background (step 1 of 2): ${j.n || 0} of ${j.m} frames` : 'Solving camera (step 2 of 2)…';
+  if (sol) {
+    const solved = sol.frames.filter(x => x.solved).length, part = solved < sol.frames.length ? ` · Partial solve: ${solved} of ${sol.frames.length} frames` : '';
+    return `Method used: ${CT_METHOD_NAME[sol.methodUsed] || sol.methodUsed} · Average error: ${sol.averageError.toFixed(2)} pixels${part}`;
+  }
+  if (fail) return 'Unable to solve camera: try another Solve Method or Shot Type';
+  if (CT.want?.f === f) return tracks ? 'Waiting to solve' : 'Waiting to analyze';
+  if (tk && CT.cancelled.has(tk)) return 'Not analyzed: click Analyze';
+  return job ? 'Waiting to analyze' : 'Not analyzed: click Analyze';
+}
+// ---- the analysis, in the background: the tracker the screen shows first, one at a time
+function ctWant(job) {
+  if (CT.job && CT.job.sk === job.sk && CT.job.f === job.f) return;
+  if (!CT.want || CT.want.sk !== job.sk || CT.want.f !== job.f) CT.want = job;
+  queueMicrotask(ctPump);
+}
+// Analyze (again): forget a failed or cancelled analysis of what the effect shows now
+function ctAnalyze(L, f) {
+  const { tk, sk } = ctOf(f); if (tk) CT.cancelled.delete(tk); if (sk) CT.fail.delete(sk);
+  const j = CT.last[f.uid]; if (j) ctWant(j); else refresh();
+}
+function ctCancel(f) {
+  const j = CT.job; if (j?.f === f) { j.cancel = true; if (j.step === 2) ctReset(); }
+  if (CT.want?.f === f) { CT.cancelled.add(CT.want.tk); CT.want = null; }
+  inspector(); drawOverlay();
+}
+async function ctPump() {
+  if (CT.job || !CT.want) return;
+  const job = CT.job = CT.want; CT.want = null;
+  job.step = CT.tracks.has(job.tk) ? 2 : 1; job.n = 0; job.m = job.hi - job.lo + 1; inspector(); drawOverlay();
+  try {
+    if (job.step === 1) {
+      const jid = ++CT.seq;
+      await ctCall('begin', { jid, size: [job.G.bw, job.G.bh], gs: job.G.gs, detailed: job.detailed });
+      for (let g = job.lo; g <= job.hi; g++) {
+        if (job.cancel) { ctCall('drop', { jid }); throw 'cancel'; }
+        const img = await ctGrab(job, g); if (!img) throw new Error('a frame could not be read');
+        const r = await ctCall('push', { jid, img }, [img.d.buffer]); if (r.error) throw new Error(r.error);
+        job.n = g - job.lo + 1; if (job.n % 4 === 0) { drawOverlay(); inspector(); }
+      }
+      const r = await ctCall('finish', { jid, start: job.lo, fd: 1 / S.fps }); if (r.error) throw new Error(r.error);
+      CT.tracks.set(job.tk, r.tracks); job.step = 2; inspector(); drawOverlay();
+    }
+    const r = await ctCall('solve', { tracks: CT.tracks.get(job.tk), settings: job.st });
+    if (job.cancel) throw 'cancel';
+    if (r.error) CT.fail.set(job.sk, r.error); else { CT.solves.set(job.sk, r.solve); job.ms = r.ms; }
+  } catch (e) {
+    if (e === 'cancel' || job.cancel) CT.cancelled.add(job.tk);
+    else CT.fail.set(job.sk, String(e?.message || e));
+  } finally {
+    CT.job = null; refresh();
+    if (CT.solves.has(job.sk) && S.sel === job.L.id) notice('Camera solved. Click inside three track points (or Select track points), then right-click to place text or a solid in the scene.');
+    ctPump();
+  }
+}
+// the effect's input at layer frame g on the grid (fxApply in grab mode stops at this effect; rotoGrab's way)
+async function ctGrab(job, g) {
+  const { L, f } = job, T = rotoTime(L, g);
+  if (L.kind === 'video' && L.media) for (let i = 0; i < 40 && !vfFrame(L, srcTime(L, T)); i++) { await vfSettle(); await new Promise(r => setTimeout(r, 15)); }
+  await fxWarm(f.id); await fxWarmUsed();
+  const r = RT[L.id] || (ensureRT(L), RT[L.id]) || (RT[L.id] = {}), keep = { m: r.m, box: r.box }, at = VF_AT, rt = renderT, lc = layerCanvas('ctgrab');
+  CT.grab = { uid: f.uid, out: null }; VF_AT = T; renderT = T;
+  try { paintLayer(L, T, lc.cx); fxApply(L, T, lc); }
+  finally { VF_AT = at; renderT = rt; r.m = keep.m; r.box = keep.box; }
+  const out = CT.grab.out; CT.grab = null; return out;
+}
+// export waits for the analyses the frames need
+async function ctWarmAll() {
+  const t0 = performance.now();
+  while ((CT.job || CT.want) && performance.now() - t0 < 30 * 60e3) await new Promise(r => setTimeout(r, 100));
+}
+// ---- Undistort Footage and Render Track Points, drawn into the frame
+function ctUndistortRun(E, img, G, d) {
+  const Mi = m3inv(G.M) || m3t(0, 0);
+  return E.run('lumina_camtrack', 'lct_undistort', fxP({ 0: [G.gw, G.gh, 0, 0] }, { 0: G.M[0], 1: G.M[1], 2: Mi[0], 3: Mi[1], 4: [G.gs, d.k1, d.k2, d.radius], 5: [G.bw / 2, G.bh / 2, G.bw, G.bh] }), img);
+}
+let CT_CV = null;
+function ctRenderPoints(E, img, sol, k, ideal, pct) {
+  const w = E.w, h = E.h; if (!CT_CV) CT_CV = document.createElement('canvas');
+  if (CT_CV.width !== w || CT_CV.height !== h) { CT_CV.width = w; CT_CV.height = h; }
+  const cx = CT_CV.getContext('2d', { willReadFrequently: true }); cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, w, h);
+  const m = DOMMatrix.fromMatrix(E.m).translate(-E.bw / 2, -E.bh / 2), pts = ctVisible(sol, k, ideal), mz = ctMedianZ(pts), sc = E.sc;
+  for (const p of pts) {
+    const q = m.transformPoint(new DOMPoint(p.x, p.y)), r = ctTargetRadius(pct, p.z, mz) * sc, [cr, cg, cb] = ctColor(p.id);
+    cx.strokeStyle = cx.fillStyle = `rgb(${cr},${cg},${cb})`; cx.lineWidth = Math.max(1, r * .25);
+    cx.beginPath(); cx.arc(q.x, q.y, r, 0, Math.PI * 2); cx.stroke();
+    cx.beginPath(); cx.arc(q.x, q.y, Math.max(.8, r * .2), 0, Math.PI * 2); cx.fill();
+  }
+  const d = cx.getImageData(0, 0, w, h).data;
+  for (let i = 0; i < d.length; i += 4) { const a = d[i + 3]; if (a < 255) { d[i] = d[i] * a / 255; d[i + 1] = d[i + 1] * a / 255; d[i + 2] = d[i + 2] * a / 255; } }
+  return E.run('lumina_gen', 'lg_put', fxP({ 0: [1, 0, 0, 0] }), img, E.texFrom8(d, w, h));
+}
+// ---- Camera Track Pin: the layer's box laid on its target's plane through the tracker's solved camera
+function ctPinQuad(pin, E, k1) {
+  const src = byId(pin.lid), r = src && RT[src.id], tf = src?.fx?.find(x => x.uid === pin.uid);
+  if (!tf || tf.on === false || !r?.m || !r.box) return undefined;
+  const { sol } = ctOf(tf); if (!sol) return undefined;
+  const k = ctFrameIdx(sol, src, E.T), ideal = !!tf.undistort && !ctDistNone(sol.distortion);
+  const hw = pin.size * k1 / 2, hh = hw * (E.bh / Math.max(E.bw, 1e-9)), m = DOMMatrix.fromMatrix(r.m).translate(-r.box.w / 2, -r.box.h / 2), out = [];
+  for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const X = ctAdd(pin.c, ctAdd(ctSc(pin.x, a * hw), ctSc(pin.y, b * hh))), q = ctProject(sol, k, X, ideal); if (!q) return null;
+    const s = m.transformPoint(new DOMPoint(q[0] * r.box.w / sol.size[0], q[1] * r.box.h / sol.size[1])); out.push([s.x, s.y]);
+  }
+  return out;
+}
+// ---- the project file: the analyses the trackers use (track positions as base64 floats)
+function ctB64(a) { const b = new Uint8Array(a.buffer, a.byteOffset, a.byteLength); let s = ''; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); return btoa(s); }
+function ctUnB64(s) { const b = Uint8Array.from(atob(s), c => c.charCodeAt(0)); return new Float32Array(b.buffer, 0, b.length >> 2); }
+function ctSave() {
+  const out = { keys: {}, tracks: {}, solves: {} };
+  for (const L of S.layers) for (const f of L.fx || []) {
+    if (f.id !== 'cameratracker') continue;
+    const k = CT.last[f.uid] || CT.saved[f.uid]; if (!k) continue;
+    out.keys[f.uid] = { tk: k.tk, sk: k.sk };
+    const t = CT.tracks.get(k.tk), s = CT.solves.get(k.sk);
+    if (t) out.tracks[k.tk] = { ...t, pts: ctB64(t.pts) };
+    if (s) out.solves[k.sk] = JSON.parse(JSON.stringify(s, (key, v) => key === 'R' ? undefined : v));
+  }
+  return Object.keys(out.keys).length ? out : undefined;
+}
+function ctLoad(d) {
+  if (!d) return;
+  for (const [k, t] of Object.entries(d.tracks || {})) if (!CT.tracks.has(k)) CT.tracks.set(k, { ...t, pts: ctUnB64(t.pts) });
+  for (const [k, s] of Object.entries(d.solves || {})) if (!CT.solves.has(k)) CT.solves.set(k, s);
+  Object.assign(CT.saved, d.keys || {});
+}
 // ---- Round 31 helpers (Roto Brush & Refine Edge): EffectCraft's crates/effects/src/roto.rs (the strokes, the chain of
 //      frames from the base frame out, the frozen mattes) on Lumina's side; the segmentation itself runs in
 //      workers/roto.js (track/src/roto.rs and its modules), and shaders/lumina_roto.wgsl lays the matte over the frame ----
@@ -8399,6 +8651,63 @@ const FX = {
       if (disp === 1) fxPolySegs(pts, false, r, 1, segs); else if (disp === 2) for (const p of pts) segs.push([p[0], p[1], p[0], p[1], r, 1]);
       return auMarks(E, img, q, segs, thick, soft);
     } },
+  // ---- Round 32: 3D Camera Tracker (EffectCraft's crates/effects/src/camera_tracker.rs; the analysis of
+  //      track/src/camtrack runs in workers/camtrack.js). Applying it starts the analysis in the background: step 1
+  //      tracks features through the layer, step 2 solves the camera. Changing Shot Type, Angle of View, Solve Method or
+  //      deleting points solves again without tracking again. The effect passes its input through (undistorted with
+  //      Undistort Footage); Render Track Points draws the solved points into the frame.
+  cameratracker: { name: '3D Camera Tracker', cat: 'Perspective', kernels: CT_K, params: [
+      { id: 'analyze', type: 'btn', text: f => CT.job?.f === f || CT.want?.f === f ? 'Cancel' : 'Analyze', label: ctStatus,
+        act(L, f) { if (CT.job?.f === f || CT.want?.f === f) ctCancel(f); else ctAnalyze(L, f); } },
+      { id: 'pick', type: 'btn', text: f => CT.tool?.uid === f.uid ? 'Done' : 'Select track points', label: f => {
+          const n = CT.sel.uid === f.uid ? CT.sel.ids.size : 0;
+          return CT.tool?.uid === f.uid ? `Selecting points (${n}): click inside three, drag a box; right-click to create` : n ? `${n} track points selected` : 'Track points'; },
+        act(L, f) { CT.tool?.uid === f.uid ? ctToolEnd() : ctTool(L, f); } },
+      { id: 'createText', type: 'btn', text: 'Create Text', label: 'On the selected points', act(L, f) { ctCreate(L, f, 'text', false); } },
+      { id: 'createSolid', type: 'btn', text: 'Create Solid', label: 'On the selected points', act(L, f) { ctCreate(L, f, 'solid', false); } },
+      { id: 'deletePoints', type: 'btn', text: 'Delete Selected Points', label: f => `Deleted points: ${new Set(f.deleted || []).size}`, act(L, f) { ctDeletePoints(L, f); } },
+      { id: 'shotType', label: 'Shot type', type: 'pick', def: 0, opts: [[0, 'Fixed Angle of View'], [1, 'Variable Zoom'], [2, 'Specify Angle of View']] },
+      { id: 'hfov', label: 'Horizontal angle of view°', def: 40, min: 1, max: 170, dec: 1 },
+      { id: 'showPoints', label: 'Show track points', type: 'pick', def: 1, opts: [[0, '2D Source'], [1, '3D Solved']] },
+      { id: 'renderPoints', label: 'Render track points', type: 'check', def: false },
+      { id: 'pointSize', label: 'Track point size %', def: 100, min: 0, max: 1000, dec: 0 },
+      { id: 'targetSize', label: 'Target size %', def: 100, min: 1, max: 1000, dec: 0 },
+      { id: 'solveMethod', label: 'Solve method', type: 'pick', def: 0, opts: [[0, 'Auto Detect'], [1, 'Typical'], [2, 'Mostly Flat Scene'], [3, 'Tripod Pan']] },
+      { id: 'detailed', label: 'Detailed analysis', type: 'check', def: false },
+      { id: 'lensDistortion', label: 'Solve lens distortion', type: 'check', def: false },
+      { id: 'undistort', label: 'Undistort footage', type: 'check', def: false },
+      { id: 'autoDelete', label: 'Auto-delete points across time', type: 'check', def: true },
+      { id: 'hideWarning', label: 'Hide warning banner', type: 'check', def: false }],
+    run(E, img, q) {
+      const f = E.fx, L = E.L, G = rotoGrid(E); if (!G) return img;
+      // grab mode (the worker wants this frame's input): read it and stop
+      if (CT.grab?.uid === f.uid) { CT.grab.out = rotoRead(E, img, G); E.stop = true; return img; }
+      const [lo, hi] = rotoLimits(L), detailed = !!q('detailed'), tk = ctTracksKey(E, G, detailed, lo, hi), st = ctSettings(f, q), sk = ctSolveKey(tk, st);
+      const job = { L, f, tk, sk, st, G, detailed, lo, hi };
+      if (E.depth === 0) CT.last[f.uid] = job;
+      const sol = CT.solves.get(sk);
+      if (!sol && !CT.fail.has(sk) && !CT.cancelled.has(tk) && hi >= lo) ctWant(job);
+      if (!sol || Math.abs(sol.size[0] - G.bw) > .5 || Math.abs(sol.size[1] - G.bh) > .5) return img;
+      const und = !!q('undistort') && !ctDistNone(sol.distortion);
+      if (und) img = ctUndistortRun(E, img, G, sol.distortion);
+      if (q('renderPoints')) img = ctRenderPoints(E, img, sol, ctFrameIdx(sol, L, E.T), und, q('pointSize'));
+      return img;
+    } },
+  // Lumina's own: a layer made on a 3D Camera Tracker target (Create Text / Create Solid) lies on the target's plane,
+  // seen through the solved camera on every frame (until Lumina has 3D camera layers, After Effects Round A8). The
+  // layer's own box is pinned to the target, like Corner Pin.
+  campin: { name: 'Camera Track Pin', cat: 'Perspective', kernels: WARP_K, params: [
+      { id: 'source', type: 'btn', text: 'Select the tracked layer', label: f => { const L = f.pin && byId(f.pin.lid); return L ? `Follows the 3D Camera Tracker on “${L.name}”` : 'Not pinned: make it with the 3D Camera Tracker’s Create Text or Create Solid'; },
+        act(L, f) { const s = f.pin && byId(f.pin.lid); if (s) { S.sel = s.id; refresh(); } } },
+      { id: 'pinSize', label: 'Size %', def: 100, min: 1, max: 1000, dec: 1 }],
+    run(E, img, q) {
+      if (!E.fx.pin) return img;
+      const quad = ctPinQuad(E.fx.pin, E, q('pinSize') / 100);
+      if (quad === undefined) return img;       // no solve yet: the layer as it is
+      if (!quad) return E.clear(img);           // behind the camera
+      const toUnit = m3mul(m3mul(m3s(1 / E.bw, 1 / E.bh), m3t(E.bw / 2, E.bh / 2)), m3inv(m3of(E.m)) || m3t(0, 0));
+      return fxWarp(E, img, m3mul(m3quad(quad), toUnit));
+    } },
   // ---- Round 31: Roto Brush & Refine Edge (EffectCraft's crates/effects/src/roto.rs; the classic engine of
   //      track/src/roto.rs, run in workers/roto.js). Paint over the object on the preview (the Roto Brush tool); the
   //      first stroke sets the base frame and a span of 20 frames each side, and each frame's matte is carried on from
@@ -11791,7 +12100,7 @@ function drawLoadingNote() {
 }
 function drawOverlay() {
   octx.setTransform(1, 0, 0, 1, 0, 0); octx.clearRect(0, 0, ov.width, ov.height);
-  drawBookmarkNotes(); drawLoadingNote(); drawRotoNote();
+  drawBookmarkNotes(); drawLoadingNote(); drawRotoNote(); drawCtNote();
   if (CROP) { drawCrop(); return; }
   const L = selLayer(), r = L && RT[L.id];
   if (!r || !r.m || S.exporting) return;
@@ -11810,6 +12119,7 @@ function drawOverlay() {
   }
   drawTracks(L);
   rotoOverlay(L);
+  octx.save(); octx.setTransform(1, 0, 0, 1, 0, 0); ctOverlay(L); octx.restore();
 }
 function compPoint(e) {
   const r = ov.getBoundingClientRect();
@@ -11967,6 +12277,212 @@ function drawRotoNote() {
   const w = octx.measureText(txt).width + 22 * k, h = 26 * k, x = 10 * k, y = ov.height - 2 * h - 16 * k;
   octx.fillStyle = 'rgba(0,0,0,.65)'; octx.beginPath(); octx.roundRect(x, y, w, h, h / 2); octx.fill();
   octx.fillStyle = '#ff9ccc'; octx.textBaseline = 'middle'; octx.fillText(txt, x + 11 * k, y + h / 2);
+}
+// ---- Round 32: the 3D Camera Tracker on the preview (EffectCraft's ui-egui camera_tracker_ui.rs): the track points
+// while the layer is selected; Select track points to pick them (click a point, click inside a triangle of three, drag
+// a box, Shift adds), the target under the cursor, right-click to create text or a solid there, Delete removes points
+// Layer › Track Camera: the 3D Camera Tracker on the selected layer (reusing one it has), analysing straight away
+function ctMenu() {
+  const L = selLayer();
+  if (!L || !['video', 'image'].includes(L.kind) && !L.media) return toast('Select a video layer first.');
+  let f = L.fx?.find(x => x.id === 'cameratracker');
+  if (!f) { f = addFX(L, 'cameratracker'); commit(); }
+  setRightTab('fx'); refresh();
+  notice('3D Camera Tracker: analyzing in the background. You can keep working; the track points show when the camera is solved.');
+}
+function ctTool(L, f) {
+  if (!ctOf(f).sol) return toast('The camera isn’t solved yet. Wait for the analysis to finish.');
+  S.sel = L.id; pause(); if (CT.sel.uid !== f.uid) CT.sel = { uid: f.uid, ids: new Set() };
+  CT.tool = { lid: L.id, uid: f.uid, down: null, box: null }; ctBarUI(); refresh();
+  notice('Click inside three track points (or drag a box round some). Right-click to place text or a solid there. Esc ends.');
+}
+function ctToolEnd() { if (!CT.tool) return; CT.tool = null; ctMenuClose(); ctBarUI(); refresh(); }
+function ctBarUI() { $('#ctBar').hidden = !CT.tool; const n = CT.sel.ids.size; $('#ctBarN').textContent = n ? `${n} selected` : 'none selected'; }
+$('#ctDone').onclick = () => { ctToolEnd(); inspector(); };
+const ctToolFx = () => { const t = CT.tool, L = t && byId(t.lid), f = L?.fx?.find(x => x.uid === t.uid); return f && { L, f }; };
+const ctOvPt = e => { const p = compPoint(e), k = ov.width / W(); return [p.x * k, p.y * k]; };
+// the drawn point under p (overlay pixels), and the three drawn points forming a triangle round p (nearest first)
+function ctPointAt(p) {
+  let best = null, bd = Infinity;
+  for (const h of CT.hits) { const d = Math.hypot(h.x - p[0], h.y - p[1]); if (d <= h.r + 3 && d < bd) { bd = d; best = h.id; } }
+  return best;
+}
+function ctTriangleAt(p) {
+  const near = [...CT.hits].sort((a, b) => Math.hypot(a.x - p[0], a.y - p[1]) - Math.hypot(b.x - p[0], b.y - p[1])).slice(0, 8);
+  const side = (a, b) => (b.x - a.x) * (p[1] - a.y) - (b.y - a.y) * (p[0] - a.x);
+  for (let i = 0; i < near.length; i++) for (let j = i + 1; j < near.length; j++) for (let k = j + 1; k < near.length; k++) {
+    const a = near[i], b = near[j], c = near[k], area = Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+    const d1 = side(a, b), d2 = side(b, c), d3 = side(c, a);
+    if (area > 30 && !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))) return [a.id, b.id, c.id];
+  }
+  return null;
+}
+function ctSelect(ids, how) {
+  const s = CT.sel.ids;
+  if (how === 'set') { s.clear(); ids.forEach(i => s.add(i)); }
+  else if (how === 'add') ids.forEach(i => s.add(i));
+  else ids.forEach(i => s.has(i) ? s.delete(i) : s.add(i));
+  ctBarUI(); inspector(); drawOverlay();
+}
+ov.addEventListener('pointerdown', e => {
+  const t = CT.tool; if (!t || ROTO.tool) return;
+  e.stopImmediatePropagation(); e.preventDefault(); ctMenuClose();
+  if (e.button === 2) return;
+  if (e.button !== 0) return;
+  t.down = ctOvPt(e); t.box = null;
+  try { ov.setPointerCapture(e.pointerId); } catch { }
+}, true);
+ov.addEventListener('pointermove', e => {
+  const t = CT.tool; if (!t || ROTO.tool) return;
+  e.stopImmediatePropagation(); const p = ctOvPt(e); CT.hover = p;
+  if (t.down && (t.box || Math.hypot(p[0] - t.down[0], p[1] - t.down[1]) > 4)) t.box = [t.down, p];
+  drawOverlay();
+}, true);
+ov.addEventListener('pointerup', e => {
+  const t = CT.tool; if (!t || ROTO.tool || e.button !== 0) return;
+  e.stopImmediatePropagation();
+  const p = ctOvPt(e), box = t.box; t.down = null; t.box = null;
+  if (box) {
+    const [x0, x1] = [Math.min(box[0][0], box[1][0]), Math.max(box[0][0], box[1][0])], [y0, y1] = [Math.min(box[0][1], box[1][1]), Math.max(box[0][1], box[1][1])];
+    ctSelect(CT.hits.filter(h => h.x >= x0 && h.x <= x1 && h.y >= y0 && h.y <= y1).map(h => h.id), e.shiftKey ? 'add' : 'set'); return;
+  }
+  const id = ctPointAt(p), tri = id == null && ctTriangleAt(p);
+  if (id != null) ctSelect([id], e.shiftKey ? 'toggle' : 'set');
+  else if (tri) ctSelect(tri, e.shiftKey ? 'add' : 'set');
+  else ctSelect([], 'set');
+}, true);
+ov.addEventListener('pointerleave', () => { if (CT.tool) { CT.hover = null; drawOverlay(); } });
+ov.addEventListener('contextmenu', e => {
+  const t = CT.tool; if (!t || ROTO.tool) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const p = ctOvPt(e);
+  if (!CT.sel.ids.size) { const id = ctPointAt(p), tri = id == null ? ctTriangleAt(p) : null; if (id != null) ctSelect([id], 'set'); else if (tri) ctSelect(tri, 'set'); }
+  ctMenuOpen(e.clientX, e.clientY);
+}, true);
+// the right-click menu (camera_tracker_ui's context menu, without the camera, null, light and ground plane items
+// Lumina can't make yet)
+function ctMenuOpen(x, y) {
+  ctMenuClose();
+  const o = ctToolFx(); if (!o) return;
+  const n = CT.sel.ids.size, m = document.createElement('div'); m.className = 'pop ctmenu'; m.id = 'ctMenu';
+  m.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:9999;min-width:240px`;
+  const items = [['Create Text', () => ctCreate(o.L, o.f, 'text', false), n > 0], ['Create Solid', () => ctCreate(o.L, o.f, 'solid', false), n > 0], '-',
+    ['Create Multiple Text Layers', () => ctCreate(o.L, o.f, 'text', true), n > 1], ['Create Multiple Solids', () => ctCreate(o.L, o.f, 'solid', true), n > 1], '-',
+    ['Delete Selected Points', () => ctDeletePoints(o.L, o.f), n > 0]];
+  m.innerHTML = items.map((it, i) => it === '-' ? '<hr>' : `<button data-ct="${i}"${it[2] ? '' : ' disabled'}><span>${it[0]}</span><span class="hint"></span></button>`).join('');
+  m.onclick = e => { e.stopPropagation(); const b = e.target.closest('[data-ct]'); if (!b || b.disabled) return; ctMenuClose(); items[+b.dataset.ct][1](); };
+  document.body.appendChild(m); CT.menu = m;
+  const r = m.getBoundingClientRect(); if (r.right > innerWidth) m.style.left = Math.max(0, innerWidth - r.width - 4) + 'px'; if (r.bottom > innerHeight) m.style.top = Math.max(0, innerHeight - r.height - 4) + 'px';
+}
+function ctMenuClose() { CT.menu?.remove(); CT.menu = null; }
+document.addEventListener('pointerdown', e => { if (CT.menu && !CT.menu.contains(e.target)) ctMenuClose(); }, true);
+// Create Text / Create Solid (and Create Multiple …) on the selection's target: new layers above the tracked one, with
+// Camera Track Pin; one undo step (camera_cmds::create_from_solve)
+function ctCreate(L, f, kind, multiple) {
+  const { sol } = ctOf(f); if (!sol) return toast('The camera isn’t solved yet.');
+  const ids = CT.sel.uid === f.uid ? [...CT.sel.ids] : [];
+  if (!ids.length) return toast('Select track points first: click inside three of them on the preview.');
+  const k = ctFrameIdx(sol, L, S.time), tg = ctTarget(sol, ids, k);
+  if (!tg && !multiple) return toast('Those points don’t make a plane. Pick three or more that are further apart.');
+  const cam = ctCam(sol, k), right = ctMtv(cam.R, [1, 0, 0]), base = tg || { normal: ctMtv(cam.R, [0, 0, -1]), size: 0.1 };
+  const axes = ctPlaneAxes(base.normal, right), pct = val(L, fxKey(f, 'targetSize')) / 100;
+  const centers = multiple ? ids.map(i => sol.points.find(p => p.id === i)?.pos).filter(Boolean) : [tg.center];
+  const size = (tg ? tg.size : Math.hypot(...ctSub(cam.center, centers[0] || cam.center)) * 0.12) * pct * (multiple ? 0.4 : 1), made = [], start = L.start || 0, dur = endOf(L) - start;
+  const nameOf = b => { let n = 1; while (S.layers.some(x => x.name === `${b} ${n}`)) n++; return `${b} ${n}`; };
+  for (const c of centers) {
+    let N;
+    if (kind === 'text') { N = newLayer('text', { name: nameOf('Track Text'), text: 'Text', start, dur, font: 'Anton', color: '#ffffff', strokeColor: '#000000', stroke: false, anim: 'none' }); Object.assign(N.p, { size: 140 }); }
+    else { const [r, g, b] = ctColor(made.length + 7), col = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join(''); N = newLayer('shape', { name: nameOf('Track Solid'), shape: 'rect', start, dur, filled: true, fill: col, strokeColor: col }); Object.assign(N.p, { w: 512, h: 512, strokeW: 0 }); }
+    const pf = addFX(N, 'campin'); pf.pin = { lid: L.id, uid: f.uid, c, x: axes.x, y: axes.y, size };
+    S.layers.splice(S.layers.indexOf(L), 0, N); ensureRT(N); made.push(N);
+  }
+  CT.tool = null; ctMenuClose(); ctBarUI();
+  S.sel = made[made.length - 1].id; commit(); refresh();
+  notice(`${made.length === 1 ? made[0].name : made.length + ' layers'} placed in the tracked scene. ${kind === 'text' ? 'Double-click to change the words; ' : ''}Camera Track Pin keeps ${made.length === 1 ? 'it' : 'them'} on the surface.`);
+  return made;
+}
+// Delete Selected Points, and with Auto-delete Points Across Time the other tracks of the same 3D feature (solved
+// within 1 % of its depth on frames it wasn't tracked); then the camera is solved again (camera_cmds::delete_points)
+function ctDeletePoints(L, f) {
+  const { sol } = ctOf(f), ids = CT.sel.uid === f.uid ? [...CT.sel.ids] : [];
+  if (!ids.length) return toast('Select the track points to delete first (Select track points).');
+  const add = [...ids];
+  if (sol && f.autoDelete !== false) {
+    const c0 = ctCam(sol, Math.max(0, sol.frames.findIndex(x => x.solved)))?.center || [0, 0, 0];
+    for (const id of ids) {
+      const pt = sol.points.find(p => p.id === id); if (!pt) continue;
+      const r = Math.hypot(...ctSub(pt.pos, c0)) * 0.01;
+      for (const q of sol.points) if (q.id !== id && (q.last < pt.first || q.first > pt.last) && Math.hypot(...ctSub(q.pos, pt.pos)) < r) add.push(q.id);
+    }
+  }
+  f.deleted = [...new Set([...(f.deleted || []), ...add])].sort((a, b) => a - b);
+  CT.sel.ids.clear(); ctBarUI(); commit(); refresh();
+  notice(`Deleted ${add.length} track point${add.length === 1 ? '' : 's'}. Solving the camera again…`);
+}
+// the overlay: the track points of the selected layer's trackers (3D solved, or the 2D source tracks), the selection,
+// the target under the cursor (or the selection's), the drag box
+function ctOverlay(L) {
+  CT.hits = [];
+  const r = RT[L.id]; if (!r?.m || !r.box) return;
+  const k = ov.width / W(), lm = new DOMMatrix().scale(k, k).multiply(r.m).translate(-r.box.w / 2, -r.box.h / 2);
+  for (const f of L.fx || []) {
+    if (f.id !== 'cameratracker' || f.on === false) continue;
+    const { sol, tracks } = ctOf(f), tool = CT.tool?.uid === f.uid ? CT.tool : null, sel = CT.sel.uid === f.uid ? CT.sel.ids : new Set();
+    const pct = val(L, fxKey(f, 'pointSize')), lsc = Math.hypot(lm.a, lm.b) || 1;
+    const show3 = (f.showPoints ?? 1) === 1 && sol, ideal = !!f.undistort && sol && !ctDistNone(sol.distortion);
+    if (show3) {
+      if (Math.abs(sol.size[0] - r.box.w) > .5) continue;
+      const kk = ctFrameIdx(sol, L, S.time), pts = ctVisible(sol, kk, ideal), mz = ctMedianZ(pts);
+      for (const p of pts) {
+        const s = lm.transformPoint(new DOMPoint(p.x, p.y)); if (s.x < -20 || s.y < -20 || s.x > ov.width + 20 || s.y > ov.height + 20) continue;
+        const rr = clamp(ctTargetRadius(pct, p.z, mz) * lsc, 2, 30), [cr, cg, cb] = ctColor(p.id), c = `rgb(${cr},${cg},${cb})`;
+        octx.beginPath(); octx.arc(s.x, s.y, rr, 0, Math.PI * 2);
+        if (sel.has(p.id)) { octx.fillStyle = c; octx.fill(); octx.lineWidth = 1.5; octx.strokeStyle = '#fff'; octx.beginPath(); octx.arc(s.x, s.y, rr + 1.5, 0, Math.PI * 2); octx.stroke(); }
+        else { octx.lineWidth = clamp(rr * .3, 1, 3); octx.strokeStyle = c; octx.stroke(); octx.beginPath(); octx.arc(s.x, s.y, Math.max(1, rr * .25), 0, Math.PI * 2); octx.fillStyle = c; octx.fill(); }
+        CT.hits.push({ id: p.id, x: s.x, y: s.y, r: rr });
+      }
+      if (tool) {
+        const hp = CT.hover, tri = !tool.box && hp && ctPointAt(hp) == null ? ctTriangleAt(hp) : null, ids = tri || (sel.size ? [...sel] : null), tg = ids && ctTarget(sol, ids, kk);
+        if (tri) { const ps = tri.map(i => CT.hits.find(h => h.id === i)); octx.beginPath(); ps.forEach((h, i) => i ? octx.lineTo(h.x, h.y) : octx.moveTo(h.x, h.y)); octx.closePath(); octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,.8)'; octx.stroke(); }
+        if (tg) ctDrawTarget(lm, sol, kk, tg, val(L, fxKey(f, 'targetSize')), ideal);
+        if (tool.box) { const [a, b] = tool.box; octx.fillStyle = 'rgba(80,160,255,.12)'; octx.strokeStyle = 'rgba(80,160,255,.9)'; octx.lineWidth = 1; octx.fillRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); octx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); }
+      }
+    } else if (tracks) {
+      // the 2D source tracks (also shown before the solve finishes): small crosses
+      const kk = clamp(rotoFrame(L, S.time) - tracks.start, 0, tracks.frames - 1), rr = clamp(3 * pct / 100, 1.5, 12);
+      octx.lineWidth = 1.2;
+      for (const t of tracks.tracks) {
+        const i = kk - t.start; if (i < 0 || i >= t.n) continue;
+        const s = lm.transformPoint(new DOMPoint(tracks.pts[t.o + 2 * i], tracks.pts[t.o + 2 * i + 1])), [cr, cg, cb] = ctColor(t.id);
+        octx.strokeStyle = `rgb(${cr},${cg},${cb})`; octx.beginPath(); octx.moveTo(s.x - rr, s.y - rr); octx.lineTo(s.x + rr, s.y + rr); octx.moveTo(s.x - rr, s.y + rr); octx.lineTo(s.x + rr, s.y - rr); octx.stroke();
+      }
+    }
+  }
+}
+// the target disc: concentric rings in perspective on the target's plane, and its centre
+function ctDrawTarget(lm, sol, k, tg, sizePct, ideal) {
+  const { x, y } = ctPlaneAxes(tg.normal, ctMtv(ctCam(sol, k).R, [1, 0, 0])), R0 = tg.size * .5 * sizePct / 100;
+  [1, .66, .33].forEach((fr, i) => {
+    const ps = [];
+    for (let j = 0; j < 48; j++) { const a = j / 48 * Math.PI * 2, X = ctAdd(tg.center, ctAdd(ctSc(x, R0 * fr * Math.cos(a)), ctSc(y, R0 * fr * Math.sin(a)))), q = ctProject(sol, k, X, ideal); if (q) ps.push(lm.transformPoint(new DOMPoint(q[0], q[1]))); }
+    if (ps.length < 3) return;
+    octx.beginPath(); ps.forEach((p, j) => j ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)); octx.closePath();
+    octx.fillStyle = i % 2 ? 'rgba(255,255,255,.2)' : 'rgba(208,48,48,.28)'; octx.fill(); octx.lineWidth = 1; octx.strokeStyle = '#e04040'; octx.stroke();
+  });
+  const c = ctProject(sol, k, tg.center, ideal);
+  if (c) { const p = lm.transformPoint(new DOMPoint(c[0], c[1])); octx.beginPath(); octx.arc(p.x, p.y, 3, 0, Math.PI * 2); octx.fillStyle = '#ffd040'; octx.fill(); }
+}
+// "Analyzing in background (step 1 of 2)" / "Solving camera" at the bottom left, and "Unable to solve camera" over a
+// selected tracker that failed (unless Hide Warning Banner)
+function drawCtNote() {
+  if (S.exporting) return;
+  const j = CT.job, L = selLayer(), bad = !j && L?.fx?.find(f => f.id === 'cameratracker' && f.on !== false && !f.hideWarning && ctOf(f).fail);
+  if (!j && !bad) return;
+  const k = ov.width / 960, txt = j ? (j.step === 1 ? `3D Camera Tracker: analyzing in background (step 1 of 2) · ${j.n || 0} of ${j.m} frames` : `3D Camera Tracker: solving camera (step 2 of 2)${j.sp ? ' · ' + Math.round(j.sp * 100) + '%' : ''}`) : '3D Camera Tracker: unable to solve camera';
+  octx.font = `600 ${Math.round(13 * k)}px system-ui, sans-serif`;
+  const w = octx.measureText(txt).width + 22 * k, h = 26 * k, x = 10 * k, y = ov.height - 3 * h - 22 * k;
+  octx.fillStyle = bad ? 'rgba(156,42,29,.88)' : 'rgba(0,0,0,.65)'; octx.beginPath(); octx.roundRect(x, y, w, h, h / 2); octx.fill();
+  octx.fillStyle = bad ? '#fff' : '#9fd8ff'; octx.textBaseline = 'middle'; octx.fillText(txt, x + 11 * k, y + h / 2);
 }
 // ---------- motion tracking ----------
 // Tracks live on the video layer, in source-video coordinates (u, v in 0..1) against source time,
@@ -14236,6 +14752,7 @@ async function startExport(fmt = 'mp4') {
   await fxWarmAll();   // every effect's GPU kernels built before the first frame is recorded
   await auWarmAll();   // and the sound Audio Spectrum / Audio Waveform follow, decoded
   await rotoWarmAll();   // and every Roto Brush frame's matte worked out
+  await ctWarmAll();   // and the 3D Camera Tracker analyses finished
   const stream = canvas.captureStream(S.fps);
   recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
   const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.max(W(), H()) >= 1900 ? 16e6 : 8e6 });
@@ -14328,7 +14845,7 @@ function projectJSON() {
       if (l.dmin && (l.dmin.some(v => v !== 0) || l.dmax.some(v => v !== 1))) Object.assign(o, { dmin: l.dmin, dmax: l.dmax });
       if (l.raw && l.raw.some((v, i) => Math.abs(v - l.data[i]) > 1e-6)) o.raw = Array.from(l.raw, v => +v.toFixed(5));
     }
-  return JSON.stringify({ app: 'Lumina', version: 1, comp: { w: W(), h: H(), fps: S.fps }, uid, time: S.time, layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, media, luts, rotoFrozen: rotoFrozenSave() });
+  return JSON.stringify({ app: 'Lumina', version: 1, comp: { w: W(), h: H(), fps: S.fps }, uid, time: S.time, layers: S.layers, impacts: S.impacts, bookmarks: S.bookmarks, global: S.global, media, luts, rotoFrozen: rotoFrozenSave(), camTrack: ctSave() });
 }
 async function saveProject(saveAs = false) {
   if (!window.lumina) { toast('Saving projects works in the Lumina desktop app.'); return false; }
@@ -14379,7 +14896,7 @@ async function openProject(filePath) {
     const data = l.data ? Float32Array.from(l.data) : null;
     LUTS[id] = { name: l.name, N: l.N || 0, data, n1: l.n1 || 0, d1: Float32Array.from(l.d1 || []), dmin: l.dmin || [0, 0, 0], dmax: l.dmax || [1, 1, 1], raw: l.raw ? Float32Array.from(l.raw) : data };
   }
-  Object.assign(ROTO.frozen, d.rotoFrozen || {});
+  Object.assign(ROTO.frozen, d.rotoFrozen || {}); ctLoad(d.camTrack);
   canvas.width = d.comp.w; canvas.height = d.comp.h; S.fps = d.comp.fps;
   syncRes(); CROP = null; cropUI();
   $('#fps').value = String(d.comp.fps);
@@ -14483,6 +15000,8 @@ document.addEventListener('keydown', e => {
   if (e.target.matches('input[type=text], input[type=number], textarea') || S.exporting) return;
   if (CROP && (e.key === 'Enter' || e.key === 'Escape')) { e.preventDefault(); endCrop(e.key === 'Enter'); return; }
   if (e.key === 'Escape' && ROTO.tool) { rotoToolEnd(); inspector(); return; }
+  if (e.key === 'Escape' && CT.tool) { ctToolEnd(); inspector(); return; }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && CT.tool && CT.sel.ids.size) { e.preventDefault(); const o = ctToolFx(); if (o) ctDeletePoints(o.L, o.f); return; }
   if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); rotoMenu(); return; }
   if (e.key === 'Escape' && (trackMode || picking || wbPick)) { trackMode = null; picking = false; wbPick = false; inspector(); return; }
   const k = e.key.toLowerCase();
@@ -15814,7 +16333,7 @@ const MENUS = {
     ['Show keyframe lanes', '', () => action('klanes'), Object.keys(selLayer()?.keys || {}).length > 0, KOPEN.has(selLayer()?.id)],
     ['Separate audio', '', () => separateAudio(selLayer()), selLayer()?.kind === 'video' && !selLayer().freeze && !linkMate(selLayer())],
     ['Show / hide layer', '', () => { const L = selLayer(); L.visible = !L.visible; commit(); refresh(); }, !!selLayer()], '-',
-    ['Roto Brush', 'Alt+W', rotoMenu, !!selLayer() && selLayer().kind !== 'audio']],
+    ['Roto Brush', 'Alt+W', rotoMenu, !!selLayer() && selLayer().kind !== 'audio'], ['Track Camera', '', ctMenu, !!selLayer()?.media && selLayer().kind !== 'audio']],
   Effect: () => [['Effect Controls', '', () => setRightTab('fx'), true, PANELS.props && RTAB === 'fx'],
     ['Effects & Presets', '', () => { if (!PANELS.project) { PANELS.project = true; applyPanels(); } setLeftTab('fxp'); }, true, PANELS.project && LTAB === 'fxp'], '-',
     ['Remove all effects', '', () => { const L = selLayer(); while (L.fx?.length) delFX(L, 0); commit(); refresh(); }, !!selLayer()?.fx?.length]],

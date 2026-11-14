@@ -1,0 +1,1 @@
+on a made-up 3-second, 177-frame video at 1080p the whole analysis took about 30 s (Average error 0.12 px, 49.8° found for a 50° camera); a solved frame draws in about 6 ms (10 ms with a pinned solid over it)
