@@ -2693,6 +2693,115 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 30 helpers (Audio-driven): EffectCraft's generate3/audio.rs (the FFT, the audio window, the baseline, the
+//      marks) and fx_gen2.rs's marks (fg2_segs coverage, a hard core and a soft halo, through fg2_marks) ----
+const AUDIO_K = [['fx_gen2', 'fg2_segs'], ['fx_gen2', 'fg2_marks'], ['kernels', 'fill']];
+const AU_RATE = 48000, AU = new Map();   // media id → { L, R } (48 kHz) once decoded, or { busy } while it is
+// a media file's sound, decoded once at 48 kHz (left and right; mono files give the same channel twice)
+function auDecode(mid) {
+  const have = AU.get(mid); if (have) return have.busy || Promise.resolve(have);
+  const m = MEDIA[mid]; if (!m?.url) return Promise.resolve(null);
+  const busy = (async () => {
+    try {
+      const dec = await new OfflineAudioContext(2, 1, AU_RATE).decodeAudioData(await (await fetch(m.url)).arrayBuffer());
+      const L = dec.getChannelData(0), R = dec.numberOfChannels > 1 ? dec.getChannelData(1) : L, e = { L, R };
+      AU.set(mid, e); return e;
+    } catch { const e = { L: new Float32Array(0), R: new Float32Array(0) }; AU.set(mid, e); return e; }
+  })();
+  AU.set(mid, { busy });
+  busy.then(() => { if (!S.playing && !S.exporting) requestAnimationFrame(() => { if (!S.playing) render(); }); });
+  return busy;
+}
+// the layers whose sound an audio effect can follow: footage with sound
+const auLayers = L => S.layers.filter(M => M !== L && M.media && (M.kind === 'audio' || (M.kind === 'video' && !M.freeze)));
+const auPick = (id, label) => ({ id, label, type: 'pick', def: 0, opts: L => [[0, 'None'], ...auLayers(L).map(M => [M.id, esc(M.name || M.kind)])] });
+// every audio layer an audio effect follows decoded (export and the self-test wait on it)
+async function auWarmAll() {
+  const ids = new Set(); for (const L of S.layers) for (const f of L.fx || []) if (f.on !== false && FX[f.id]?.audio && f.audioLayer) ids.add(f.audioLayer);
+  for (const id of ids) { const M = byId(id); if (M?.media) await auDecode(M.media); }
+}
+// audio_window: dur ms of the audio layer's sound centred on the composition time (+ offset ms), mono or one channel,
+// at its volume; silence outside the layer. null when there is no audio layer or it is still decoding (the layer then
+// passes through, and is drawn again once the sound is in)
+function auWindow(E, id, durMs, offMs, ch) {
+  const M = id ? byId(id) : null; if (!M?.media) return null;
+  const pcm = AU.get(M.media); if (!pcm || pcm.busy) { auDecode(M.media); return null; }
+  const dur = Math.max(.001, durMs / 1000), n = clamp(Math.floor(dur * AU_RATE), 16, 1 << 16), t0 = E.T + offMs / 1000 - dur * .5;
+  const out = new Float64Array(n), [a, b] = liveRange(M), vol = val(M, 'volume', clamp(E.T, a, b));
+  const { L: cl, R: cr } = pcm, len = cl.length, t1 = t0 + n / AU_RATE;
+  // source time through the window: srcTime at its two ends, in between in a straight line (a few ms)
+  const s0 = srcTime(M, clamp(t0, a, b)), s1 = srcTime(M, clamp(t1, a, b));
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i / AU_RATE; if (t < a || t >= b) continue;
+    const s = s0 + (s1 - s0) * (t - Math.max(t0, a)) / Math.max(1e-9, Math.min(t1, b) - Math.max(t0, a)), k = Math.floor(s * AU_RATE);
+    if (k < 0 || k >= len) continue;
+    out[i] = vol * (ch === 1 ? cl[k] : ch === 2 ? cr[k] : (cl[k] + cr[k]) * .5);
+  }
+  return out;
+}
+// fft: in-place iterative radix-2 (re, im lengths a power of two)
+function auFFT(re, im) {
+  const n = re.length; if (n < 2) return;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; while (j & bit) { j ^= bit; bit >>= 1; } j |= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, ws = Math.sin(ang), wc = Math.cos(ang), h = len >> 1;
+    for (let st = 0; st < n; st += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < h; k++) {
+        const a = st + k, b = a + h, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const ncr = cr * wc - ci * ws; ci = cr * ws + ci * wc; cr = ncr;
+      }
+    }
+  }
+}
+// compute_fft_mags: Hann window, zero-padded to a power of two (64 at least), magnitudes × 4 / samples
+function auMags(x) {
+  const m = x.length; let n = 64; while (n < m) n <<= 1;
+  const re = new Float64Array(n), im = new Float64Array(n), den = Math.max(m, 2) - 1;
+  for (let i = 0; i < m; i++) re[i] = x[i] * (.5 - .5 * Math.cos(2 * Math.PI * i / den));
+  auFFT(re, im);
+  const sc = 4 / Math.max(m, 1), bins = n / 2 + 1, mags = new Float64Array(bins);
+  for (let k = 0; k < bins; k++) mags[k] = Math.hypot(re[k], im[k]) * sc;
+  return { hz: AU_RATE / n, mags };
+}
+// the drawing baseline (Baseline): the layer's mask, or the line from Start Point to End Point, or with Use Polar Path a
+// circle round Start Point (half the distance to End Point); .at(u) → [point, unit normal] in frame pixels
+function auBaseline(E, q) {
+  const polar = q('polar'), M = q('path') === 1 && !polar ? fxMaskPoly(E) : null;
+  const pts = M && M.pts.length > 1 ? M.pts : [q('startPoint'), q('endPoint')], closed = !!(M && M.pts.length > 1);
+  const n = pts.length, c = fxPolyCum(pts, closed), len = c[c.length - 1] || 0, ctr = pts[0], rad = n > 1 ? fxSegLen(pts[0], pts[1]) : 1;
+  return {
+    at(u) {
+      if (polar) { const a = u * 2 * Math.PI - Math.PI * .5, co = Math.cos(a), si = Math.sin(a); return [[ctr[0] + co * rad * .5, ctr[1] + si * rad * .5], [co, si]]; }
+      // util::poly_point_at: the point at distance u · len, and its segment's direction (normal = (d.y, −d.x))
+      const s = Math.max(0, u * len); let lo = 0, hi = c.length - 2;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (c[mid + 1] >= s) hi = mid; else lo = mid + 1; }
+      const a = pts[lo], b = pts[(lo + 1) % n], l = c[lo + 1] - c[lo], t = l > 0 ? Math.min(1, (s - c[lo]) / l) : 0;
+      const d = l > 0 ? [(b[0] - a[0]) / l, (b[1] - a[1]) / l] : [1, 0];
+      return [[a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], [d[1], -d[0]]];
+    } };
+}
+// draw_marks: segments [ax, ay, bx, by, r, v] as a hard core in the Inside colour and a soft halo (Softness) fading to
+// the Outside colour, over the layer (Composite on original) or alone
+function auMarks(E, img, q, segs, thick, soft) {
+  const comp = q('onOriginal'), halo = soft > 0 ? thick * soft + .5 : 0, it = fxItems(E, 10);
+  for (const s of segs) { const p = s[4] + halo + 1; fxItemPush(it, [Math.min(s[0], s[2]) - p, Math.min(s[1], s[3]) - p, Math.max(s[0], s[2]) + p, Math.max(s[1], s[3]) + p], s); }
+  const D = fxItemData(it); if (!D) return comp ? img : E.clear(img);
+  const core = [1, 0, -3e38, 1], cov = E.run('fx_gen2', 'fg2_segs', fxP({ 0: [D.at, 10, it.tx, 2] }, { 0: core, 1: soft > 0 ? [1, halo, -3e38, 0] : core }), img, null, null, E.data(D.d));
+  return E.run('fx_gen2', 'fg2_marks', fxP({ 0: [comp ? 1 : 0, 0, 0, 0] }, { 0: [...q('insideColor'), 1], 1: [...q('outsideColor'), 1] }), img, cov);
+}
+// the settings both effects share (registry.rs's order)
+const AU_HEAD = [
+  auPick('audioLayer', 'Audio layer'),
+  { id: 'startPoint', label: 'Start point', type: 'pt', def: [.1, .5] },
+  { id: 'endPoint', label: 'End point', type: 'pt', def: [.9, .5] },
+  { id: 'path', label: 'Path', type: 'pick', def: 0, opts: [[0, 'None'], [1, 'Mask']] },
+  { id: 'polar', label: 'Use polar path', type: 'check', def: false }];
+const AU_DISPLAY = [[0, 'Digital'], [1, 'Analog lines'], [2, 'Analog dots']];
 // ---- Round 29 helpers (Utility & Text): EffectCraft's utility.rs, utility2.rs, ocio/effects.rs + ocio/space.rs (Color
 //      Profile Converter), ocio/program.rs + fx_lut.rs (colour programs for fx_lut.wgsl's fxl_point), textfx.rs + fx_text.rs
 //      (Numbers, Timecode) and footage.rs (cineon_log_to_lin, in shaders/lumina_util.wgsl) ----
@@ -7962,6 +8071,71 @@ const FX = {
       E.free(pt); E.free(nt);
       if (!fl) return img;
       return E.run('lumina_time', 'lm_rsr', fxP({ 0: [q('scan'), fl.nx, fl.ny, 0] }, { 0: box, 1: [rate, fl.cell, 0, 0] }), img, null, null, E.data(fl.v));
+    } },
+  // ---- Round 30: Audio-driven (EffectCraft's generate3/audio.rs; marks drawn by fx_gen2's fg2_segs and fg2_marks) ----
+  audiospectrum: { name: 'Audio Spectrum', cat: 'Generate', clip: true, audio: true, kernels: AUDIO_K, params: [...AU_HEAD,
+      { id: 'startFreq', label: 'Start frequency', def: 20, min: 1, max: 20000, dec: 0 },
+      { id: 'endFreq', label: 'End frequency', def: 2000, min: 1, max: 20000, dec: 0 },
+      { id: 'bands', label: 'Frequency bands', def: 64, min: 1, max: 4096, dec: 0 },
+      { id: 'maxHeight', label: 'Maximum height', def: 50, min: 0, max: 10000, dec: 1 },
+      { id: 'duration', label: 'Audio duration (milliseconds)', def: 90, min: 1, max: 30000, dec: 1 },
+      { id: 'offset', label: 'Audio offset (milliseconds)', def: 0, min: -30000, max: 30000, dec: 1 },
+      { id: 'thickness', label: 'Thickness', def: 3, min: 0, max: 1000, dec: 2 },
+      { id: 'softness', label: 'Softness', def: 50, min: 0, max: 100, dec: 1 },
+      { id: 'insideColor', label: 'Inside color', type: 'color', def: '#ffffff' },
+      { id: 'outsideColor', label: 'Outside color', type: 'color', def: '#3366ff' },
+      { id: 'display', label: 'Display options', type: 'pick', def: 0, opts: AU_DISPLAY },
+      { id: 'side', label: 'Side options', type: 'pick', def: 0, opts: fxOpts(['Side A', 'Side B', 'Side A & B']) },
+      { id: 'onOriginal', label: 'Composite on original', type: 'check', def: false }],
+    // spectrum_plan: one band per step from Start to End Frequency, its height from the FFT magnitude there
+    run(E, img, q) {
+      const x = auWindow(E, q('audioLayer'), q('duration'), q('offset'), 0); if (!x) return img;
+      const { hz, mags } = auMags(x), maxBin = mags.length - 1;
+      const bands = clamp(Math.round(q('bands')), 1, 4096), f0 = Math.max(0, q('startFreq')), f1 = Math.max(q('endFreq'), f0 + 1);
+      const band = fc => { const kf = clamp(fc / hz, 0, maxBin), k0 = Math.min(Math.floor(kf), Math.max(0, maxBin - 1)), k1 = Math.min(k0 + 1, maxBin), fr = clamp(kf - k0, 0, 1); return mags[k0] * (1 - fr) + mags[k1] * fr; };
+      const maxH = q('maxHeight') * E.sc, thick = Math.max(.1, q('thickness') * E.sc), r = thick * .5, soft = q('softness') / 100 * 2;
+      const disp = q('display'), side = q('side'), base = auBaseline(E, q), segs = [], tops = [];
+      for (let i = 0; i < bands; i++) {
+        const u = bands > 1 ? i / (bands - 1) : .5, v = band(f0 + (f1 - f0) * u), hv = v * maxH, h = Number.isFinite(hv) ? clamp(hv, 0, Math.max(0, maxH)) : 0;
+        const [p, nr] = base.at(u), [ua, ub] = side === 0 ? [0, h] : side === 1 ? [-h, 0] : [-h, h];
+        const pa = [p[0] + nr[0] * ua, p[1] + nr[1] * ua], pb = [p[0] + nr[0] * ub, p[1] + nr[1] * ub];
+        if (disp === 0) segs.push([pa[0], pa[1], pb[0], pb[1], r, 1]); else tops.push([pa, pb]);
+      }
+      if (disp === 1) for (let i = 1; i < tops.length; i++) {
+        const [a0, b0] = tops[i - 1], [a1, b1] = tops[i];
+        segs.push([b0[0], b0[1], b1[0], b1[1], r, 1]); if (side === 2) segs.push([a0[0], a0[1], a1[0], a1[1], r, 1]);
+      } else if (disp === 2) for (const [pa, pb] of tops) {
+        segs.push([pb[0], pb[1], pb[0], pb[1], r, 1]); if (side === 2) segs.push([pa[0], pa[1], pa[0], pa[1], r, 1]);
+      }
+      return auMarks(E, img, q, segs, thick, soft);
+    } },
+  audiowaveform: { name: 'Audio Waveform', cat: 'Generate', clip: true, audio: true, kernels: AUDIO_K, params: [...AU_HEAD,
+      { id: 'samples', label: 'Displayed samples', def: 200, min: 2, max: 4096, dec: 0 },
+      { id: 'maxHeight', label: 'Maximum height', def: 100, min: 0, max: 10000, dec: 1 },
+      { id: 'duration', label: 'Audio duration (milliseconds)', def: 200, min: 1, max: 30000, dec: 1 },
+      { id: 'offset', label: 'Audio offset (milliseconds)', def: 0, min: -30000, max: 30000, dec: 1 },
+      { id: 'thickness', label: 'Thickness', def: 2, min: 0, max: 1000, dec: 2 },
+      { id: 'softness', label: 'Softness', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'insideColor', label: 'Inside color', type: 'color', def: '#ffffff' },
+      { id: 'outsideColor', label: 'Outside color', type: 'color', def: '#3366ff' },
+      { id: 'channel', label: 'Waveform options', type: 'pick', def: 0, opts: fxOpts(['Mono', 'Left', 'Right']) },
+      { id: 'display', label: 'Display options', type: 'pick', def: 1, opts: AU_DISPLAY },
+      { id: 'onOriginal', label: 'Composite on original', type: 'check', def: false }],
+    // waveform_plan: Digital draws each step's low-to-high peak, Analog joins (or dots) the first sample of each step
+    run(E, img, q) {
+      const x = auWindow(E, q('audioLayer'), q('duration'), q('offset'), q('channel')); if (!x) return img;
+      const n = clamp(Math.round(q('samples')), 2, 4096), maxH = q('maxHeight') * E.sc, thick = Math.max(.1, q('thickness') * E.sc), r = thick * .5, soft = q('softness') / 100 * 2;
+      const disp = q('display'), base = auBaseline(E, q), m = x.length, segs = [], pts = [];
+      for (let i = 0; i < n; i++) {
+        const u = i / (n - 1), a = Math.min(Math.floor(u * (m - 1)), m - 1), bn = clamp(Math.floor((i + 1) / n * (m - 1)), a, m - 1);
+        const [p, nr] = base.at(u);
+        if (disp === 0) {
+          let lo = 0, hi = 0; for (let k = a; k <= bn; k++) { lo = Math.min(lo, x[k]); hi = Math.max(hi, x[k]); }
+          segs.push([p[0] + nr[0] * lo * maxH, p[1] + nr[1] * lo * maxH, p[0] + nr[0] * hi * maxH, p[1] + nr[1] * hi * maxH, r, 1]);
+        } else { const v = x[a] * maxH; pts.push([p[0] + nr[0] * v, p[1] + nr[1] * v]); }
+      }
+      if (disp === 1) fxPolySegs(pts, false, r, 1, segs); else if (disp === 2) for (const p of pts) segs.push([p[0], p[1], p[0], p[1], r, 1]);
+      return auMarks(E, img, q, segs, thick, soft);
     } },
   // ---- Round 29: Utility & Text (EffectCraft's utility.rs, utility2.rs, ocio/ (Color Profile Converter) and textfx.rs:
   //      Grow Bounds, CC Overbrights, HDR Highlight Compression, HDR Compander, Cineon Converter, Color Profile
@@ -13618,6 +13792,7 @@ async function startExport(fmt = 'mp4') {
   const mime = pickMime(); if (!mime) return toast('This browser cannot record video. Use Chrome or Edge.');
   pause(); audioInit(); await AC.resume().catch(() => {});
   await fxWarmAll();   // every effect's GPU kernels built before the first frame is recorded
+  await auWarmAll();   // and the sound Audio Spectrum / Audio Waveform follow, decoded
   const stream = canvas.captureStream(S.fps);
   recDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
   const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.max(W(), H()) >= 1900 ? 16e6 : 8e6 });
