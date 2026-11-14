@@ -7,22 +7,28 @@ Goal: Lumina usable like After Effects, Photoshop, EffectCraft and CapCut. An ed
 
 ---
 
-## ▶ Start here next: Round 28 (Simulation: pieces and surfaces) (Round 27 done 2026-11-13); Round 27 and the Claude control steps M1–M4 are done
+## ▶ Start here next: Round 29 (Utility & Text) (Round 28 done 2026-11-13); Round 28 and the Claude control steps M1–M4 are done
 **Back on EffectCraft (2026-11-08, the user: "I actually wanna work back on Effectcraft… I want Lumina to have everything
 Adobe After Effects and Premier Pro have. I also want the screen effects everything they offer I want to have").**
 **One round at a time** (the user, 2026-11-08: the continuous run "wasn't working", round by round was; don't run rounds back to back again). Local git commits after each round are
-OK (never push). Round 27 is committed (2026-11-13; all twelve suites as before). The setup that replaces the old Lumina
+OK (never push). Round 28 is committed (2026-11-13; all twelve suites as before). The setup that replaces the old Lumina
 is done too (see its section). **Round FP (Floating panels) is done too (2026-11-10, the user asked between Rounds 20 and
 21):** every panel can float in a window of its own. **Round FP2 is done too (2026-11-10):** the Composition viewer
 (the video player) floats as well, and dragging a header no longer selects text. **M5 is done too (2026-11-10): Edit ›
 AI connections (MCP)…, so other AIs (not only Claude) can connect to Lumina** (see the Claude control section).
-Rounds 8–27 and the Round 6 leftovers are done. **Round 28 is next, Simulation: pieces and surfaces** (WORKPLAN.md's
-round table): CC Ball Action, CC Pixel Polly, CC Scatterize, Card Dance, Shatter (EffectCraft's crates/effects/src/sim2/
-pieces.rs, shatter.rs, pixels.rs: piece plans), Caustics, Wave World (sim2/surfaces.rs) and Foam (sim2/foam.rs). Their GPU
-host code is in crates/gpu/src/fx_sim.rs (`pieces` / `piece_pass` through fxm_raster's kind 3 and fxm_piece, `caustics`,
-`wave_height`, Wave World's wireframe as sprites) and fx_particles.rs (`foam`). The source is already in the scratchpad's
-ec26 folder (eff_sim2_*.rs, gpu_fx_sim.rs, gpu_fx_particles.rs); Card Dance's 3D maths may reuse Round 23's card3d
-helpers (`fxRotOrdered`, `fxCardCam`). Round 27's helpers: `fxSpriteTable(E, img, R, n, stride, add)` (many sprites from a
+Rounds 8–28 and the Round 6 leftovers are done; **every Simulation effect is in** (18). **Round 29 is next, Utility &
+Text** (WORKPLAN.md's round table): Apply LUT, Cineon Converter, Color Profile Converter, HDR Compander, HDR Highlight
+Compression, CC Overbrights, Grow Bounds, Numbers and Timecode. Find their host code in EffectCraft's crates/effects/src
+(and crates/gpu/src) at the pinned commit with `gh api`, as before; some may already be partly in Lumina under other
+names, so check FX first. Round 28's helpers: `fxDrawPieces(E, front, pieces, back)` (sim2's PiecePlan::finish: pieces
+far to near through fxm_piece, by fxp_raster's passes, or fxm_raster when backs have their own texture), `fxPutPiece`
+(piece_pass's 48-float record), `fxOff(E)` (where layer pixel 0, 0 sits: the piece effects plan in frame pixels as sim2's
+layer buffer, not following the layer's own rotation, as Card Wipe), `fxSimpleCam` (Proj::simple), `fxCardLight` and
+`fxCard3dParams(camZ)` (Card Wipe's camera, light and material settings for other effects), `fxReadAt(R, x, y)` /
+`fxReadFull` (a picture read back to the CPU, sampled bilinearly as Image::sample_bilinear), `fxOrderDesc` (a stable
+far-to-near order by radix), `fxLines` (line sprites), `fxShatterCells` (the patterns), `fxDrag`, `fxFoamPop`,
+`fxChunkedK`; `fxSpriteTable` takes an item kind and a back texture, `fxChunked` an item kind, `fxSpritePost` 'black'
+(over opaque black); `fxPiece` keeps every piece's corners winding one way. Round 27's helpers: `fxSpriteTable(E, img, R, n, stride, add)` (many sprites from a
 typed table, binned on the CPU in one go and drawn by fxp_raster in as many passes as needed), `fxPutSprite` (one sprite
 record with its bounds; stride 16 plain, 18 with a sampled tint, 24 with CC Hair's root tint), `fxScratch` (reused work
 arrays), `fxSpritePost` (sim::Post through fxm_post), `fxLpOf(E)` (layer pixels → frame pixels with the matrix read
@@ -567,7 +573,7 @@ Don't upload the setup, and don't release it, without the user saying so.
 captions, and the button says so.
 **Unsigned:** Windows SmartScreen will warn friends ("Windows protected your PC" → More info → Run anyway); tell the user.
 ### EffectCraft, next
-EffectCraft carries on at **Round 28 (Simulation: pieces and surfaces)**.
+EffectCraft carries on at **Round 29 (Utility & Text)**.
 (Tip for then: check which other `.wgsl` files a shader file calls into, in EffectCraft's `crates/gpu/src/context.rs`
 module list; Round 7's `fx_color` needed `fx_lut` compiled alongside it, Round 9's `fx_pixel2` needed `fx_stylize`.)
 
@@ -589,8 +595,8 @@ Goal: **Lumina is After Effects, Premiere Pro, Photoshop and CapCut all in one**
    zoom/pan, graph editor, the beginner layout (tool rail, quick bar, welcome + tips) and the 0.9.0 friends test release.
    The step-by-step record is kept below for reference.
 1. **Finish EffectCraft** (https://github.com/storytold/effectcraft): every effect, a Round at a time.
-   **Where we left off: Rounds 1–27 and the Round 6 leftovers are done; Round 28 (Simulation: pieces and surfaces) is
-   next.** About 62 effects are left, in Rounds 28–31+ (Reshape and Smear wait for Masks II, A7).
+   **Where we left off: Rounds 1–28 and the Round 6 leftovers are done; Round 29 (Utility & Text) is next.** About 54
+   effects are left, in Rounds 29–31+ (Reshape and Smear wait for Masks II, A7).
    - Round 11: Color Key, Linear Color Key, Luma Key, Color Range, Difference Matte, Extract, Inner/Outer Key, Color Difference Key
    - Later Rounds: Lumetri, keying (Linear Color Key, Keylight), particles, time effects, Shatter and the rest
    - **Foundations, built during this step:** precomps (compositions inside compositions), blend modes, track mattes and parenting.
@@ -837,6 +843,45 @@ Sources:
     self tests). Closing Lumina closes them (electron/main.js).
   - Not yet: tips that point at a floating panel still show in the main window. (The viewer came in FP2.)
   - Test: the timeline suite's floatPanels step.
+- **EffectCraft Round 28 done (2026-11-13): Simulation, pieces and surfaces.** Eight more effects in the **Simulation**
+  group, which now has all 18:
+  - **CC Ball Action** (pixels.rs): the layer as a grid of balls in its own colours, turned about an axis, twisted along X,
+    Y, radius or brightness, scattered in 3D.
+  - **CC Pixel Polly**: from Start Time the layer breaks into triangles or squares (flat or textured) that fly from the
+    Force Center, spin and fall; depth sorted.
+  - **CC Scatterize**: every pixel a dot, scattered, and twisted about the middle (Left / Right Twist); Composite or Add.
+  - **Card Dance** (shatter.rs): the layer cut into cards whose X/Y/Z position, rotation and scale each follow a gradient
+    layer's channel (Source × Multiplier + Offset), lit, through Card Wipe's camera; a Back Layer for the backs.
+  - **Shatter**: Bricks, Glass, Hexagons, Squares, Triangles or a Custom Shatter Map; two force spheres break pieces,
+    which fly, tumble (Tumble Axis), fall with gravity and drag, with extruded sides; Shatter Threshold with a gradient
+    layer; Front / Side / Back textures (colour, layer, tinted layer); Render All / Layer / Pieces; Rendered or four
+    wireframe views (the default, as EffectCraft's, is Wireframe Front View).
+  - **Caustics** (surfaces.rs): the bottom seen through a water surface (another layer's smoothed luminance), refracted,
+    focused into caustics, lit, under the surface colour or a reflected sky.
+  - **Wave World**: the wave equation on a grid, stepped from layer time 0 at 60 steps a second (Pre-roll too), two Ring or
+    Line producers, a Ground layer making dry walls and shallows, edges reflecting or soaking; Wireframe Preview or Height
+    Map.
+  - **Foam** (foam.rs): bubbles stepped at 30 a second: grow, drift with wind and turbulence, run down a Flow Map, push
+    apart and stick, wobble and pop; Draft, Draft + Flow Map or Rendered (five bubble looks or a texture layer, an
+    environment map reflection).
+  - **How they are drawn:** pieces through EffectCraft's fxm_piece (fxp_raster's passes, or fxm_raster when backs have
+    their own texture), balls / dots / wires / bubbles as sprites (fxp_raster), fxm_caustics, fxm_wave, fxp_under and
+    Foam's disc kernels. The layer's colours for flat pieces and Card Dance's / Shatter's maps are read back to the CPU.
+  - **Differences from EffectCraft:** the piece effects (Pixel Polly, Card Dance, Shatter) don't follow the layer's own
+    rotation (as Card Wipe); Caustics and Foam offer no "First Comp Light"; Caustics' Tiled / Reflected repeat and Foam's
+    environment reflection span the frame where EffectCraft's span the layer (the same for a layer filling the frame).
+  - **Speed** at 1080p, 3 s in, defaults: about 5–6 ms a frame for Scatterize, Card Dance, Shatter (Rendered), Caustics,
+    Wave World and Foam; CC Ball Action about 27 ms (130 000 balls); CC Pixel Polly about 28 ms (41 000 pieces, worked out
+    straight into the drawing table).
+  - Host code from EffectCraft's crates/effects/src/sim2 (pieces.rs, pixels.rs, shatter.rs, surfaces.rs, foam.rs,
+    registry.rs) and crates/gpu/src (fx_sim.rs, fx_particles.rs), fetched earlier with `gh api`; nothing was downloaded or
+    installed.
+  - Test: the fx suite's sim28Kernels, sim28Details (balls in the layer's colours, none at size 0; Pixel Polly the layer
+    before Start Time, flying after it; Scatterize nothing when unset; Card Dance at rest giving the layer back, turned or
+    pushed by intensity; Shatter's wireframe, Rendered at time 0 the layer, breaking later in three patterns; Caustics
+    with flat water, a water surface and caustics; Wave World's moving wires and grey height map; Foam empty at time 0,
+    bubbles by the producer later, scrubbing the same), sim28Menu (18 Simulation effects) and round28speed. Round 27's
+    sim27Menu now checks its own seven.
 - **EffectCraft Round 27 done (2026-11-13): Simulation, weather and more.** Seven more effects in the **Simulation**
   group (none was in Lumina before; Lumina's own Rain and Snow in Atmosphere stay as they are):
   - **CC Rainfall** and **CC Snowfall** (weather.rs): drops and flakes worked out fresh for every frame (nothing to step),

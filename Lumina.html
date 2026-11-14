@@ -2685,6 +2685,551 @@ function fxWarp(E, img, m, { dst, opacity = 1, sampling = 1, acc } = {}) {
   return E.run('kernels', 'warp_blend', fxP({ 0: [0, sampling, 0, acc != null ? 1 : 0] }, { 0: inv[0], 1: inv[1], 2: inv[2], 3: [opacity, acc ?? 1, 0, 0], 4: [0, 0, E.w, E.h] }), img, d);
 }
 const WARP_K = [['kernels', 'warp_blend'], ['kernels', 'fill']];
+// ---- Round 28 helpers (Simulation: pieces and surfaces): EffectCraft's sim2/ (pieces.rs, pixels.rs, shatter.rs,
+//      surfaces.rs, foam.rs); GPU host code from fx_sim.rs (piece_pass, wave_height, caustics) and fx_particles.rs (foam).
+//      The piece effects work in frame pixels: layer pixel (x, y) sits at off + (x, y) · scale, as in sim2's layer buffer
+//      (the layer's own rotation is not followed, as Card Wipe) ----
+const fxOff = E => [E.m.e - E.bw * E.sc / 2, E.m.f - E.bh * E.sc / 2];
+// card3d's Proj::simple: a camera d pixels in front of the layer, looking at c
+const fxSimpleCam = (c, d) => ({ m: [[d, 0, c[0], 0], [0, d, c[1], 0], [0, 0, 1, d]], near: .05 * d });
+// card3d's Lighting from the shared Light / Material settings (as Card Wipe's)
+function fxCardLight(E, q) {
+  const [x0, y0, w, h] = E.rect, [lx, ly] = q('lightPos'), k0 = q('lightIntensity'), centre = [x0 + w / 2, y0 + h / 2, 0], pos = [lx, ly, -q('lightDepth') * Math.max(w, h)];
+  return { kind: q('lightType'), color: q('lightColor').map(v => v * k0), pos, toLight: fxNormZ(fxSub3(pos, centre)), ambient: q('ambient'), kd: q('diffuse'), ks: q('specular'), sharp: Math.max(1, q('sharp')) };
+}
+// Card Wipe's camera, light and material settings (card3d's camera_params, lighting_params, material_params) for the
+// other effects that draw pieces in 3D, with their own default camera distance
+const fxCard3dParams = camZ => [
+  { id: 'camSystem', label: 'Camera system', type: 'pick', def: 0, opts: [[0, 'Camera position'], [1, 'Corner pins']] },
+  { id: 'camRotX', label: 'Camera X rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+  { id: 'camRotY', label: 'Camera Y rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+  { id: 'camRotZ', label: 'Camera Z rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+  { id: 'camPos', label: 'Camera X, Y position', type: 'pt', def: [.5, .5] },
+  { id: 'camZ', label: 'Camera Z position', def: camZ, min: .05, max: 10, dec: 2 },
+  { id: 'focal', label: 'Focal length', def: 70, min: 1, max: 500, dec: 1 },
+  { id: 'camOrder', label: 'Transform order', type: 'pick', def: 0, opts: CARD_ORDERS.map((n, i) => [i, n]) },
+  { id: 'ul', label: 'Upper left corner', type: 'pt', def: [0, 0] },
+  { id: 'ur', label: 'Upper right corner', type: 'pt', def: [1, 0] },
+  { id: 'll', label: 'Lower left corner', type: 'pt', def: [0, 1] },
+  { id: 'lr', label: 'Lower right corner', type: 'pt', def: [1, 1] },
+  { id: 'autoFocal', label: 'Auto focal length', type: 'check', def: true },
+  { id: 'pinFocal', label: 'Corner pins focal length', def: 70, min: 1, max: 500, dec: 1 },
+  { id: 'lightType', label: 'Light type', type: 'pick', def: 0, opts: [[0, 'Distant source'], [1, 'Point source']] },
+  { id: 'lightIntensity', label: 'Light intensity', def: 1, min: 0, max: 4, dec: 2 },
+  { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+  { id: 'lightPos', label: 'Light position', type: 'pt', def: [.5, .5] },
+  { id: 'lightDepth', label: 'Light depth', def: 1, min: -10, max: 10, dec: 3 },
+  { id: 'ambient', label: 'Ambient light', def: .25, min: 0, max: 2, dec: 2 },
+  { id: 'diffuse', label: 'Diffuse reflection', def: .75, min: 0, max: 2, dec: 2 },
+  { id: 'specular', label: 'Specular reflection', def: 0, min: 0, max: 2, dec: 2 },
+  { id: 'sharp', label: 'Highlight sharpness', def: 15, min: 1, max: 100, dec: 1 }];
+// a picture read back to the CPU (E.read), sampled bilinearly at frame pixel (x, y) (pixel centres at .5; nothing
+// outside it): straight [r, g, b, a], 0..1 (unpremul of Image::sample_bilinear)
+function fxReadAt(R, x, y) {
+  const k = R.k, W = R.w, H = R.h, d = R.d, fx = x * k - .5, fy = y * k - .5, x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+  let cr = 0, cg = 0, cb = 0, ca = 0;
+  const tap = (xi, yi, w) => {
+    if (xi < 0 || yi < 0 || xi >= W || yi >= H || !w) return;
+    const o = (yi * W + xi) * 4, al = d[o + 3] / 255 * w; cr += d[o] / 255 * al; cg += d[o + 1] / 255 * al; cb += d[o + 2] / 255 * al; ca += al;
+  };
+  tap(x0, y0, (1 - tx) * (1 - ty)); tap(x0 + 1, y0, tx * (1 - ty)); tap(x0, y0 + 1, (1 - tx) * ty); tap(x0 + 1, y0 + 1, tx * ty);
+  return ca > 1e-6 ? [cr / ca, cg / ca, cb / ca, ca] : [0, 0, 0, 0];
+}
+const fxReadFull = (E, img) => E.read(img, Math.max(E.w, E.h));
+// one piece as fx_sim::piece_pass lays it out (48 floats: 11, the screen → piece inverse homography, rest centre, up to six
+// corners, their count, shade, tint, highlight, opacity, flat colour, back, back mirror; its bounds last)
+function fxPutPiece(R, i, pc) {
+  const o = i * 48, m = pc.inv, n = Math.min(pc.poly.length, 6), t = pc.tint || [1, 1, 1], s = pc.spec || [0, 0, 0];
+  R.fill(0, o, o + 48); R[o] = 11;
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) R[o + 1 + r * 3 + c] = m[r][c];
+  R[o + 10] = pc.c0[0]; R[o + 11] = pc.c0[1];
+  for (let k = 0; k < n; k++) { R[o + 12 + k * 2] = pc.poly[k][0]; R[o + 13 + k * 2] = pc.poly[k][1]; }
+  R[o + 24] = n; R[o + 25] = pc.shade ?? 1; R[o + 26] = t[0]; R[o + 27] = t[1]; R[o + 28] = t[2]; R[o + 29] = s[0]; R[o + 30] = s[1]; R[o + 31] = s[2];
+  R[o + 32] = pc.alpha ?? 1;
+  if (pc.flat) { R[o + 33] = 1; R[o + 34] = pc.flat[0]; R[o + 35] = pc.flat[1]; R[o + 36] = pc.flat[2]; }
+  R[o + 37] = pc.back ? 1 : 0; R[o + 38] = pc.mirror || 0;
+  R[o + 44] = pc.bb[0]; R[o + 45] = pc.bb[1]; R[o + 46] = pc.bb[2]; R[o + 47] = pc.bb[3];
+}
+// sim2::PiecePlan::finish on the graphics card (fx_sim::piece_pass): pieces already sorted far to near over a transparent
+// frame, textured by `front` (and `back` for pieces facing away: fxm_raster's pieces; without one, fxp_raster's passes)
+function fxDrawPieces(E, front, pieces, back = null) {
+  const n = pieces.length, R = fxScratch('pieces', n * 48);
+  for (let i = 0; i < n; i++) fxPutPiece(R, i, pieces[i]);
+  return fxSpriteTable(E, front, R, n, 48, false, 4, back);
+}
+// a stable far-to-near order (largest first) of the values in Z: fxSortF32 on −z, its bits made to sort as unsigned
+function fxOrderDesc(Z) {
+  const n = Z.length, F = new Float32Array(n), B = new Uint32Array(F.buffer);
+  for (let i = 0; i < n; i++) F[i] = -Z[i];
+  for (let i = 0; i < n; i++) { const b = B[i]; B[i] = b & 0x80000000 ? ~b : b | 0x80000000; }
+  return fxSortF32(F);
+}
+const fxRotAxisOf = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1], [1, 1, 1]];
+// CC Ball Action (pixels::ball_action_plan): the layer as a grid of balls, turned about an axis (twisted along a property)
+// and scattered in 3D; each ball takes the layer's colour where it sits (a sampled tint: none where the layer is clear)
+function fxBallAction(E, img, q) {
+  const rad = Math.PI / 180, scatter = q('scatter'), ax = fxRotAxisOf[q('rotAxis')] || [1, 1, 1], rot = q('rotation') * rad, tp = q('twistProp'), twist = q('twistAngle') * rad;
+  const spacing = Math.max(1, q('spacing')), size = q('ballSize') / 100, instab = q('instability') * rad, seed = Math.imul(fxSeed(E), 0x2545f491) >>> 0;
+  if (size <= 0) return E.clear(img);
+  const lw = E.bw, lh = E.bh, s = E.sc, lp = fxLpOf(E), nx = Math.max(1, Math.ceil(lw / spacing)), ny = Math.max(1, Math.ceil(lh / spacing)), n = nx * ny;
+  const d = 2 * Math.max(lw, lh), cx = lw * .5, cy = lh * .5, maxr = Math.max(Math.hypot(lw, lh) * .5, 1), Rd = tp === 3 ? fxReadFull(E, img) : null;
+  const Z = new Float64Array(n), P = new Float32Array(n * 5); let k = 0;
+  for (let i = 0; i < n; i++) {
+    const gx = (i % nx) * spacing + spacing * .5, gy = Math.floor(i / nx) * spacing + spacing * .5, [tx, ty] = lp(gx, gy);
+    let tv;
+    if (tp === 0) tv = gx / Math.max(lw, 1); else if (tp === 1) tv = gy / Math.max(lh, 1); else if (tp === 2) tv = Math.hypot(gx - cx, gy - cy) / maxr;
+    else { const c = fxReadAt(Rd, tx, ty); if (c[3] <= 0) continue; tv = (c[0] + c[1] + c[2]) / 3; }
+    const ph = fxH(i, 1, seed) * 2 * Math.PI + instab, sc = scatter * fxH(i, 2, seed);
+    const p0 = [gx - cx + sc * Math.cos(ph), gy - cy + sc * Math.sin(ph), scatter * fxHs(i, 3, seed)], m = fxRotAxis(ax, rot + twist * tv);
+    const qx = fxDot3(m[0], p0), qy = fxDot3(m[1], p0), qz = fxDot3(m[2], p0);
+    if (d + qz <= d * .05) continue;
+    const persp = d / (d + qz), [bx, by] = lp(cx + qx * persp, cy + qy * persp);
+    Z[k] = qz; P.set([bx, by, spacing * .5 * size * persp * s, tx, ty], k * 5); k++;
+  }
+  const ord = fxOrderDesc(Z.subarray(0, k)), stride = 18, R = fxScratch('sprites', k * stride);
+  for (let j = 0; j < k; j++) {
+    const o = ord[j] * 5; fxPutSprite(R, j, stride, 2, P[o], P[o + 1], P[o + 2], 0, 0, 0, 1);
+    const r = j * stride; R[r + 11] = 2; R[r + 12] = P[o + 3]; R[r + 13] = P[o + 4];
+  }
+  return fxSpriteTable(E, img, R, k, stride, false);
+}
+// CC Scatterize (pixels::scatterize_plan): every pixel of the layer a dot, jittered by Scatter and twisted about the
+// horizontal axis through the centre (Left / Right Twist, growing toward each side)
+function fxScatterize(E, img, q) {
+  const rad = Math.PI / 180, scatter = q('scatter'), right = q('rightTwist') * rad, left = q('leftTwist') * rad;
+  if (!scatter && !right && !left) return img;
+  const add = q('transferMode') === 1, seed = Math.imul(fxSeed(E), 0x7feb352d) >>> 0, s = E.sc, cx = E.m.e, cy = E.m.f, half = Math.max(E.bw * .5 * s, 1);
+  const d = 2 * Math.max(E.bw, E.bh) * s, cr = Math.cos(E.rot), sr = Math.sin(E.rot), [bx, by, bw, bh] = fxIBox(E), n = bw * bh, stride = 18, R = fxScratch('sprites', n * stride);
+  for (let i = 0; i < n; i++) {
+    const x = bx + i % bw + .5, y = by + Math.floor(i / bw) + .5, dx = x - cx, dy = y - cy, u = dx * cr + dy * sr, v = -dx * sr + dy * cr;
+    // the twist grows from nothing at the centre to the full angle at the layer's side
+    const a = (u < 0 ? left : right) * Math.min(Math.abs(u) / half, 1), sa = Math.sin(a), ca = Math.cos(a);
+    const yy = v * ca, zz = v * sa, persp = d / Math.max(d + zz, d * .05), pu = u * persp, pv = yy * persp;
+    const sx = cx + pu * cr - pv * sr + fxHs(i, 1, seed) * scatter * s, sy = cy + pu * sr + pv * cr + fxHs(i, 2, seed) * scatter * s;
+    fxPutSprite(R, i, stride, 1, sx, sy, .6 * persp, 0, 0, 0, 1);
+    const o = i * stride; R[o + 11] = 2; R[o + 12] = x; R[o + 13] = y;
+  }
+  return fxSpriteTable(E, img, R, n, stride, add);
+}
+// CC Pixel Polly (pixels::pixel_polly_plan): the layer breaks into triangles or squares that fly from the Force Center,
+// spin and fall; before Start Time the layer as it is. sim2's Piece::new is worked out inline here (the camera is
+// card3d's simple one, and every piece's corners already wind one way), straight into piece_pass's table
+function fxPixelPolly(E, img, q) {
+  const t = E.t - q('startTime'); if (t <= 0) return img;
+  const force = q('force'), gravity = q('gravity'), spin = q('spinning') * Math.PI / 180, fc = fxPl(E, q('forceCenter')), dirRand = q('dirRand') / 100, spdRand = q('speedRand') / 100;
+  const g = Math.max(1, q('spacing')), object = q('object'), seed = Math.imul(fxSeed(E), 0x632be5ab) >>> 0, lw = E.bw, lh = E.bh, s = E.sc, [ox, oy] = fxOff(E);
+  const cx = ox + lw * .5 * s, cy = oy + lh * .5 * s, d = 2 * Math.max(lw, lh) * s, near = .05 * d;
+  const nx = Math.max(1, Math.ceil(lw / g)), ny = Math.max(1, Math.ceil(lh / g)), tri = object <= 1, textured = object === 1 || object === 3, maxd = Math.max(lw, lh), per = tri ? 2 : 1;
+  const total = nx * ny * per, Rd = textured ? null : fxReadFull(E, img), R = fxScratch('pieces', total * 48), Z = new Float32Array(total), V = [0, 0, 0, 0, 0, 0, 0, 0];
+  let k = 0;
+  for (let i = 0; i < total; i++) {
+    const cell = Math.floor(i / per), x0 = (cell % nx) * g, y0 = Math.floor(cell / nx) * g;
+    let nv = 3;
+    if (!tri) { nv = 4; V[0] = x0; V[1] = y0; V[2] = x0 + g; V[3] = y0; V[4] = x0 + g; V[5] = y0 + g; V[6] = x0; V[7] = y0 + g; }
+    else if (i % 2 === 0) { V[0] = x0; V[1] = y0; V[2] = x0 + g; V[3] = y0; V[4] = x0; V[5] = y0 + g; }
+    else { V[0] = x0 + g; V[1] = y0; V[2] = x0 + g; V[3] = y0 + g; V[4] = x0; V[5] = y0 + g; }
+    let ccx = 0, ccy = 0; for (let v = 0; v < nv; v++) { ccx += V[v * 2]; ccy += V[v * 2 + 1]; } ccx /= nv; ccy /= nv;
+    const dx = ccx - fc[0], dy = ccy - fc[1], dist = Math.max(Math.hypot(dx, dy), 1e-6);
+    const ang = Math.atan2(dy, dx) + dirRand * Math.PI * fxHs(i, 1, seed), speed = force / 100 * .6 * maxd / (1 + dist / (.5 * maxd)) * (1 + spdRand * fxHs(i, 2, seed));
+    const vz = -speed * .5 * fxH(i, 3, seed), px = (ccx + Math.cos(ang) * speed * t) * s + ox, py = (ccy + Math.sin(ang) * speed * t + .5 * gravity * .5 * lh * t * t) * s + oy, pz = vz * t * s;
+    // sim2::rot_axis (Rodrigues) about a random axis
+    let ax = fxHs(i, 4, seed), ay = fxHs(i, 5, seed), az = fxHs(i, 6, seed); const al = Math.hypot(ax, ay, az), a = t * (Math.PI * fxH(i, 7, seed) + spin);
+    let r00 = 1, r01 = 0, r02 = 0, r10 = 0, r11 = 1, r12 = 0, r20 = 0, r21 = 0, r22 = 1;
+    if (al >= 1e-12 && a !== 0) {
+      ax /= al; ay /= al; az /= al; const sn = Math.sin(a), cs = Math.cos(a), tt = 1 - cs;
+      r00 = tt * ax * ax + cs; r01 = tt * ax * ay - sn * az; r02 = tt * ax * az + sn * ay; r10 = tt * ax * ay + sn * az; r11 = tt * ay * ay + cs; r12 = tt * ay * az - sn * ax;
+      r20 = tt * ax * az - sn * ay; r21 = tt * ay * az + sn * ax; r22 = tt * az * az + cs;
+    }
+    // the homography piece → screen through the camera, and its inverse
+    const h00 = d * r00 + cx * r20, h01 = d * r01 + cx * r21, h02 = d * px + cx * pz, h10 = d * r10 + cy * r20, h11 = d * r11 + cy * r21, h12 = d * py + cy * pz, h20 = r20, h21 = r21, h22 = pz + d;
+    const c0x = ccx * s + ox, c0y = ccy * s + oy;
+    let b0 = Infinity, b1 = Infinity, b2 = -Infinity, b3 = -Infinity, ok = true;
+    for (let v = 0; v < nv; v++) {
+      const aa = V[v * 2] * s + ox - c0x, bb = V[v * 2 + 1] * s + oy - c0y, w = h20 * aa + h21 * bb + h22; if (w < near) { ok = false; break; }
+      const sx = (h00 * aa + h01 * bb + h02) / w, sy = (h10 * aa + h11 * bb + h12) / w;
+      if (sx < b0) b0 = sx; if (sy < b1) b1 = sy; if (sx > b2) b2 = sx; if (sy > b3) b3 = sy;
+    }
+    if (!ok) continue;
+    const A = h11 * h22 - h12 * h21, B = h12 * h20 - h10 * h22, C = h10 * h21 - h11 * h20, det = h00 * A + h01 * B + h02 * C;
+    if (!isFinite(det) || Math.abs(det) < 1e-12) continue;
+    let fr = 0, fg = 0, fb = 0, fa = 1;
+    if (!textured) { const c = fxReadAt(Rd, c0x, c0y); if (c[3] <= 0) continue; [fr, fg, fb, fa] = c; }
+    const o = k * 48, id = 1 / det;
+    R.fill(0, o, o + 48); R[o] = 11;
+    R[o + 1] = A * id; R[o + 2] = (h02 * h21 - h01 * h22) * id; R[o + 3] = (h01 * h12 - h02 * h11) * id;
+    R[o + 4] = B * id; R[o + 5] = (h00 * h22 - h02 * h20) * id; R[o + 6] = (h02 * h10 - h00 * h12) * id;
+    R[o + 7] = C * id; R[o + 8] = (h01 * h20 - h00 * h21) * id; R[o + 9] = (h00 * h11 - h01 * h10) * id;
+    R[o + 10] = c0x; R[o + 11] = c0y;
+    for (let v = 0; v < nv; v++) { R[o + 12 + v * 2] = V[v * 2] * s + ox; R[o + 13 + v * 2] = V[v * 2 + 1] * s + oy; }
+    R[o + 24] = nv; R[o + 25] = .35 + .65 * Math.abs(r22); R[o + 26] = R[o + 27] = R[o + 28] = 1; R[o + 32] = fa;
+    if (!textured) { R[o + 33] = 1; R[o + 34] = fr; R[o + 35] = fg; R[o + 36] = fb; }
+    R[o + 44] = b0 - 1; R[o + 45] = b1 - 1; R[o + 46] = b2 + 1; R[o + 47] = b3 + 1;
+    Z[k++] = h22;
+  }
+  if (!q('depthSort')) return fxSpriteTable(E, img, R, k, 48, false, 4);
+  const ord = fxOrderDesc(Z.subarray(0, k)), R2 = fxScratch('pieces2', k * 48);
+  for (let j = 0; j < k; j++) R2.set(R.subarray(ord[j] * 48, ord[j] * 48 + 48), j * 48);
+  return fxSpriteTable(E, img, R2, k, 48, false, 4);
+}
+// Card Dance (shatter::card_dance_plan): the layer cut into cards whose position, rotation and scale follow two gradient
+// layers' channels (each property: Source × Multiplier + Offset), lit, in 3D through the camera; backs show the Back Layer
+const CD_SOURCES = ['None', 'Intensity 1', 'Red 1', 'Green 1', 'Blue 1', 'Alpha 1', 'Intensity 2', 'Red 2', 'Green 2', 'Blue 2', 'Alpha 2'];
+const CD_PROPS = [['xPos', 'X position'], ['yPos', 'Y position'], ['zPos', 'Z position'], ['xRot', 'X rotation'], ['yRot', 'Y rotation'], ['zRot', 'Z rotation'],
+  ['xScale', 'X scale'], ['yScale', 'Y scale']];
+function fxCardSource(src, c1, c2) {
+  const c = src <= 5 ? c1 : c2, k = (src - 1) % 5;
+  return !src ? 0 : k === 0 ? fxLum(c[0], c[1], c[2]) : c[k === 4 ? 3 : k - 1];
+}
+function fxCardDance(E, img, q) {
+  const rows = Math.trunc(clamp(q('rows'), 1, 1000)), cols = q('rowsCols') === 1 ? rows : Math.trunc(clamp(q('columns'), 1, 1000));
+  const props = CD_PROPS.map(([p]) => [q(p + 'Src'), q(p + 'Mul'), q(p + 'Off')]), uses = n => props.some(p => p[0] && p[1] && (p[0] > 5) === (n === 2));
+  const g1 = uses(1) ? fxPlaced(E, img, q('grad1'), 'cdgrad1', 2) : null, g2 = uses(2) ? fxPlaced(E, img, q('grad2'), 'cdgrad2', 2) : null;
+  const R1 = g1 && fxReadFull(E, g1), R2 = g2 && fxReadFull(E, g2), back = q('backLayer') ? fxFit(E, q('backLayer'), 'cdback', true) : null;
+  const lw = E.bw, lh = E.bh, s = E.sc, [ox, oy] = fxOff(E), cw = lw / cols, ch = lh / rows, cam = fxCardCam(E, q), eye = fxCamEye(cam), Lt = fxCardLight(E, q), pieces = [];
+  for (let i = 0; i < rows * cols; i++) {
+    const cx0 = (i % cols) * cw, cy0 = Math.floor(i / cols) * ch, bx = (cx0 + cw * .5) * s + ox, by = (cy0 + ch * .5) * s + oy;
+    const gp1 = R1 ? fxReadAt(R1, bx, by) : [0, 0, 0, 0], gp2 = R2 ? fxReadAt(R2, bx, by) : [0, 0, 0, 0], val = k => props[k][2] + props[k][1] * fxCardSource(props[k][0], gp1, gp2);
+    const sx = val(6), sy = val(7), r = fxRotXYZ(val(3), val(4), val(5)), rs = r.map(row => [row[0] * sx, row[1] * sy, row[2]]);
+    const pos = [bx + val(0) * cw * s, by + val(1) * ch * s, val(2) * Math.max(cw, ch) * s], tx0 = cx0 * s + ox, ty0 = cy0 * s + oy, tw = cw * s, th = ch * s;
+    const pc = fxPiece([[tx0, ty0], [tx0 + tw, ty0], [tx0 + tw, ty0 + th], [tx0, ty0 + th]], [bx, by], rs, pos, cam, eye); if (!pc) continue;
+    [pc.tint, pc.spec] = fxCardShade(Lt, [-r[0][2], -r[1][2], -r[2][2]], pos, eye);
+    pieces.push(pc);
+  }
+  return fxDrawPieces(E, img, Array.from(fxOrderDesc(pieces.map(p => p.depth)), i => pieces[i]), back);
+}
+// Shatter (shatter::shatter_impl): the layer cut into a pattern (or a Custom Shatter Map's colours), broken where the force
+// spheres reach (and the gradient allows), thrown, tumbled and dropped with drag; extruded sides; Rendered or wireframes
+const SHATTER_PATTERNS = ['Bricks', 'Glass', 'Hexagons', 'Squares', 'Triangles', 'Custom'];
+const SHATTER_TEX_MODES = [[0, 'Color'], [1, 'Layer'], [2, 'Tinted layer']];
+function fxShatterCells(kind, cell, x0, y0, x1, y1, seed) {
+  const out = [], i0 = Math.floor(x0 / cell) - 1, i1 = Math.ceil(x1 / cell) + 1, j0 = Math.floor(y0 / cell) - 1, j1 = Math.ceil(y1 / cell) + 1;
+  if (kind === 0) {
+    const bh = cell * .5, r0 = Math.floor(y0 / bh) - 1, r1 = Math.ceil(y1 / bh) + 1;
+    for (let r = r0; r <= r1; r++) { const sh = ((r % 2) + 2) % 2 === 1 ? cell * .5 : 0; for (let i = i0; i <= i1; i++) { const x = i * cell + sh, y = r * bh; out.push([[x, y], [x + cell, y], [x + cell, y + bh], [x, y + bh]]); } }
+  } else if (kind === 1) {
+    // a jittered lattice split into triangles along a random diagonal
+    const jit = (i, j) => [i * cell + fxHs(i >>> 0, ((j >>> 0) + 17) >>> 0, seed) * cell * .35, j * cell + fxHs(i >>> 0, ((j >>> 0) + 91) >>> 0, seed) * cell * .35];
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const p00 = jit(i, j), p10 = jit(i + 1, j), p11 = jit(i + 1, j + 1), p01 = jit(i, j + 1);
+      if (fxH(i >>> 0, j >>> 0, (seed ^ 0x55) >>> 0) < .5) out.push([p00, p10, p11], [p00, p11, p01]); else out.push([p00, p10, p01], [p10, p11, p01]);
+    }
+  } else if (kind === 2) {
+    const r = cell / Math.sqrt(3), dx = 1.5 * r, dy = Math.sqrt(3) * r, c0 = Math.floor(x0 / dx) - 1, c1 = Math.ceil(x1 / dx) + 1, rr0 = Math.floor(y0 / dy) - 1, rr1 = Math.ceil(y1 / dy) + 1;
+    for (let ci = c0; ci <= c1; ci++) for (let rj = rr0; rj <= rr1; rj++) {
+      const cx = ci * dx, cy = (rj + (((ci % 2) + 2) % 2 === 1 ? .5 : 0)) * dy;
+      out.push([0, 1, 2, 3, 4, 5].map(k => [cx + r * Math.cos(k * Math.PI / 3), cy + r * Math.sin(k * Math.PI / 3)]));
+    }
+  } else if (kind === 3) {
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const x = i * cell, y = j * cell; out.push([[x, y], [x + cell, y], [x + cell, y + cell], [x, y + cell]]); }
+  } else {
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = i * cell, y = j * cell;
+      if ((((i + j) % 2) + 2) % 2 === 0) out.push([[x, y], [x + cell, y], [x, y + cell]], [[x + cell, y], [x + cell, y + cell], [x, y + cell]]);
+      else out.push([[x, y], [x + cell, y], [x + cell, y + cell]], [[x, y], [x + cell, y + cell], [x, y + cell]]);
+    }
+  }
+  return out;
+}
+// ∫0^t e^(−ks) ds and ∫0^t ∫0^u e^(−ks) ds du (shatter::drag_factors)
+const fxDrag = (k, t) => { if (k < 1e-6) return [t, .5 * t * t]; const e = Math.exp(-k * t); return [(1 - e) / k, t / k - (1 - e) / (k * k)]; };
+function fxShatter(E, img, q) {
+  const rad = Math.PI / 180, view = q('view'), render = q('render'), kind = q('pattern'), custom = kind === SHATTER_PATTERNS.length - 1, reps = clamp(q('reps'), 1, 500);
+  const dir = q('direction') * rad, origin = fxPl(E, q('origin')), forces = [1, 2].map(k => [fxPl(E, q(`f${k}Pos`)), q(`f${k}Depth`), q(`f${k}Radius`), q(`f${k}Strength`)]);
+  const rotSpeed = q('rotSpeed'), tumble = q('tumble'), randomness = q('randomness'), kv = Math.max(0, q('viscosity')) * 5, massVar = q('massVar') / 100;
+  const gravity = q('gravity'), gdir = q('gravDir') * rad, ginc = q('gravInc') * rad, seed = (Math.imul(Math.trunc(Math.max(0, q('seed'))) >>> 0, 0x9e3779b1) ^ fxSeed(E)) >>> 0;
+  const lw = E.bw, lh = E.bh, s = E.sc, [ox, oy] = fxOff(E), t = Math.max(0, E.t), unit = lw * .1, cell = lw / reps, extrude = Math.max(0, q('extrusion')) * cell * s;
+  const cam = fxCardCam(E, q), eye = fxCamEye(cam), Lt = fxCardLight(E, q), toB = (x, y) => [x * s + ox, y * s + oy];
+  // with a gradient layer only pieces at least as bright as 1 − Shatter Threshold break (Invert Gradient: as dark)
+  const grad = q('gradLayer') ? fxFit(E, q('gradLayer'), 'shgrad', true) : null, RG = grad && fxReadFull(E, grad), threshold = q('threshold') / 100, invGrad = q('invertGrad');
+  const texColor = q('texColor'), texOpacity = clamp(q('texOpacity'), 0, 1);
+  const face = (m, id, name) => { const mode = q(m); return { mode, img: mode ? fxPlaced(E, img, q(id), name, 2) : null }; };
+  const front = face('frontMode', 'frontLayer', 'shfront'), side = face('sideMode', 'sideLayer', 'shside'), backf = face('backMode', 'backLayer', 'shback');
+  const RS = side.mode && side.img ? fxReadFull(E, side.img) : null, map = custom ? fxReadFull(E, fxPlaced(E, img, q('customMap'), 'shmap', 2)) : null, whiteFixed = q('whiteFixed');
+  const sd = Math.sin(dir), cd = Math.cos(dir), toLayer = p => [origin[0] + p[0] * cd - p[1] * sd, origin[1] + p[0] * sd + p[1] * cd];
+  const corners = [[0, 0], [lw, 0], [lw, lh], [0, lh]].map(([x, y]) => { const dx = x - origin[0], dy = y - origin[1]; return [dx * cd + dy * sd, -dx * sd + dy * cd]; });
+  const px0 = Math.min(...corners.map(c => c[0])), px1 = Math.max(...corners.map(c => c[0])), py0 = Math.min(...corners.map(c => c[1])), py1 = Math.max(...corners.map(c => c[1]));
+  const polys = fxShatterCells(custom ? 3 : kind, cell, px0, py0, px1, py1, seed).map(p => p.map(toLayer));
+  const centre = lp => [lp.reduce((a, v) => a + v[0], 0) / lp.length, lp.reduce((a, v) => a + v[1], 0) / lp.length];
+  // Custom Shatter Map: square cells grouped by the map's colour (pieces of one colour break as one)
+  const mapKey = c => { if (c[3] < .5) return -1; const qz = v => Math.round(clamp(v, 0, 1) * 15) & 15; return qz(c[0]) << 8 | qz(c[1]) << 4 | qz(c[2]); };
+  const keys = map ? polys.map(lp => { const c = centre(lp); return mapKey(fxReadAt(map, ...toB(c[0], c[1]))); }) : polys.map((_, i) => i), groups = new Map();
+  polys.forEach((lp, i) => { const c = centre(lp), g = groups.get(keys[i]) || [0, 0, 0]; g[0] += c[0]; g[1] += c[1]; g[2]++; groups.set(keys[i], g); });
+  const g3 = [Math.sin(gdir) * Math.cos(ginc) * gravity * unit, -Math.cos(gdir) * Math.cos(ginc) * gravity * unit, Math.sin(ginc) * gravity * unit], pieces = [];
+  polys.forEach((lp, pi) => {
+    const key = keys[pi], xs = lp.map(v => v[0]), ys = lp.map(v => v[1]);
+    if (Math.max(...xs) < 0 || Math.max(...ys) < 0 || Math.min(...xs) > lw || Math.min(...ys) > lh || key === -1) return;
+    const pcc = centre(lp), gg = groups.get(key), gc = [gg[0] / gg[2], gg[1] / gg[2]], i = key >>> 0, v = [0, 0, 0];
+    // broken when inside a force sphere (centred Depth in front of the layer)
+    let broken = false;
+    for (const [fp, fd, fr, fs] of forces) {
+      const R = fr * lw; if (R <= 0) continue;
+      const dv = [gc[0] - fp[0], gc[1] - fp[1], fd * lw], dist = Math.hypot(dv[0], dv[1], dv[2]);
+      if (dist < R) { broken = true; const f = fs * (1 - dist / R) * unit / Math.max(dist, 1e-6); for (let k = 0; k < 3; k++) v[k] += dv[k] * f; }
+    }
+    if (broken && RG) { const c = fxReadAt(RG, ...toB(gc[0], gc[1])); let l = clamp(fxLum(c[0], c[1], c[2]), 0, 1); if (invGrad) l = 1 - l; broken = threshold > 0 && l >= 1 - threshold; }
+    if (broken && custom && whiteFixed && key === 0xfff) broken = false;
+    if ((broken && render === 1) || (!broken && render === 2)) return;
+    const gpos = [gc[0], gc[1], 0], moving = broken && t > 0; let r = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    if (moving) {
+      const mass = 1 + massVar * fxHs(i, 1, seed);
+      for (let k = 0; k < 3; k++) v[k] = v[k] / mass + randomness * unit * fxHs(i, 2 + k, seed) * 2;
+      const [f1, f2] = fxDrag(kv, t);
+      for (let k = 0; k < 3; k++) gpos[k] += v[k] * f1 + g3[k] * f2;
+      const h6 = fxHs(i, 6, seed), h7 = fxHs(i, 7, seed), h8 = fxHs(i, 8, seed);
+      const axis = [[h6, h7, h8], [0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [h6, h7, 0], [h6, 0, h8], [0, h7, h8]][tumble] || [h6, h7, h8];
+      const speed = Math.hypot(v[0], v[1], v[2]) / unit, omega = rotSpeed * 2 * Math.PI * (.5 + fxH(i, 9, seed)) * Math.min(speed, 10);
+      r = fxRotAxis(axis, omega * f1);
+    }
+    // the piece's centre: its offset from the group centre, turned with the group
+    const off = [pcc[0] - gc[0], pcc[1] - gc[1], 0], pos = [0, 1, 2].map(k => gpos[k] + fxDot3(r[k], off));
+    const tex = lp.map(([x, y]) => toB(x, y)), c0 = toB(pcc[0], pcc[1]), posb = [pos[0] * s + ox, pos[1] * s + oy, pos[2] * s];
+    const pc = fxPiece(tex, c0, r, posb, cam, eye); if (!pc) return;
+    [pc.tint, pc.spec] = fxCardShade(Lt, [-r[0][2], -r[1][2], -r[2][2]], posb, eye); pc.alpha = texOpacity;
+    const f = pc.back ? backf : front;
+    if (f.mode === 0) pc.flat = texColor.slice(0, 3); else if (f.mode === 2) pc.tint = pc.tint.map((v, k) => v * texColor[k]);
+    // Extrusion: the sides of a moving piece, from its front outline back by the depth
+    if (moving && extrude > 0) {
+      const nb = [r[0][2], r[1][2], r[2][2]], n = tex.length;
+      for (let e = 0; e < n; e++) {
+        const a = tex[e], bv = tex[(e + 1) % n], ed = [bv[0] - a[0], bv[1] - a[1]], len = Math.hypot(ed[0], ed[1]); if (len < 1e-6) continue;
+        const ew = [0, 1, 2].map(k => (r[k][0] * ed[0] + r[k][1] * ed[1]) / len), third = [ew[1] * nb[2] - ew[2] * nb[1], ew[2] * nb[0] - ew[0] * nb[2], ew[0] * nb[1] - ew[1] * nb[0]];
+        const rs = [0, 1, 2].map(k => [ew[k], nb[k], third[k]]), mid = [(a[0] + bv[0]) * .5 - c0[0], (a[1] + bv[1]) * .5 - c0[1]];
+        const mw = [0, 1, 2].map(k => posb[k] + r[k][0] * mid[0] + r[k][1] * mid[1] + nb[k] * extrude * .5), hl = len * .5, hd = extrude * .5, cs = [(a[0] + bv[0]) * .5, (a[1] + bv[1]) * .5];
+        const sp = fxPiece([[cs[0] - hl, cs[1] - hd], [cs[0] + hl, cs[1] - hd], [cs[0] + hl, cs[1] + hd], [cs[0] - hl, cs[1] + hd]], cs, rs, mw, cam, eye); if (!sp) continue;
+        [sp.tint, sp.spec] = fxCardShade(Lt, [-rs[0][2], -rs[1][2], -rs[2][2]], mw, eye); sp.alpha = texOpacity;
+        if (RS && side.mode) { const c = fxReadAt(RS, cs[0], cs[1]); sp.flat = side.mode === 2 ? [0, 1, 2].map(k => c[k] * texColor[k]) : c.slice(0, 3); } else sp.flat = texColor.slice(0, 3);
+        pieces.push(sp);
+      }
+    }
+    pieces.push(pc);
+  });
+  const sorted = Array.from(fxOrderDesc(pieces.map(p => p.depth)), i => pieces[i]);
+  if (view === 0) { const ft = front.img || img; return fxDrawPieces(E, ft, sorted, backf.img || ft); }
+  // wireframes: the piece outlines (front views at rest, the others as they move), and the force spheres
+  const animated = view === 2 || view === 4, lines = [];
+  for (const pc of sorted) {
+    const n = pc.poly.length, fw = animated ? m3inv(pc.inv) : null; if (animated && !fw) continue;
+    const pts = animated ? pc.poly.map(([u, w]) => { const a = u - pc.c0[0], b = w - pc.c0[1], ww = fw[2][0] * a + fw[2][1] * b + fw[2][2]; return [(fw[0][0] * a + fw[0][1] * b + fw[0][2]) / ww, (fw[1][0] * a + fw[1][1] * b + fw[1][2]) / ww]; }) : pc.poly;
+    for (let e = 0; e < n; e++) { const a = pts[e], c = pts[(e + 1) % n]; lines.push([a[0], a[1], c[0] - a[0], c[1] - a[1], .75, .85, 1]); }
+  }
+  if (view >= 3) for (let k = 0; k < 2; k++) {
+    const [fx, fy] = q(`f${k + 1}Pos`), R = forces[k][2] * lw * s;
+    for (let j = 0; j < 64; j++) { const a0 = j / 64 * 2 * Math.PI, a1 = (j + 1) / 64 * 2 * Math.PI, x0 = fx + R * Math.cos(a0), y0 = fy + R * Math.sin(a0); lines.push([x0, y0, fx + R * Math.cos(a1) - x0, fy + R * Math.sin(a1) - y0, 1, .3, .3]); }
+  }
+  return fxLines(E, img, lines, .5);
+}
+// lines [x, y, dx, dy, r, g, b] of half-width w as sprites over a transparent frame
+function fxLines(E, img, lines, w) {
+  const n = lines.length, stride = 16, R = fxScratch('sprites', n * stride);
+  for (let i = 0; i < n; i++) { const l = lines[i]; fxPutSprite(R, i, stride, 8, l[0], l[1], w, l[4], l[5], l[6], 1, 0, l[2], l[3]); }
+  return fxSpriteTable(E, img, R, n, stride, false);
+}
+// Caustics (surfaces::caustics_setup and fx_sim::caustics): the bottom (this layer or another, scaled, repeated, blurred)
+// seen through a water surface whose height is another layer's luminance (smoothed): refracted, focused into caustics,
+// lit, under the surface colour or the sky it reflects
+function fxCaustics(E, img, q) {
+  const s = E.sc, lw = E.lw, cx = E.m.e, cy = E.m.f;
+  let bottom = q('bottom') ? fxFit(E, q('bottom'), 'cbottom', q('bottomFit') === 1) : null;
+  if (!bottom) bottom = img;
+  const blur = q('blur') * s; if (blur > .05) bottom = fxGauss(E, bottom, blur * .5, blur * .5, false);
+  const waveH = q('waveHeight'), smoothing = q('smoothing') * s, depth = q('waterDepth'), ior = Math.max(1, q('ior'));
+  // the water surface's height: its straight-colour luminance, smoothed (none: flat water)
+  let height = null;
+  const w = q('water') ? fxFit(E, q('water'), 'cwater', true) : null;
+  if (w) { height = fxRoute(E, w, [4, 4, 4, 8]); if (smoothing > .05) height = fxGauss(E, height, smoothing * .5, smoothing * .5, true); }
+  const k = waveH * depth * (1 - 1 / ior) * lw * 2, [lx, ly] = q('lightPos'), lheight = Math.max(.01, q('lightHeight')), L1 = Math.max(lw, 1);
+  const sky = q('sky') ? fxFit(E, q('sky'), 'csky', q('skyFit') === 1) : null, rows = sky ? E.rows(sky) : null, dl = fxNormZ([(lx - cx) / L1, (ly - cy) / L1, lheight]);
+  const P = fxP({ 0: [height ? 1 : 0, q('repeat'), q('lightType') === 1 ? 1 : 0, q('skyRepeat')], 1: [sky ? 1 : 0, rows ? rows[1] : 0, sky ? E.w : 0, sky ? E.h : 0] },
+    { 0: [Math.max(.01, q('scaling')), waveH, k, lw], 1: [cx, cy, lx, ly], 2: [...q('surfColor'), q('surfOpacity')], 3: [...q('lightColor'), q('lightIntensity')],
+      4: [lheight, q('causticsStrength'), q('ambient'), q('diffuse')], 5: [q('specular'), Math.max(1, q('sharp')), Math.max(.01, q('skyScaling')), q('skyIntensity')],
+      6: [...dl, clamp(q('convergence'), 0, 1)] });
+  return E.run('fx_particles', 'fxm_caustics', P, bottom, height, null, rows ? rows[0] : null);
+}
+// Wave World (surfaces::wave_world): the 2D wave equation on a grid over the layer, stepped from layer time 0 at 60 steps
+// a second (after Pre-roll), driven by two producers; with a Ground layer, dry where the ground rises above Height (a
+// wall the waves bounce off) and slower in shallow water; edges reflect or soak the waves up
+const WAVE_CACHE = [];
+function fxWaves(E, q) {
+  const lw = E.bw, lh = E.bh, down = q('downsample'); let res = Math.trunc(clamp(q('gridRes'), 1, 400));
+  if (down) res = Math.max(1, Math.round(res * E.sc));
+  const nx = Math.max(res, 2) + 1, ny = Math.max(Math.round(res * lh / Math.max(lw, 1)), 2) + 1, N = nx * ny, rad = Math.PI / 180;
+  const speed = Math.max(0, q('waveSpeed')), damping = Math.max(0, q('damping')), reflect = q('reflect'), preroll = Math.max(0, q('preroll'));
+  const prods = [1, 2].map(k => {
+    const p = fxPl(E, q(`p${k}Pos`));
+    return { ring: q(`p${k}Type`) === 0, pos: [p[0] / Math.max(lw, 1), p[1] / Math.max(lw, 1)], len: q(`p${k}Len`), width: q(`p${k}Width`), angle: q(`p${k}Angle`) * rad,
+      amp: q(`p${k}Amp`), freq: q(`p${k}Freq`), phase: q(`p${k}Phase`) * rad };
+  });
+  const sps = PS_SPS, cps = speed * (nx - 1), sub = clamp(Math.ceil(cps * 2 / sps), 1, 64), dt = 1 / (sps * sub), cell = 1 / (nx - 1);
+  // a producer's hold on a grid point (positions in layer widths): 1 at its centre to 0 at its ring or box
+  const weight = (p, x, y) => {
+    const dx = x - p.pos[0], dy = y - p.pos[1], sa = Math.sin(p.angle), ca = Math.cos(p.angle), u = dx * ca + dy * sa, v = -dx * sa + dy * ca, a = Math.max(p.len * .5, 1e-3), b = Math.max(p.width * .5, 1e-3);
+    return clamp(1 - (p.ring ? Math.hypot(u / a, v / b) : Math.max(Math.abs(u) / a, Math.abs(v) / b)), 0, 1);
+  };
+  const weights = prods.map(p => Float32Array.from({ length: N }, (_, i) => weight(p, (i % nx) * cell, Math.floor(i / nx) * cell)));
+  // Ground: its first frame's luminance an elevation (× Steepness); the water depth per grid point
+  const gid = q('ground'), gm = gid ? fxMapImg(E, gid, 'wwground', E.T - E.t) : null, steep = q('steepness'), level = q('groundHeight'), ws = clamp(q('waveStrength'), 0, 1);
+  const depth = gm ? Float32Array.from({ length: N }, (_, i) => { const c = gm.at((i % nx) / (nx - 1) * lw, Math.floor(i / nx) / (ny - 1) * lh); return level - steep * fxLum(c[0], c[1], c[2]) * c[3]; }) : null;
+  const sk = depth ? Float32Array.from(depth, v => v <= 0 ? 0 : 1 - ws * (1 - Math.sqrt(clamp(v / Math.max(level, 1e-3), 0, 1)))) : null;
+  const D = FX[E.fx.id], vals = D.params.map(d => { const v = q(d.id); return d.type === 'pt' ? fxPl(E, v).map(x => +x.toFixed(4)) : v; });
+  const key = JSON.stringify([lw, lh, down ? E.sc : 1, vals, gm?.key ?? 0]), sponge = Math.max(1, Math.min(4, Math.floor(nx / 4))), refl = side => reflect === 5 || reflect === side;
+  const st = fxSimRun(WAVE_CACHE, key, fxStepsAt(E.t + preroll), () => ({ u: new Float32Array(N), v: new Float32Array(N) }), (w, step) => {
+    const c2 = cps * cps, acc = fxScratch('waveAcc', N), U = w.u, V = w.v;
+    for (let k = 0; k < sub; k++) {
+      const t = (step + k / sub) / sps - preroll;
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        const i = y * nx + x, kk = sk ? sk[i] : 1;
+        const l = U[y * nx + Math.max(x - 1, 0)] + U[y * nx + Math.min(x + 1, nx - 1)] + U[Math.max(y - 1, 0) * nx + x] + U[Math.min(y + 1, ny - 1) * nx + x] - 4 * U[i];
+        acc[i] = c2 * kk * kk * l - damping * 4 * V[i];
+      }
+      for (let i = 0; i < N; i++) { V[i] += acc[i] * dt; U[i] += V[i] * dt; }
+      // the producers drive the surface
+      prods.forEach((p, pi) => {
+        if (!p.amp) return;
+        const target = p.amp * Math.sin(2 * Math.PI * p.freq * t + p.phase), wt = weights[pi];
+        for (let i = 0; i < N; i++) if (wt[i] > 0) { U[i] += (target - U[i]) * wt[i]; V[i] *= 1 - wt[i]; }
+      });
+      if (sk) for (let i = 0; i < N; i++) if (sk[i] <= 0) { U[i] = 0; V[i] = 0; }
+      // edges: reflective ones mirror, the others soak the waves up in a thin sponge
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        let f = 1;
+        if (!refl(1) && x < sponge) f = Math.min(f, x / sponge);
+        if (!refl(3) && nx - 1 - x < sponge) f = Math.min(f, (nx - 1 - x) / sponge);
+        if (!refl(2) && y < sponge) f = Math.min(f, y / sponge);
+        if (!refl(4) && ny - 1 - y < sponge) f = Math.min(f, (ny - 1 - y) / sponge);
+        if (f < 1) { const i = y * nx + x, kk = .85 + .15 * f; U[i] *= kk; V[i] *= kk; }
+      }
+    }
+  }, w => ({ u: w.u.slice(), v: w.v.slice() }));
+  return { u: st.u, nx, ny, depth };
+}
+function fxWaveWorld(E, img, q) {
+  const { u, nx, ny, depth } = fxWaves(E, q), lw = E.bw, lh = E.bh, rad = Math.PI / 180;
+  if (q('view') === 1) {
+    // Height Map (fx_sim::wave_height): grey from the heights; dry ground transparent if asked
+    let d = u; if (depth) { d = new Float32Array(nx * ny * 2); d.set(u); d.set(depth, nx * ny); }
+    const [ox, oy] = fxOff(E);
+    return E.run('fx_particles', 'fxm_wave', fxP({ 0: [nx, ny, q('dryAs') === 1 && depth ? 1 : 0, 0] },
+      { 0: [q('brightness'), q('contrast'), Math.max(q('gamma'), .01), 1 - q('transparency')], 1: [ox, oy, E.sc, Math.max(lw, 1)] }), img, null, null, E.data(d));
+  }
+  // Wireframe Preview: the grid turned by Horizontal Rotation, tilted by Vertical Rotation, heights × Vertical Scale, over black
+  const hr = q('hRot') * rad, vr = q('vRot') * rad, vs = q('vScale'), sh = Math.sin(hr), ch = Math.cos(hr), sv = Math.sin(vr), cv = Math.cos(vr), lp = fxLpOf(E);
+  const P = new Float64Array(nx * ny * 2);
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    const gx = x / (nx - 1) * lw - lw * .5, gy = y / (nx - 1) * lw - (ny - 1) / (nx - 1) * lw * .5, hgt = u[y * nx + x] * vs * lh * .5;
+    const [px, py] = lp(lw * .5 + gx * ch - gy * sh, lh * .5 + (gx * sh + gy * ch) * cv - hgt * sv); P[(y * nx + x) * 2] = px; P[(y * nx + x) * 2 + 1] = py;
+  }
+  const lines = [];
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    const a = (y * nx + x) * 2;
+    if (x + 1 < nx) lines.push([P[a], P[a + 1], P[a + 2] - P[a], P[a + 3] - P[a + 1], .4, .9, .4]);
+    if (y + 1 < ny) { const c = a + nx * 2; lines.push([P[a], P[a + 1], P[c] - P[a], P[c + 1] - P[a + 1], .4, .9, .4]); }
+  }
+  return fxSpritePost(E, img, fxLines(E, img, lines, .4), ['black']);
+}
+// Foam (foam::foam_full_plan): bubbles born in the producer's box grow to their size, drift with the wind, turbulence
+// and the Flow Map (downhill on its luminance), push apart and stick, wobble, and pop at the end of their lifespan
+// (shortened for weak bubbles), shoving their neighbours; stepped from layer time 0 at 30 steps a second
+const FOAM_CACHE = [], FOAM_TEXTURES = ['Default bubble', 'Spit', 'Bubblegum', 'Dishwater', 'Milky', 'User defined'];
+const fxFoamPop = (id, life, frail, seed) => life * (1 - frail * (fxHs(id, 11, seed) * .5 + .5));   // foam::foam_pop_age
+function fxFoam(E, img, q) {
+  const lw = E.bw, lh = E.bh, unit = lw * .01, rad = Math.PI / 180, prod = fxPl(E, q('prodPoint')), psx = q('prodX') * lw, psy = q('prodY') * lh, porient = q('prodOrient') * rad;
+  const rate = Math.max(0, q('rate')), size = Math.max(0, q('size')), sizeVar = q('sizeVar'), life = Math.max(1, q('lifespan')), growth = Math.max(.0001, q('growth'));
+  const frail = 1 - clamp(q('strength') / 20, 0, 1), initSpeed = q('initSpeed'), initDir = q('initDir') * rad, wind = q('windSpeed'), windDir = q('windDir') * rad;
+  const turb = q('turbulence'), wobble = Math.max(0, q('wobble')), repulsion = q('repulsion'), popVel = q('popVelocity'), visc = clamp(q('viscosity'), 0, 1), sticky = clamp(q('stickiness'), 0, 1);
+  const universe = Math.max(.01, q('universe')), seed = (Math.imul(Math.trunc(Math.max(0, q('seed'))) >>> 0, 0x68e31da4) ^ fxSeed(E)) >>> 0, wv = [Math.sin(windDir) * wind * unit, -Math.cos(windDir) * wind * unit];
+  // Flow Map: its first frame's luminance a height field, over the layer or the whole universe
+  const fid = q('flowMap'), fm = fid ? fxMapImg(E, fid, 'foamflow', E.T - E.t) : null, steep = q('flowSteep'), fitsU = q('flowFits') === 1, subs = [1, 2, 4][q('quality')] || 1;
+  const ux0 = -(universe - 1) * .5 * lw, uy0 = -(universe - 1) * .5 * lh, ux1 = lw - ux0, uy1 = lh - uy0;
+  const hAt = (x, y) => { if (!fm) return 0; const c = fitsU ? fm.at((x - ux0) / (ux1 - ux0) * lw, (y - uy0) / (uy1 - uy0) * lh) : fm.at(x, y); return fxLum(c[0], c[1], c[2]) * c[3]; };
+  const D = FX[E.fx.id], vals = D.params.map(d => { const v = q(d.id); return d.type === 'pt' ? fxPl(E, v).map(x => +x.toFixed(4)) : v; });
+  const key = JSON.stringify([lw, lh, fxSeed(E), vals, fm?.key ?? 0]), rOf = b => b.size * unit * 3 * Math.min(b.age * growth, 1);
+  const st = fxSimRun(FOAM_CACHE, key, E.t <= 0 ? 0 : Math.floor(E.t * 30 + 1e-6), () => ({ b: [], carry: 0, next: 0 }), (st, step) => {
+    const t = step / 30;
+    st.carry += rate; const n = Math.floor(st.carry); st.carry -= n;
+    for (let j = 0; j < n && st.b.length < 3000; j++) {
+      const id = st.next; st.next = (st.next + 1) >>> 0;
+      const ux = fxHs(id, 1, seed) * .5 * psx, uy = fxHs(id, 2, seed) * .5 * psy, so = Math.sin(porient), co = Math.cos(porient);
+      st.b.push({ p: [prod[0] + ux * co - uy * so, prod[1] + ux * so + uy * co], v: [Math.sin(initDir) * initSpeed * unit, -Math.cos(initDir) * initSpeed * unit], age: 0,
+        size: Math.max(size * (1 + sizeVar * fxHs(id, 3, seed)), .01), spin: fxHs(id, 12, seed) * Math.PI, id });
+    }
+    for (let ss = 0; ss < subs; ss++) {
+      const k = 1 / subs;
+      // forces: toward the wind, turbulence, viscosity, the flow map's slope
+      for (const b of st.b) {
+        const n1 = fxValueNoise(b.p[0] / (lw * .15), b.p[1] / (lw * .15), t * .5, seed) - .5, n2 = fxValueNoise(b.p[0] / (lw * .15) + 19, b.p[1] / (lw * .15), t * .5, seed) - .5;
+        for (let c = 0; c < 2; c++) { b.v[c] += (wv[c] - b.v[c]) * .1 * k; b.v[c] *= 1 - visc * .5 * k; }
+        b.v[0] += n1 * turb * unit * k; b.v[1] += n2 * turb * unit * k;
+        if (fm && steep) {
+          const e = Math.max(unit, 1), gx = (hAt(b.p[0] + e, b.p[1]) - hAt(b.p[0] - e, b.p[1])) / (2 * e), gy = (hAt(b.p[0], b.p[1] + e) - hAt(b.p[0], b.p[1] - e)) / (2 * e);
+          b.v[0] -= gx * steep * lw * .5 * k; b.v[1] -= gy * steep * lw * .5 * k;
+        }
+        b.spin += b.v[0] / Math.max(rOf(b), .5) * k;   // Physical Orientation: bubbles roll with their sideways motion
+      }
+      // overlapping bubbles push apart (a hashed grid, in a fixed order)
+      if (repulsion > 0 && st.b.length > 1) {
+        const maxr = Math.max(st.b.reduce((m, b) => Math.max(m, rOf(b)), 0), 1), cs = maxr * 2, grid = new Map(), cellOf = b => [Math.floor(b.p[0] / cs), Math.floor(b.p[1] / cs)];
+        st.b.forEach((b, i) => { const [gx, gy] = cellOf(b), kk = gx * 1e6 + gy; (grid.get(kk) || grid.set(kk, []).get(kk)).push(i); });
+        const push = st.b.map(() => [0, 0]);
+        st.b.forEach((b, i) => {
+          const [gx, gy] = cellOf(b), rb = rOf(b);
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) for (const j of grid.get((gx + dx) * 1e6 + gy + dy) || []) {
+            if (j <= i) continue;
+            const o = st.b[j], ddx = o.p[0] - b.p[0], ddy = o.p[1] - b.p[1], d = Math.max(Math.hypot(ddx, ddy), 1e-4), ov = rb + rOf(o) - d;
+            if (ov > 0) { const f = ov * .5 * Math.min(repulsion, 4) * (1 - sticky * .5) / d * k; push[i][0] -= ddx * f; push[i][1] -= ddy * f; push[j][0] += ddx * f; push[j][1] += ddy * f; }
+          }
+        });
+        st.b.forEach((b, i) => { b.p[0] += clamp(push[i][0], -maxr, maxr); b.p[1] += clamp(push[i][1], -maxr, maxr); });
+      }
+      for (const b of st.b) { b.p[0] += b.v[0] * k; b.p[1] += b.v[1] * k; }
+    }
+    for (const b of st.b) b.age++;
+    // pops: bubbles past their pop age burst, pushing their neighbours away
+    if (popVel) for (const pb of st.b.filter(b => b.age >= fxFoamPop(b.id, life, frail, seed))) {
+      const reach = Math.max(rOf(pb) * 3, unit);
+      for (const b of st.b) { const dx = b.p[0] - pb.p[0], dy = b.p[1] - pb.p[1], d = Math.hypot(dx, dy); if (d > 1e-4 && d < reach) { const f = popVel * unit * (1 - d / reach) / d; b.v[0] += dx * f; b.v[1] += dy * f; } }
+    }
+    st.b = st.b.filter(b => b.age < fxFoamPop(b.id, life, frail, seed) && b.p[0] > ux0 && b.p[0] < ux1 && b.p[1] > uy0 && b.p[1] < uy1);
+  }, st => ({ b: st.b.map(b => ({ ...b, p: b.p.slice(), v: b.v.slice() })), carry: st.carry, next: st.next }));
+  const view = q('view'), zoom = Math.max(.01, q('zoom')), texture = q('texture'), orient = q('orientation'), blend = q('blendMode'), s = E.sc, lp = fxLpOf(E);
+  const [zx, zy] = q('zoomProducer') ? prod : [lw * .5, lh * .5];
+  const order = st.b.slice();
+  if (blend === 2) order.sort((a, c) => c.age - a.age || a.id - c.id); else if (blend === 1) order.sort((a, c) => a.age - c.age || a.id - c.id);
+  // where a bubble is drawn: frame centre, radius, turn; and how far it is from popping
+  const place = b => {
+    const wob = wobble > 0 ? 1 + wobble * .15 * Math.sin(b.age * .35 + fxHs(b.id, 13, seed) * 6) : 1, [x, y] = lp(zx + (b.p[0] - zx) * zoom, zy + (b.p[1] - zy) * zoom);
+    return [x, y, rOf(b) * wob * zoom * s, orient === 1 ? b.spin : orient === 2 ? Math.atan2(b.v[1], b.v[0]) : 0, clamp((fxFoamPop(b.id, life, frail, seed) - b.age) / 5, 0, 1)];
+  };
+  const tid = view === 2 && texture === 5 ? q('textureLayer') : 0, tex = tid ? fxOther(E, tid, 'foamtex') : null, stride = 16, R = fxScratch('sprites', order.length * stride);
+  let n = 0;
+  if (!tex) for (const b of order) {
+    const [x, y, r, rot, fade] = place(b);
+    const [c, shape] = view !== 2 ? [[.55, .75, 1], 4] : [[[1, 1, 1], 4], [[.95, .95, .92], 3], [[1, .6, .8], 4], [[.8, .85, .75], 4], [[.97, .97, .95], 2]][texture] || [[1, 1, 1], 4];
+    fxPutSprite(R, n++, stride, shape, x, y, r, c[0], c[1], c[2], fade, rot);
+  }
+  let fx = fxSpriteTable(E, img, R, n, stride, blend === 0 && view === 2);
+  // User Defined: the texture layer fills each bubble's disc, turned with it
+  if (tex) {
+    const M = byId(tid), o = fxLayerBox(E, M), r = RT[tid], tw = r?.box?.w || E.w, th = r?.box?.h || E.h;
+    const out = fxChunkedK(E, tex, order, 2, b => { const d = place(b); return [d, [2, d[0], d[1], d[2], Math.sin(d[3]), Math.cos(d[3]), d[4], tw, th, o.sc, o.rect[0], o.rect[1]]]; }, fx);
+    E.free(fx); fx = out;
+  }
+  // Environment Map: each bubble reflects the map (stretched over the layer) along its sphere normal
+  const strength = clamp(q('reflStrength'), 0, 1);
+  if (view === 2 && strength > 0 && q('envMap')) {
+    const env = fxFit(E, q('envMap'), 'foamenv', true);
+    if (env) { const out = fxChunkedK(E, env, order, 3, b => { const d = place(b); return [d, [3, d[0], d[1], d[2], clamp(q('reflConv'), 0, 1), strength, E.lw, E.lh]]; }, fx); E.free(fx); fx = out; }
+  }
+  // Draft + Flow Map: the flow map under the bubbles at half strength
+  if (view === 1 && fid) {
+    const f = fxFitAt(E, fid, 'foamflowv', true, E.T - E.t);
+    if (f) { const out = E.run('fx_particles', 'fxp_under', fxP({}), fx, f); E.free(fx); fx = out; }
+  }
+  return fx;
+}
+// Foam's discs (fx_particles' Chunked kind 2 / 3, foam_disc compositing) over `base`, sampling `tex`
+const fxChunkedK = (E, tex, items, kind, rec, base) => fxChunked(E, tex, items, 16, 'fx_particles', 'fxp_raster', 2, x => {
+  const [d, r] = rec(x); return d[2] > 0 ? [[d[0] - d[2] - 1, d[1] - d[2] - 1, Math.ceil(d[0] + d[2] + 1) - 1, Math.ceil(d[1] + d[2] + 1) - 1], r] : [null];
+}, {}, null, base, kind);
 // ---- Round 27 helpers (Simulation: weather and more): EffectCraft's sim/weather.rs (CC Rainfall, CC Snowfall, CC Bubbles,
 //      CC Drizzle, CC Star Burst), sim3.rs (CC Hair, Particle Playground) and textfx.rs (the stroke font); GPU host code from
 //      fx_sim.rs (sprites, fxm_raster, fxm_post, fxm_drizzle) and fx_particles.rs (fxp_raster's passes) ----
@@ -2706,8 +3251,9 @@ function fxPutSprite(R, i, stride, shape, x, y, r, c0, c1, c2, c3, rot = 0, dx =
 }
 // Many sprites at once (fx_sim::sprite_layer through fx_particles' Chunked passes), from a typed table: R holds n records
 // of `stride` floats (fxPutSprite). Drawn by fxp_raster over a transparent frame in their order (tints sample img), in a
-// new pass whenever one kernel's data would grow past 16M floats
-function fxSpriteTable(E, img, R, n, stride, add) {
+// new pass whenever one kernel's data would grow past 16M floats. `kind` is fxp_raster's item kind (0 sprites, 4 pieces);
+// pieces with a `back` texture are drawn by fxm_raster (its first pass; later ones show the front on backs too)
+function fxSpriteTable(E, img, R, n, stride, add, kind = 0, back = null) {
   const W = E.w, H = E.h, tx = Math.ceil(W / 16), nt = tx * Math.ceil(H / 16), room = (1 << 24) - 64, span = new Int32Array(n);
   for (let i = 0; i < n; i++) {
     const o = i * stride + stride - 4, b0 = R[o], b1 = R[o + 1], b2 = R[o + 2], b3 = R[o + 3];
@@ -2734,7 +3280,8 @@ function fxSpriteTable(E, img, R, n, stride, add) {
         for (let ty = R[o + 1] >> 4; ty <= R[o + 3] >> 4; ty++) for (let tt = R[o] >> 4; tt <= R[o + 2] >> 4; tt++) d[nt + 1 + off[ty * tx + tt]++] = i - a;
       }
       d.set(R.subarray(a * stride, b * stride), at);
-      const o = E.run('fx_particles', 'fxp_raster', fxP({ 0: [0, add ? 1 : 0, at, stride], 1: [tx, 0, 0, 0] }), img, base, null, E.data(d));
+      const o = back && !a ? E.run('fx_particles', 'fxm_raster', fxP({ 0: [3, 0, at, stride], 1: [tx, 1, 0, 0] }), img, back, null, E.data(d))
+        : E.run('fx_particles', 'fxp_raster', fxP({ 0: [kind, add ? 1 : 0, at, stride], 1: [tx, 0, 0, 0] }), img, base, null, E.data(d));
       E.free(base); base = o;
     }
     a = b;
@@ -2742,10 +3289,10 @@ function fxSpriteTable(E, img, R, n, stride, add) {
   return base;
 }
 // sim::Post: how the sprite layer meets the layer ('combine' with sim::combine's mode 0 Composite … 5 sprites only,
-// 'lerp' toward the layer, 'replace'); fx_sim::sprites' fxm_post
+// 'lerp' toward the layer, 'black' over opaque black, 'replace'); fx_sim::sprites' fxm_post
 function fxSpritePost(E, img, fx, post) {
   if (post[0] === 'replace') return fx;
-  const P = post[0] === 'lerp' ? fxP({ 0: [1, 0, 0, 0] }, { 0: [post[1], 0, 0, 0] }) : fxP({ 0: [0, post[1], 0, 0] });
+  const P = post[0] === 'lerp' ? fxP({ 0: [1, 0, 0, 0] }, { 0: [post[1], 0, 0, 0] }) : post[0] === 'black' ? fxP({ 0: [2, 0, 0, 0] }) : fxP({ 0: [0, post[1], 0, 0] });
   const o = E.run('fx_particles', 'fxm_post', P, img, fx); E.free(fx); return o;
 }
 const fxWeatherPost = (mode, withOrig) => withOrig ? ['combine', mode === 1 ? 3 : 0] : ['replace'];   // weather::weather_post
@@ -3336,14 +3883,14 @@ function fxSpriteBox(s) {
 }
 // fx_particles' Chunked raster: items drawn by `entry` over a base (transparent at first), in a new pass whenever the item
 // table would outgrow one kernel's data. `rec(item)` gives [bounds, record]; f = the kernel's float rows
-function fxChunked(E, img, items, stride, fam, entry, u0, rec, f = {}, aux = null, base0 = null) {
+function fxChunked(E, img, items, stride, fam, entry, u0, rec, f = {}, aux = null, base0 = null, kind = 0) {
   let base = base0 || E.clear(img), it = fxItems(E, stride), used = it.tiles.length + 1;
   const room = (1 << 24) - 64;
   const flush = () => {
     const D = fxItemData(it);
     if (D && it.n) {
       // fxp_raster reads the base as aux; lsm_texsq reads it as src, the texture as aux
-      const P = fxP({ 0: [0, u0, D.at, stride], 1: [it.tx, 0, 0, 0] }, f);
+      const P = fxP({ 0: [kind, u0, D.at, stride], 1: [it.tx, 0, 0, 0] }, f);
       const o = aux ? E.run(fam, entry, P, base, aux, null, E.data(D.d)) : E.run(fam, entry, P, img, base, null, E.data(D.d));
       E.free(base); base = o;
     }
@@ -3911,6 +4458,8 @@ function fxPiece(poly, c0, r, pos, cam, eye) {
   }
   const inv = m3inv(hm); if (!inv) return null;
   const nrm = [-r[0][2], -r[1][2], -r[2][2]];
+  let area = 0; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; area += a[0] * b[1] - b[0] * a[1]; }
+  if (area < 0) poly = poly.slice().reverse();
   return { inv, c0, poly, bb: [bb[0] - 1, bb[1] - 1, bb[2] + 1, bb[3] + 1], back: fxDot3(nrm, fxSub3(eye, pos)) < 0, depth: hm[2][2] };
 }
 // transition::card_wipe_plan: the cards, far to near (null: nothing has moved, the layer as it is)
@@ -7270,6 +7819,189 @@ const FX = {
       if (!fl) return img;
       return E.run('lumina_time', 'lm_rsr', fxP({ 0: [q('scan'), fl.nx, fl.ny, 0] }, { 0: box, 1: [rate, fl.cell, 0, 0] }), img, null, null, E.data(fl.v));
     } },
+  // ---- Round 28: Simulation, pieces and surfaces (EffectCraft's sim2/: CC Ball Action, CC Pixel Polly, CC Scatterize,
+  // Card Dance, Shatter, Caustics, Wave World, Foam) ----
+  ccballaction: { name: 'CC Ball Action', cat: 'Simulation', clip: false, kernels: WEATHER_K, params: [
+      { id: 'scatter', label: 'Scatter', def: 0, min: 0, max: 2000, dec: 1 },
+      { id: 'rotAxis', label: 'Rotation axis', type: 'pick', def: 0, opts: fxOpts(['X axis', 'Y axis', 'Z axis', 'XY axis', 'XZ axis', 'YZ axis', 'XYZ axis']) },
+      { id: 'rotation', label: 'Rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'twistProp', label: 'Twist property', type: 'pick', def: 0, opts: fxOpts(['X axis', 'Y axis', 'Radius', 'Brightness']) },
+      { id: 'twistAngle', label: 'Twist angle°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'spacing', label: 'Grid spacing', def: 4, min: 1, max: 200, dec: 0 },
+      { id: 'ballSize', label: 'Ball size', def: 40, min: 0, max: 400, dec: 1 },
+      { id: 'instability', label: 'Instability state°', def: 0, min: -3600, max: 3600, dec: 1 }],
+    run: fxBallAction },
+  ccpixelpolly: { name: 'CC Pixel Polly', cat: 'Simulation', clip: false, kernels: WEATHER_K, params: [
+      { id: 'force', label: 'Force', def: 100, min: -1000, max: 1000, dec: 1 },
+      { id: 'gravity', label: 'Gravity', def: 1, min: -20, max: 20, dec: 2 },
+      { id: 'spinning', label: 'Spinning°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'forceCenter', label: 'Force center', type: 'pt', def: [.5, .5] },
+      { id: 'dirRand', label: 'Direction randomness %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'speedRand', label: 'Speed randomness %', def: 10, min: 0, max: 100, dec: 1 },
+      { id: 'spacing', label: 'Grid spacing', def: 10, min: 1, max: 500, dec: 0 },
+      { id: 'object', label: 'Object', type: 'pick', def: 0, opts: fxOpts(['Polygon', 'Textured polygon', 'Square', 'Textured square']) },
+      { id: 'depthSort', label: 'Enable depth sort', type: 'check', def: true },
+      { id: 'startTime', label: 'Start time (sec)', def: 0, min: -1000, max: 1000, dec: 2 }],
+    run: fxPixelPolly },
+  ccscatterize: { name: 'CC Scatterize', cat: 'Simulation', clip: false, kernels: WEATHER_K, params: [
+      { id: 'scatter', label: 'Scatter', def: 0, min: 0, max: 1000, dec: 1 },
+      { id: 'rightTwist', label: 'Right twist°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'leftTwist', label: 'Left twist°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'transferMode', label: 'Transfer mode', type: 'pick', def: 0, opts: [[0, 'Composite'], [1, 'Add']] }],
+    run: fxScatterize },
+  carddance: { name: 'Card Dance', cat: 'Simulation', clip: false, kernels: [...WEATHER_K, ['fx_particles', 'fxm_raster'], ['lumina_trans', 'lt_place']], params: [
+      { id: 'rowsCols', label: 'Rows & columns', type: 'pick', def: 0, opts: [[0, 'Independent'], [1, 'Columns follow rows']] },
+      { id: 'rows', label: 'Rows', def: 10, min: 1, max: 1000, dec: 0 },
+      { id: 'columns', label: 'Columns', def: 10, min: 1, max: 1000, dec: 0 },
+      fxLayerPick('backLayer', 'Back layer', 'None'),
+      fxLayerPick('grad1', 'Gradient layer 1'),
+      fxLayerPick('grad2', 'Gradient layer 2'),
+      ...CD_PROPS.flatMap(([p, name], i) => {
+        const rot = i >= 3 && i < 6, r = rot ? 3600 : 100, deg = rot ? '°' : '';
+        return [{ id: p + 'Src', label: name + ' source', type: 'pick', def: 0, opts: fxOpts(CD_SOURCES) },
+          { id: p + 'Mul', label: name + ' multiplier' + deg, def: 0, min: -r, max: r, dec: 2 },
+          { id: p + 'Off', label: name + ' offset' + deg, def: i >= 6 ? 1 : 0, min: -r, max: r, dec: 2 }];
+      }),
+      ...fxCard3dParams(2)],
+    run: fxCardDance },
+  shatter: { name: 'Shatter', cat: 'Simulation', clip: false, kernels: [...WEATHER_K, ['fx_particles', 'fxm_raster'], ['lumina_trans', 'lt_place']], params: [
+      { id: 'view', label: 'View', type: 'pick', def: 1, opts: fxOpts(['Rendered', 'Wireframe front view', 'Wireframe', 'Wireframe front view + forces', 'Wireframe + forces']) },
+      { id: 'render', label: 'Render', type: 'pick', def: 0, opts: fxOpts(['All', 'Layer', 'Pieces']) },
+      { id: 'pattern', label: 'Pattern', type: 'pick', def: 0, opts: fxOpts(SHATTER_PATTERNS) },
+      { id: 'reps', label: 'Repetitions', def: 10, min: 1, max: 500, dec: 2 },
+      { id: 'direction', label: 'Direction°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'origin', label: 'Origin', type: 'pt', def: [.5, .5] },
+      fxLayerPick('customMap', 'Custom shatter map'),
+      { id: 'whiteFixed', label: 'White tiles fixed', type: 'check', def: false },
+      { id: 'extrusion', label: 'Extrusion depth', def: .05, min: 0, max: 1, dec: 3 },
+      { id: 'f1Pos', label: 'Force 1 position', type: 'pt', def: [.5, .5] },
+      { id: 'f1Depth', label: 'Force 1 depth', def: .1, min: -1, max: 1, dec: 3 },
+      { id: 'f1Radius', label: 'Force 1 radius', def: .4, min: 0, max: 4, dec: 3 },
+      { id: 'f1Strength', label: 'Force 1 strength', def: 5, min: -20, max: 20, dec: 2 },
+      { id: 'f2Pos', label: 'Force 2 position', type: 'pt', def: [.25, .25] },
+      { id: 'f2Depth', label: 'Force 2 depth', def: .1, min: -1, max: 1, dec: 3 },
+      { id: 'f2Radius', label: 'Force 2 radius', def: 0, min: 0, max: 4, dec: 3 },
+      { id: 'f2Strength', label: 'Force 2 strength', def: 5, min: -20, max: 20, dec: 2 },
+      { id: 'rotSpeed', label: 'Rotation speed', def: .2, min: 0, max: 5, dec: 3 },
+      { id: 'tumble', label: 'Tumble axis', type: 'pick', def: 0, opts: fxOpts(['Free', 'None', 'X', 'Y', 'Z', 'XY', 'XZ', 'YZ']) },
+      { id: 'randomness', label: 'Randomness', def: .1, min: 0, max: 1, dec: 3 },
+      { id: 'viscosity', label: 'Viscosity', def: .1, min: 0, max: 1, dec: 3 },
+      { id: 'massVar', label: 'Mass variance %', def: 30, min: 0, max: 100, dec: 1 },
+      { id: 'gravity', label: 'Gravity', def: 3, min: 0, max: 100, dec: 2 },
+      { id: 'gravDir', label: 'Gravity direction°', def: 180, min: -3600, max: 3600, dec: 1 },
+      { id: 'gravInc', label: 'Gravity inclination°', def: 0, min: -90, max: 90, dec: 1 },
+      { id: 'threshold', label: 'Shatter threshold %', def: 0, min: 0, max: 100, dec: 1 },
+      fxLayerPick('gradLayer', 'Gradient layer', 'None'),
+      { id: 'invertGrad', label: 'Invert gradient', type: 'check', def: false },
+      { id: 'texColor', label: 'Color', type: 'color', def: '#ffffff' },
+      { id: 'texOpacity', label: 'Opacity', def: 1, min: 0, max: 1, dec: 3 },
+      { id: 'frontMode', label: 'Front mode', type: 'pick', def: 1, opts: SHATTER_TEX_MODES },
+      { id: 'sideMode', label: 'Side mode', type: 'pick', def: 0, opts: SHATTER_TEX_MODES },
+      { id: 'backMode', label: 'Back mode', type: 'pick', def: 1, opts: SHATTER_TEX_MODES },
+      fxLayerPick('frontLayer', 'Front layer'),
+      fxLayerPick('sideLayer', 'Side layer'),
+      fxLayerPick('backLayer', 'Back layer'),
+      ...fxCard3dParams(4),
+      { id: 'seed', label: 'Random seed', def: 0, min: 0, max: 10000, dec: 0 }],
+    run: fxShatter },
+  caustics: { name: 'Caustics', cat: 'Simulation', clip: true, kernels: [['fx_particles', 'fxm_caustics'], ['fx_key', 'fxk_point'], ['lumina_trans', 'lt_place']], params: [
+      fxLayerPick('bottom', 'Bottom'),
+      { id: 'scaling', label: 'Bottom scaling', def: 1, min: .01, max: 10, dec: 3 },
+      { id: 'repeat', label: 'Bottom repeat mode', type: 'pick', def: 2, opts: fxOpts(['Once', 'Tiled', 'Reflected']) },
+      { id: 'bottomFit', label: 'If bottom size differs', type: 'pick', def: 1, opts: [[0, 'Center'], [1, 'Stretch to fit']] },
+      { id: 'blur', label: 'Bottom blur', def: 0, min: 0, max: 100, dec: 1 },
+      fxLayerPick('water', 'Water surface', 'None'),
+      { id: 'waveHeight', label: 'Wave height', def: .2, min: -1, max: 1, dec: 3 },
+      { id: 'smoothing', label: 'Smoothing', def: 5, min: 0, max: 100, dec: 1 },
+      { id: 'waterDepth', label: 'Water depth', def: .1, min: 0, max: 1, dec: 3 },
+      { id: 'ior', label: 'Refractive index', def: 1.2, min: 1, max: 3, dec: 3 },
+      { id: 'surfColor', label: 'Surface color', type: 'color', def: '#ffffff' },
+      { id: 'surfOpacity', label: 'Surface opacity', def: .3, min: 0, max: 1, dec: 3 },
+      { id: 'causticsStrength', label: 'Caustics strength', def: 0, min: 0, max: 1, dec: 3 },
+      fxLayerPick('sky', 'Sky', 'None'),
+      { id: 'skyScaling', label: 'Sky scaling', def: 1, min: .01, max: 10, dec: 3 },
+      { id: 'skyRepeat', label: 'Sky repeat mode', type: 'pick', def: 2, opts: fxOpts(['Once', 'Tiled', 'Reflected']) },
+      { id: 'skyFit', label: 'If sky size differs', type: 'pick', def: 1, opts: [[0, 'Center'], [1, 'Stretch to fit']] },
+      { id: 'skyIntensity', label: 'Sky intensity', def: .3, min: 0, max: 1, dec: 3 },
+      { id: 'convergence', label: 'Sky convergence', def: .5, min: 0, max: 1, dec: 3 },
+      { id: 'lightType', label: 'Light type', type: 'pick', def: 0, opts: [[0, 'Distant source'], [1, 'Point source']] },
+      { id: 'lightIntensity', label: 'Light intensity', def: 1, min: 0, max: 4, dec: 2 },
+      { id: 'lightColor', label: 'Light color', type: 'color', def: '#ffffff' },
+      { id: 'lightPos', label: 'Light position', type: 'pt', def: [0, 0] },
+      { id: 'lightHeight', label: 'Light height', def: 1, min: 0, max: 10, dec: 2 },
+      { id: 'ambient', label: 'Ambient light', def: .35, min: 0, max: 2, dec: 2 },
+      { id: 'diffuse', label: 'Diffuse reflection', def: .75, min: 0, max: 2, dec: 2 },
+      { id: 'specular', label: 'Specular reflection', def: .2, min: 0, max: 2, dec: 2 },
+      { id: 'sharp', label: 'Highlight sharpness', def: 15, min: 1, max: 100, dec: 1 }],
+    run: fxCaustics },
+  waveworld: { name: 'Wave World', cat: 'Simulation', clip: true, kernels: [...WEATHER_K, ['fx_particles', 'fxm_wave']], params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: [[0, 'Wireframe preview'], [1, 'Height map']] },
+      { id: 'hRot', label: 'Horizontal rotation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'vRot', label: 'Vertical rotation°', def: 53, min: 0, max: 90, dec: 1 },
+      { id: 'vScale', label: 'Vertical scale', def: .5, min: 0, max: 10, dec: 3 },
+      { id: 'brightness', label: 'Brightness', def: .5, min: -1, max: 2, dec: 3 },
+      { id: 'contrast', label: 'Contrast', def: .75, min: 0, max: 4, dec: 3 },
+      { id: 'gamma', label: 'Gamma adjustment', def: 1, min: .01, max: 10, dec: 3 },
+      { id: 'dryAs', label: 'Render dry areas as', type: 'pick', def: 0, opts: [[0, 'Solid'], [1, 'Transparent']] },
+      { id: 'transparency', label: 'Transparency', def: 0, min: 0, max: 1, dec: 3 },
+      { id: 'gridRes', label: 'Grid resolution', def: 60, min: 1, max: 400, dec: 0 },
+      { id: 'downsample', label: 'Grid res downsamples', type: 'check', def: false },
+      { id: 'waveSpeed', label: 'Wave speed', def: .2, min: 0, max: 5, dec: 3 },
+      { id: 'damping', label: 'Damping', def: .05, min: 0, max: 5, dec: 3 },
+      { id: 'reflect', label: 'Reflect edges', type: 'pick', def: 0, opts: fxOpts(['None', 'Left', 'Top', 'Right', 'Bottom', 'All']) },
+      { id: 'preroll', label: 'Pre-roll (seconds)', def: 0, min: 0, max: 30, dec: 2 },
+      fxLayerPick('ground', 'Ground', 'None'),
+      { id: 'steepness', label: 'Ground steepness', def: .25, min: 0, max: 2, dec: 3 },
+      { id: 'groundHeight', label: 'Ground height', def: .25, min: 0, max: 2, dec: 3 },
+      { id: 'waveStrength', label: 'Ground wave strength', def: 0, min: 0, max: 1, dec: 3 },
+      ...[1, 2].flatMap(k => [
+        { id: `p${k}Type`, label: `Producer ${k} type`, type: 'pick', def: 0, opts: [[0, 'Ring'], [1, 'Line']] },
+        { id: `p${k}Pos`, label: `Producer ${k} position`, type: 'pt', def: k === 1 ? [.5, .5] : [.25, .25] },
+        { id: `p${k}Len`, label: `Producer ${k} height/length`, def: .1, min: 0, max: 2, dec: 3 },
+        { id: `p${k}Width`, label: `Producer ${k} width`, def: .1, min: 0, max: 2, dec: 3 },
+        { id: `p${k}Angle`, label: `Producer ${k} angle°`, def: 0, min: -3600, max: 3600, dec: 1 },
+        { id: `p${k}Amp`, label: `Producer ${k} amplitude`, def: k === 1 ? .5 : 0, min: -5, max: 5, dec: 3 },
+        { id: `p${k}Freq`, label: `Producer ${k} frequency`, def: 1, min: 0, max: 30, dec: 3 },
+        { id: `p${k}Phase`, label: `Producer ${k} phase°`, def: 0, min: -3600, max: 3600, dec: 1 }])],
+    run: fxWaveWorld },
+  foam: { name: 'Foam', cat: 'Simulation', clip: true, kernels: [...WEATHER_K, ['fx_particles', 'fxp_under'], ['lumina_trans', 'lt_place']], params: [
+      { id: 'view', label: 'View', type: 'pick', def: 0, opts: [[0, 'Draft'], [1, 'Draft + flow map'], [2, 'Rendered']] },
+      { id: 'prodPoint', label: 'Producer point', type: 'pt', def: [.5, .5] },
+      { id: 'prodX', label: 'Producer X size', def: .05, min: 0, max: 2, dec: 3 },
+      { id: 'prodY', label: 'Producer Y size', def: .05, min: 0, max: 2, dec: 3 },
+      { id: 'prodOrient', label: 'Producer orientation°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'zoomProducer', label: 'Zoom producer point', type: 'check', def: false },
+      { id: 'rate', label: 'Production rate', def: 1, min: 0, max: 50, dec: 3 },
+      { id: 'size', label: 'Bubble size', def: .5, min: 0, max: 10, dec: 3 },
+      { id: 'sizeVar', label: 'Size variance', def: .5, min: 0, max: 1, dec: 3 },
+      { id: 'lifespan', label: 'Lifespan', def: 300, min: 1, max: 30000, dec: 1 },
+      { id: 'growth', label: 'Bubble growth speed', def: .1, min: .0001, max: 10, dec: 4 },
+      { id: 'strength', label: 'Strength', def: 10, min: 0, max: 100, dec: 2 },
+      { id: 'initSpeed', label: 'Initial speed', def: 0, min: -100, max: 100, dec: 3 },
+      { id: 'initDir', label: 'Initial direction°', def: 0, min: -3600, max: 3600, dec: 1 },
+      { id: 'windSpeed', label: 'Wind speed', def: .5, min: -100, max: 100, dec: 3 },
+      { id: 'windDir', label: 'Wind direction°', def: 90, min: -3600, max: 3600, dec: 1 },
+      { id: 'turbulence', label: 'Turbulence', def: .5, min: 0, max: 10, dec: 3 },
+      { id: 'wobble', label: 'Wobble amount', def: .05, min: 0, max: 10, dec: 3 },
+      { id: 'repulsion', label: 'Repulsion', def: 1, min: 0, max: 10, dec: 3 },
+      { id: 'popVelocity', label: 'Pop velocity', def: 1, min: -100, max: 100, dec: 3 },
+      { id: 'viscosity', label: 'Viscosity', def: .1, min: 0, max: 1, dec: 3 },
+      { id: 'stickiness', label: 'Stickiness', def: .75, min: 0, max: 1, dec: 3 },
+      { id: 'zoom', label: 'Zoom', def: 1, min: .01, max: 50, dec: 3 },
+      { id: 'universe', label: 'Universe size', def: 1, min: .01, max: 10, dec: 3 },
+      { id: 'blendMode', label: 'Blend mode', type: 'pick', def: 0, opts: fxOpts(['Transparent', 'Solid old on top', 'Solid new on top']) },
+      { id: 'texture', label: 'Bubble texture', type: 'pick', def: 0, opts: fxOpts(FOAM_TEXTURES) },
+      fxLayerPick('textureLayer', 'Bubble texture layer', 'None'),
+      { id: 'orientation', label: 'Bubble orientation', type: 'pick', def: 0, opts: fxOpts(['Fixed', 'Physical orientation', 'Bubble velocity']) },
+      fxLayerPick('envMap', 'Environment map', 'None'),
+      { id: 'reflStrength', label: 'Reflection strength', def: 0, min: 0, max: 1, dec: 3 },
+      { id: 'reflConv', label: 'Reflection convergence', def: 0, min: 0, max: 1, dec: 3 },
+      fxLayerPick('flowMap', 'Flow map', 'None'),
+      { id: 'flowSteep', label: 'Flow map steepness', def: .05, min: -100, max: 100, dec: 3 },
+      { id: 'flowFits', label: 'Flow map fits', type: 'pick', def: 0, opts: [[0, 'Background'], [1, 'Universe']] },
+      { id: 'quality', label: 'Simulation quality', type: 'pick', def: 0, opts: fxOpts(['Normal', 'High', 'Intense']) },
+      { id: 'seed', label: 'Random seed', def: 1, min: 0, max: 10000, dec: 0 }],
+    run: fxFoam },
   // ---- Round 27: Simulation, weather and more (EffectCraft's sim/weather.rs and sim3.rs: CC Rainfall, CC Snowfall, CC Bubbles,
   // CC Drizzle, CC Star Burst, CC Hair, Particle Playground) ----
   ccrainfall: { name: 'CC Rainfall', cat: 'Simulation', clip: true, kernels: WEATHER_K, params: [
